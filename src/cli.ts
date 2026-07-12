@@ -31,6 +31,11 @@ import { previewIMessageExtractionContext } from "./workflows/imessage-extractio
 import { triageIMessageServiceConversations } from "./workflows/imessage-deterministic-triage";
 import { ingestCalendar } from "./workflows/calendar-ingest";
 import { CalendarStore } from "./calendar/store";
+import { TdLibTelegramAdapter } from "./adapters/telegram";
+import { loadTelegramTdLibConfig } from "./config";
+import { NativeTdJsonClient } from "./telegram/tdjson-client";
+import { TelegramStore } from "./telegram/store";
+import { ingestTelegramChanges } from "./workflows/telegram-ingest";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -447,6 +452,33 @@ async function main(argv: string[]): Promise<number> {
     }
   }
 
+  if (command === "telegram") {
+    const [subcommand, ...telegramRest] = rest;
+    const args = parseFlags(telegramRest);
+    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+    const store = new OperationalStore(config.databasePath); store.migrate();
+    if (subcommand === "status") {
+      console.log(JSON.stringify(new TelegramStore(store).status(config.telegramSourceId), null, 2));
+      return 0;
+    }
+    if (subcommand === "ingest") {
+      if (!config.telegramEnabled) throw new Error("Telegram ingestion is disabled; set LIFE_OS_TELEGRAM_ENABLED=true");
+      if (config.telegramChatIds.length === 0) throw new Error("Telegram ingestion requires LIFE_OS_TELEGRAM_CHAT_IDS");
+      const limitPerChat = Number(args.flags.limit ?? "50");
+      if (!Number.isInteger(limitPerChat) || limitPerChat < 1 || limitPerChat > 100) {
+        throw new Error("--limit must be an integer between 1 and 100");
+      }
+      const client = new NativeTdJsonClient({ ...loadTelegramTdLibConfig(),
+        databaseDirectory: config.telegramDatabaseDirectory });
+      try {
+        const report = await ingestTelegramChanges({ adapter: new TdLibTelegramAdapter(client), store,
+          sourceId: config.telegramSourceId, chatIds: config.telegramChatIds, limitPerChat });
+        console.log(JSON.stringify(report, null, 2));
+        return 0;
+      } finally { client.close(); }
+    }
+  }
+
   printUsage();
   return 2;
 }
@@ -561,7 +593,9 @@ function printUsage(): void {
   life-os message review-extractions --vault <path>
   life-os calendar ingest --vault <path>
   life-os calendar status --vault <path>
-  life-os message triage --vault <path> [--limit <n>]`);
+  life-os message triage --vault <path> [--limit <n>]
+  life-os telegram ingest --vault <path> [--limit <1-100>]
+  life-os telegram status --vault <path>`);
 }
 
 const exitCode = await main(Bun.argv.slice(2));

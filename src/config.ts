@@ -17,6 +17,10 @@ export interface Config {
   imessageSelectionMode: "allowlist" | "all_except";
   imessageConversationIds: string[];
   calendarEnabled: boolean;
+  telegramEnabled: boolean;
+  telegramSourceId: string;
+  telegramChatIds: string[];
+  telegramDatabaseDirectory: string;
   envFilePath: string;
 }
 
@@ -60,6 +64,12 @@ export function loadConfig(options: { vaultPath?: string } = {}): Config {
         : Bun.env.LIFE_OS_IMESSAGE_CONVERSATION_IDS ?? "",
     ),
     calendarEnabled: Bun.env.LIFE_OS_CALENDAR_ENABLED === "true",
+    telegramEnabled: Bun.env.LIFE_OS_TELEGRAM_ENABLED === "true",
+    telegramSourceId: Bun.env.LIFE_OS_TELEGRAM_SOURCE_ID ?? "primary",
+    telegramChatIds: parseTelegramChatIds(Bun.env.LIFE_OS_TELEGRAM_CHAT_IDS ?? ""),
+    telegramDatabaseDirectory: resolve(expandHome(
+      Bun.env.LIFE_OS_TELEGRAM_DATABASE_PATH ?? `${defaultDataDir}/tdlib`,
+    )),
     envFilePath,
   };
 }
@@ -79,6 +89,25 @@ function parseIMessageConversationIds(value: string): string[] {
     throw new Error("invalid iMessage conversation identifier in allowlist");
   }
   return ids;
+}
+
+export interface TelegramTdLibConfig {
+  apiId: number; apiHash: string; databaseEncryptionKey: string; libraryPath?: string;
+}
+
+export function loadTelegramTdLibConfig(): TelegramTdLibConfig {
+  ensureExternalEnvironment();
+  const apiId = Number(Bun.env.TELEGRAM_API_ID);
+  const apiHash = Bun.env.TELEGRAM_API_HASH;
+  const databaseEncryptionKey = Bun.env.TELEGRAM_DATABASE_ENCRYPTION_KEY;
+  if (!Number.isSafeInteger(apiId) || apiId < 1 || !apiHash || !databaseEncryptionKey) {
+    throw new Error("TDLib requires TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_DATABASE_ENCRYPTION_KEY");
+  }
+  for (const value of [apiHash, databaseEncryptionKey]) {
+    if (value.startsWith("op://")) throw new Error("unresolved 1Password reference; run Life OS through op run");
+  }
+  const libraryPath = Bun.env.LIFE_OS_TDLIB_LIBRARY_PATH;
+  return { apiId, apiHash, databaseEncryptionKey, ...(libraryPath ? { libraryPath } : {}) };
 }
 
 export interface GmailAuthConfig {
@@ -107,7 +136,7 @@ export function loadGmailAuthConfig(refreshToken: string): GmailAuthConfig {
 export function ensureExternalEnvironment(): string {
   const envFilePath = resolve(expandHome(Bun.env.LIFE_OS_ENV_FILE ?? "~/.config/life-os/.env"));
   if (externalEnvironmentLoaded) return envFilePath;
-  rejectWorkspaceGmailSecrets();
+  rejectWorkspaceProviderSecrets();
   if (existsSync(envFilePath)) {
     const stats = lstatSync(envFilePath);
     if (stats.isSymbolicLink()) throw new Error(`Life OS environment file must not be a symlink: ${envFilePath}`);
@@ -122,12 +151,20 @@ export function ensureExternalEnvironment(): string {
   return envFilePath;
 }
 
-function rejectWorkspaceGmailSecrets(): void {
-  const sensitive = /^\s*(GMAIL_CLIENT_ID|GMAIL_CLIENT_SECRET|GMAIL_REFRESH_TOKEN)\s*=/m;
+function rejectWorkspaceProviderSecrets(): void {
+  const sensitive = /^\s*(GMAIL_CLIENT_ID|GMAIL_CLIENT_SECRET|GMAIL_REFRESH_TOKEN|TELEGRAM_API_ID|TELEGRAM_API_HASH|TELEGRAM_DATABASE_ENCRYPTION_KEY)\s*=/m;
   for (const name of [".env", ".env.local", ".env.development", ".env.production", ".env.test"]) {
     const path = resolve(process.cwd(), name);
     if (existsSync(path) && sensitive.test(readFileSync(path, "utf8"))) {
-      throw new Error(`Gmail credentials must not be stored in workspace environment file: ${path}`);
+      throw new Error(`Provider credentials must not be stored in workspace environment file: ${path}`);
     }
   }
+}
+
+function parseTelegramChatIds(value: string): string[] {
+  const ids = [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+  if (ids.length > 100 || ids.some((id) => !/^-?[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id)))) {
+    throw new Error("LIFE_OS_TELEGRAM_CHAT_IDS must be at most 100 comma-separated TDLib chat identifiers");
+  }
+  return ids;
 }

@@ -1,4 +1,4 @@
-export const schemaVersion = 11;
+export const schemaVersion = 12;
 
 export const ddl = [
   `
@@ -510,5 +510,79 @@ export const ddl = [
   `
   CREATE INDEX IF NOT EXISTS idx_calendar_events_window
   ON calendar_events(account_id, start_at, end_at)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS telegram_sources (
+    source_id TEXT PRIMARY KEY,
+    normalizer_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS telegram_chat_cursors (
+    source_id TEXT NOT NULL REFERENCES telegram_sources(source_id),
+    chat_id TEXT NOT NULL,
+    source_chat_id_hash TEXT NOT NULL,
+    last_source_message_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(source_id, chat_id),
+    UNIQUE(source_id, source_chat_id_hash)
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS telegram_ingestion_runs (
+    ingestion_run_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES telegram_sources(source_id),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL,
+    discovered_count INTEGER NOT NULL DEFAULT 0,
+    ingested_count INTEGER NOT NULL DEFAULT 0,
+    unchanged_count INTEGER NOT NULL DEFAULT 0,
+    unavailable_text_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS telegram_messages (
+    source_id TEXT NOT NULL REFERENCES telegram_sources(source_id),
+    message_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    sent_at TEXT NOT NULL,
+    edited_at TEXT,
+    direction TEXT NOT NULL,
+    sender_type TEXT NOT NULL,
+    sender_hash TEXT,
+    content_type TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    current_version_hash TEXT NOT NULL,
+    last_processed_hash TEXT,
+    last_extraction_hash TEXT,
+    ingestion_state TEXT NOT NULL,
+    first_ingested_at TEXT NOT NULL,
+    last_ingested_at TEXT NOT NULL,
+    PRIMARY KEY(source_id, message_id),
+    UNIQUE(source_id, chat_id, source_message_id)
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS telegram_message_versions (
+    source_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    text_hash TEXT NOT NULL,
+    text_available INTEGER NOT NULL,
+    character_count INTEGER NOT NULL,
+    normalizer_version TEXT NOT NULL,
+    discovered_at TEXT NOT NULL,
+    PRIMARY KEY(source_id, message_id, content_hash),
+    FOREIGN KEY(source_id, message_id) REFERENCES telegram_messages(source_id, message_id)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_telegram_messages_candidates
+  ON telegram_messages(source_id, last_extraction_hash, sent_at)
   `,
 ];

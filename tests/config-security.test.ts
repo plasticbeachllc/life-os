@@ -47,6 +47,34 @@ test("workspace-local Gmail credentials are rejected", () => {
   expect(result.stderr).not.toContain("workspace-secret");
 });
 
+test("secure external environment loads TDLib credentials without printing them", () => {
+  const directory = mkdtempSync(join(tmpdir(), "life-os-telegram-workspace-"));
+  const credentialsDirectory = mkdtempSync(join(tmpdir(), "life-os-telegram-credentials-"));
+  const envFile = join(credentialsDirectory, ".env");
+  writeFileSync(envFile, "TELEGRAM_API_ID=12345\nTELEGRAM_API_HASH=api-secret\nTELEGRAM_DATABASE_ENCRYPTION_KEY=db-secret\n", { mode: 0o600 });
+  const result = runConfig(directory, envFile, `
+    import { loadTelegramTdLibConfig } from ${JSON.stringify(configModule)};
+    const value = loadTelegramTdLibConfig();
+    console.log(value.apiId === 12345 ? "loaded" : "wrong");
+  `);
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("loaded");
+  expect(result.stdout).not.toContain("api-secret");
+  expect(result.stdout).not.toContain("db-secret");
+});
+
+test("workspace-local TDLib credentials are rejected", () => {
+  const directory = mkdtempSync(join(tmpdir(), "life-os-telegram-workspace-env-"));
+  writeFileSync(join(directory, ".env"), "TELEGRAM_API_HASH=workspace-secret\n", { mode: 0o600 });
+  const result = runConfig(directory, join(directory, "missing.env"), `
+    import { ensureExternalEnvironment } from ${JSON.stringify(configModule)};
+    ensureExternalEnvironment();
+  `);
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr).toContain("must not be stored in workspace");
+  expect(result.stderr).not.toContain("workspace-secret");
+});
+
 function runConfig(cwd: string, envFile: string, source: string): { exitCode: number; stdout: string; stderr: string } {
   const result = Bun.spawnSync(["bun", "-e", source], {
     cwd,
