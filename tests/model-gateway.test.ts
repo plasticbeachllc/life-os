@@ -72,3 +72,40 @@ test("model gateway rejects invalid structured output before caching", async () 
   })).rejects.toThrow("invalid output");
   expect(store.countRows("model_cache")).toBe(0);
 });
+
+test("model gateway evicts invalid cached output, audits failure, and recomputes", async () => {
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-model-cache-invalid-")), "model.db"));
+  store.migrate();
+  let adapterCalls = 0;
+  const gateway = new ModelGateway(store, {
+    complete: async () => ({
+      output: adapterCalls++ === 0 ? { wrong: true } : { ok: true },
+      usage: { inputTokens: 2, outputTokens: 1 },
+    }),
+  });
+  const request = (validate: boolean) => gateway.complete({
+    workflow: "cached_validation", taskType: "test", model: "test",
+    promptVersion: "v1", sourceHash: "sha256:source", instructions: "Return valid output.",
+    manifest: buildContext([], {
+      maxInputTokens: 10, reservedOutputTokens: 0, sourceTokens: 0, entityStateTokens: 0,
+      recentChangeTokens: 0, policyTokens: 0, contingencyTokens: 0,
+    }),
+    cache: { schemaVersion: "1", policyVersion: "policy-v1" },
+    ...(validate ? { validateOutput: (output: unknown) => {
+      if (!output || typeof output !== "object" || !("ok" in output)) throw new Error("invalid output");
+    } } : {}),
+  });
+
+  expect(await request(false)).toEqual({ wrong: true });
+  expect(await request(true)).toEqual({ ok: true });
+  expect(adapterCalls).toBe(2);
+  expect(store.countRows("model_cache")).toBe(1);
+  const db = store.open();
+  try {
+    expect(db.query<{ count: number }, []>(
+      "SELECT COUNT(*) AS count FROM model_calls WHERE status = 'failed' AND cached = 1",
+    ).get()!.count).toBe(1);
+  } finally {
+    db.close();
+  }
+});

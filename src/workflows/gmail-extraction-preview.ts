@@ -21,7 +21,7 @@ export interface GmailExtractionPreview {
 
 export async function previewGmailExtractionContext(input: {
   adapter: GmailSourceAdapter; store: OperationalStore; accountId: string;
-  policyPrompt?: CompiledPolicyPrompt;
+  policyVersion?: string; policyPrompt?: CompiledPolicyPrompt;
 }): Promise<GmailExtractionPreview | undefined> {
   input.store.migrate();
   const gmailStore = new GmailStore(input.store);
@@ -54,7 +54,11 @@ export async function previewGmailExtractionContext(input: {
     }));
   const evidenceId = `gmail:${normalized.messageId}:${normalized.contentHash}`;
   const threadStateHash = gmailThreadStateHash(normalizedThread);
-  const promptInjectionIndicators = detectPromptInjection(redactedSelected.text);
+  const promptInjectionIndicators = detectPromptInjection([
+    boundedText(redactedSubject.text, 1200),
+    boundedText(redactedSelected.text, 6000),
+    ...redactedTurns.map(({ redacted }) => boundedText(redacted.text, 1200)),
+  ].join("\n"));
   const entityCandidates = exactEntityCandidates(input.store, normalized);
   const candidates: ContextCandidate[] = [
     {
@@ -65,7 +69,7 @@ export async function previewGmailExtractionContext(input: {
         internal_date: normalized.internalDate,
         message_type: gmailMessageType(normalized),
         from: normalized.fromAddress, to: normalized.toAddresses,
-        cc: normalized.ccAddresses, subject: redactedSubject.text,
+        cc: normalized.ccAddresses, subject: boundedText(redactedSubject.text, 1200),
         subject_sensitive_entities_redacted: redactedSubject.findings.map((finding) => finding.entityType),
         prompt_injection_indicators: promptInjectionIndicators,
       },
@@ -99,7 +103,7 @@ export async function previewGmailExtractionContext(input: {
       relevance: 0.9, impact: 0.8, recency: 1,
       sourceRefs: entityCandidates.flatMap((candidate) => [candidate.entity_id, candidate.state_id]),
     }] : []),
-    policyCandidate(input.policyPrompt),
+    policyCandidate(input.policyPrompt, input.policyVersion),
   ];
   const manifest = buildContext(candidates, {
     maxInputTokens: 3900, reservedOutputTokens: 900,
@@ -114,14 +118,14 @@ export async function previewGmailExtractionContext(input: {
   };
 }
 
-function policyCandidate(policy?: CompiledPolicyPrompt): ContextCandidate {
+function policyCandidate(policy?: CompiledPolicyPrompt, policyVersion?: string): ContextCandidate {
   const content = policy
     ? promptContext(gmailPromptSpec, policy)
-    : { prompt_contract: { workflow: gmailPromptSpec.workflow, spec_hash: gmailPromptSpec.specHash, rules: gmailPromptSpec.rules } };
+    : { prompt_contract: { workflow: gmailPromptSpec.workflow, spec_hash: gmailPromptSpec.specHash, rules: gmailPromptSpec.rules }, policy_version: policyVersion ?? "unvalidated-preview" };
   return {
     id: `policy:${gmailPromptSpec.version}`, category: "policy", retrievalLevel: 0,
     content, tokenEstimate: Math.ceil(JSON.stringify(content).length / 4),
-    relevance: 1, impact: 1, sourceRefs: [gmailPromptSpec.specHash, ...(policy ? [policy.version] : [])],
+    relevance: 1, impact: 1, sourceRefs: [gmailPromptSpec.specHash, ...(policyVersion ? [policyVersion] : [])],
   };
 }
 

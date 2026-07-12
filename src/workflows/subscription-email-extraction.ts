@@ -100,6 +100,10 @@ export async function submitSubscriptionEmailExtraction(input: {
   const manifest = input.store.getContextManifestForCall(input.callId);
   if (!manifest || manifest.contextHash !== call.contextHash) throw new Error("context manifest mismatch");
   const preparedSource = preparedSourceIdentity(manifest.includedItems);
+  const preparedPolicyVersion = findStringField(manifest.includedItems, "policy_version");
+  if (preparedPolicyVersion !== input.policyVersion) {
+    throw new Error("prepared Gmail policy version mismatch; prepare extraction again");
+  }
   const gmailStore = new GmailStore(input.store);
   if (!preparedSource || preparedSource.sourceHash !== call.sourceHash
     || preparedSource.threadStateHash !== input.threadStateHash
@@ -128,6 +132,23 @@ export async function submitSubscriptionEmailExtraction(input: {
     completedAt, status: "completed",
   });
   return { extractionId, output: input.output };
+}
+
+function findStringField(value: unknown, key: string): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringField(item, key);
+      if (found !== undefined) return found;
+    }
+  } else if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record[key] === "string") return record[key];
+    for (const item of Object.values(record)) {
+      const found = findStringField(item, key);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
 }
 
 function preparedSourceIdentity(value: unknown): {

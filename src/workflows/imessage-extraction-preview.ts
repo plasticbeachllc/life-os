@@ -60,7 +60,10 @@ export async function previewIMessageExtractionContext(input: {
   const deltaEvidenceIds = turns.filter((turn) => turn.is_new_or_changed)
     .map((turn) => turn.evidence_id);
   if (deltaEvidenceIds.length === 0) deltaEvidenceIds.push(selectedEvidenceId);
-  const promptInjectionIndicators = detectPromptInjection(selectedRedaction.text);
+  const promptInjectionIndicators = detectPromptInjection([
+    boundedText(selectedRedaction.text, 8000),
+    ...redactions.map((redaction) => boundedText(redaction.text, 2000)),
+  ].join("\n"));
   const candidates: ContextCandidate[] = [
     {
       id: `imessage-metadata:${selected.messageId}`, category: "source", retrievalLevel: 0,

@@ -67,7 +67,23 @@ export class ModelGateway {
 
     const cached = cacheKey ? this.store.getModelCache(cacheKey) : undefined;
     if (cached) {
-      input.validateOutput?.(cached.output);
+      try {
+        input.validateOutput?.(cached.output);
+      } catch (error) {
+        this.store.recordModelCall({
+          callId, ...(input.runId ? { runId: input.runId } : {}), workflow: input.workflow,
+          taskType: input.taskType, model: input.model, promptVersion: input.promptVersion,
+          ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
+          contextHash: input.manifest.contextHash, cached: true, startedAt,
+          completedAt: new Date().toISOString(), status: "failed",
+          error: `invalid cached output: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        this.store.deleteModelCache(cacheKey!);
+        return this.complete({
+          ...input,
+          manifest: { ...input.manifest, manifestId: newId("manifest") },
+        });
+      }
       this.store.recordModelCall({
         callId, ...(input.runId ? { runId: input.runId } : {}), workflow: input.workflow,
         taskType: input.taskType, model: input.model, promptVersion: input.promptVersion,
