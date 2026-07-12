@@ -6,7 +6,7 @@
 	import NotificationInbox from "$lib/life-os/NotificationInbox.svelte";
 	import type { InboxNotification } from "$lib/life-os/types";
 	import { Inbox, MessageCircle, Settings2, Sparkles } from "@lucide/svelte";
-	import { untrack } from "svelte";
+	import { onMount, untrack } from "svelte";
 	import type { PageData } from "./$types";
 
 	let { data }: { data: PageData } = $props();
@@ -16,6 +16,14 @@
 	let notifications = $state<InboxNotification[]>(
 		untrack(() => data.notifications.map((notification: InboxNotification) => ({ ...notification }))),
 	);
+
+	onMount(() => {
+		const releaseSession = () => {
+			void fetch("/api/chat/session", { method: "DELETE", keepalive: true });
+		};
+		window.addEventListener("pagehide", releaseSession);
+		return () => window.removeEventListener("pagehide", releaseSession);
+	});
 
 	function selectNotification(notification: InboxNotification) {
 		selectedNotification = notification;

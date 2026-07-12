@@ -2,18 +2,23 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { UiNotificationSnapshot } from "../../../src/ui/notifications";
+import type { UiNotificationBundle } from "../../../src/ui/notifications";
+import { ensureChatSession } from "$lib/server/chat-session";
+import { prewarmNotificationSummaries } from "$lib/server/notification-summaries";
 import type { PageServerLoad } from "./$types";
 
 interface NotificationModule {
-	compileUiNotifications: () => UiNotificationSnapshot;
+	compileUiNotificationBundle: () => UiNotificationBundle;
 }
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async ({ cookies }) => {
+	ensureChatSession(cookies);
 	const root = repositoryRoot();
 	const moduleUrl = pathToFileURL(resolve(root, "src/ui/notifications.ts")).href;
 	const notificationModule = await import(/* @vite-ignore */ moduleUrl) as NotificationModule;
-	return notificationModule.compileUiNotifications();
+	const bundle = notificationModule.compileUiNotificationBundle();
+	prewarmNotificationSummaries(bundle.summaryCandidates);
+	return bundle.snapshot;
 };
 
 function repositoryRoot(): string {

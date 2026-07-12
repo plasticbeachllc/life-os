@@ -4,8 +4,8 @@
 
 LifeOS begins as two connected surfaces:
 
-- **Inbox** reports what LifeOS handled, asks for clarification when evidence is ambiguous, and reserves
-  approvals for sensitive or outside-world actions.
+- **Inbox** is an interruption queue for approvals, blocked decisions, and material risks. Routine
+  processing remains silent and completed work stays available in an unbadged Activity history.
 - **Chat** lets the user understand, refine, or undo internal organization and review proposed external
   actions.
 
@@ -21,7 +21,7 @@ and checked-in shadcn-svelte components. It includes:
 
 - a desktop split view with Inbox and Chat visible together;
 - mobile Inbox and Chat tabs;
-- For you, Activity, Approvals, and All notification filters;
+- Needs you, Activity, Approvals, and All notification filters;
 - distinct receipt, clarification, and external-proposal cards;
 - selected-notification context and local lifecycle behavior;
 - a ChatGPT-authenticated Codex App Server chat composer with streamed text;
@@ -61,9 +61,14 @@ addresses, headers, subjects, source hashes, raw excerpts, or arbitrary paths.
 
 Categories in the prototype are:
 
-- `for_you` for ambiguity or a decision LifeOS cannot safely infer;
+- `needs_you` for a blocked decision or material risk that could change what the user does;
 - `activity` for automatic internal work and routine updates;
 - `approvals` for sensitive or outside-world proposals.
+
+Processing backlog, successful synchronization, prompt-version changes, and routine automatic work do
+not enter `needs_you`. Clarification qualifies only when ambiguity blocks valuable work and LifeOS
+cannot safely choose a reasonable default. Activity remains auditable but does not carry an attention
+badge.
 
 Presentation tones are `question`, `receipt`, `proposal`, and `update`. Lifecycle is separately tracked
 as `open` or `resolved` so visual importance is not confused with completion state.
@@ -87,7 +92,7 @@ The browser must never construct a path, patch, action ID, task ID, or confirmat
 | Action class | Examples | Interaction |
 | --- | --- | --- |
 | Deterministic, internal, reversible | Create a task from a high-confidence owned email commitment; organize derived state | Act automatically, emit receipt, offer undo |
-| Ambiguous | Unclear owner, date, project, or conflicting evidence | Ask for clarification |
+| Material and blocked by ambiguity | Unclear owner, date, project, or conflicting evidence that prevents valuable work | Ask one focused clarification |
 | Sensitive or destructive internal | Delete canonical data, merge entities, rewrite human prose, bulk changes | Propose and confirm |
 | Outside world | Send email, message a person, create or modify an external calendar event | Propose, review exact effect, confirm |
 
@@ -165,6 +170,20 @@ the installed CLI changes.
 - Compile deterministic sanitized notifications from current operational state.
 - Load notifications through SvelteKit server data without exposing SQLite to the browser.
 - Connect chat through Codex App Server stdio with ChatGPT-managed authentication.
+- Generate selected-item summaries automatically with a fixed `gpt-5.6-luna` turn override for low latency;
+  keep normal conversation on the configured thread model.
+- Start a distinct ephemeral App Server thread for each selected card and retain session-local conversation
+  history in a picker; do not persist chat content in SQLite or the browser.
+- Deterministically derive a versioned summary candidate for every notification, pre-generate its 2-3 sentence
+  Luna reaction after projection, and cache the structured sentences by workflow, prompt, model, source, context, schema, and
+  policy identity. Card selection reads this cache and uses on-demand generation only to recover from a failed
+  or incomplete prewarm.
+- Namespace every App Server conversation by an opaque HttpOnly server session, delete session threads on page
+  teardown, and enforce TTL/LRU bounds as a fallback. Summary prewarming uses a bounded priority queue with
+  selected-item promotion, deduplication, retry backoff, and immediate thread cleanup.
+- Constrain Luna reactions with a JSON schema and strict post-validation: exactly 2-3 sentences, bounded sentence
+  and total lengths, deterministic action state, and rejection of addresses, URLs, hashes, identifiers, paths,
+  HTML, unexpected fields, or malformed cached output.
 - Stream bounded agent text through a narrow NDJSON endpoint.
 - Add loading, empty, degraded, and provider-disabled states.
 - Verify raw provider data and hashes never reach browser payloads.
@@ -184,7 +203,7 @@ the installed CLI changes.
 - Add a deterministic, idempotent automatic email-to-task workflow behind the revised policy.
 - Reuse atomic write, backup, audit, source/target hash, and undo protections.
 - Emit sanitized Activity receipts containing stable internal action references.
-- Route low-confidence, ambiguous, or ineligible extraction items to For you without mutation.
+- Route only material ambiguities that block valuable work to Needs you without mutation.
 - Test changed-thread invalidation, duplicate suppression, failure receipts, and undo drift rejection.
 
 ### Phase 4 — External proposal review
