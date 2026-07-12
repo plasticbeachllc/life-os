@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>LifeOS</title>
+  <rect width="32" height="32" rx="8" fill="#171717"/>
+  <path fill="#fff" d="M16 6c.5 5.7 2.3 7.5 8 8-5.7.5-7.5 2.3-8 8-.5-5.7-2.3-7.5-8-8 5.7-.5 7.5-2.3 8-8Z"/>
+  <circle cx="24" cy="23" r="2" fill="#fff"/>
+</svg>

@@ -24,6 +24,7 @@ import { ingestImportantGmail } from "./workflows/gmail-ingest";
 import { MacOsKeychainGmailCredentialStore } from "./gmail/keychain";
 import { authorizeGmailDesktop } from "./workflows/gmail-auth";
 import { GmailStore } from "./gmail/store";
+import { currentEmailExtractionIdentity } from "./gmail/extraction-contract";
 import { previewGmailExtractionContext } from "./workflows/gmail-extraction-preview";
 import { IMessageStore } from "./imessage/store";
 import { ingestIMessageChanges } from "./workflows/imessage-ingest";
@@ -289,7 +290,9 @@ async function main(argv: string[]): Promise<number> {
       const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
       const store = new OperationalStore(config.databasePath);
       store.migrate();
-      console.log(JSON.stringify(new GmailStore(store).inspectionSummary(config.gmailAccountId), null, 2));
+      console.log(JSON.stringify(new GmailStore(store).inspectionSummary(
+        config.gmailAccountId, currentEmailExtractionIdentity,
+      ), null, 2));
       return 0;
     }
     if (subcommand === "review-extractions") {
@@ -297,7 +300,9 @@ async function main(argv: string[]): Promise<number> {
       const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
       const store = new OperationalStore(config.databasePath);
       store.migrate();
-      console.log(JSON.stringify(new GmailStore(store).extractionReview(config.gmailAccountId), null, 2));
+      console.log(JSON.stringify(new GmailStore(store).extractionReview(
+        config.gmailAccountId, currentEmailExtractionIdentity,
+      ), null, 2));
       return 0;
     }
     if (subcommand === "auth") {

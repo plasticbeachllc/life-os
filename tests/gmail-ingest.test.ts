@@ -7,6 +7,7 @@ import type { GmailApiMessage, GmailApiThread, GmailSourceAdapter } from "../src
 import { OperationalStore } from "../src/db/store";
 import { normalizeGmailMessage } from "../src/gmail/normalizer";
 import { GmailStore } from "../src/gmail/store";
+import { currentEmailExtractionIdentity } from "../src/gmail/extraction-contract";
 import { ingestImportantGmail } from "../src/workflows/gmail-ingest";
 import { previewGmailExtractionContext } from "../src/workflows/gmail-extraction-preview";
 import {
@@ -135,6 +136,28 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   expect(store.countRows("gmail_message_versions")).toBe(1);
 }, 15_000);
 
+test("extraction preview distinguishes received, draft, and sent thread messages", async () => {
+  const selected = message({
+    id: "message_received", body: "Can you review this?", internalDate: "1000",
+  });
+  const draft = message({
+    id: "message_draft", body: "Draft response", labels: ["DRAFT"], internalDate: "2000",
+  });
+  const sent = message({
+    id: "message_sent", body: "Sent response", labels: ["SENT"], internalDate: "3000",
+  });
+  const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected, draft, sent] });
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-message-types-")), "store.db"));
+  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+
+  const preview = await previewGmailExtractionContext({ adapter, store, accountId: "me" });
+  const context = JSON.stringify(preview?.manifest.includedItems);
+
+  expect(context).toContain('"message_type":"received"');
+  expect(context).toContain('"message_type":"draft"');
+  expect(context).toContain('"message_type":"sent"');
+});
+
 test("extraction preview rejects source drift until re-ingestion", async () => {
   const selected = message({ id: "message_stale", body: "Original content" });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
@@ -203,6 +226,19 @@ test("subscription extraction validates evidence and persists no proposal or bod
   expect((await prepareSubscriptionEmailExtraction({
     adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
   })).empty).toBe(true);
+  const versionDb = store.open();
+  try {
+    versionDb.query("UPDATE gmail_extractions SET prompt_version = 'email-extraction-old'").run();
+  } finally {
+    versionDb.close();
+  }
+  expect(new GmailStore(store).extractionReview("me", currentEmailExtractionIdentity).total).toBe(0);
+  expect(new GmailStore(store).inspectionSummary("me", currentEmailExtractionIdentity).unextracted).toBe(1);
+  const replay = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  expect(replay.callId).toStartWith("call_");
+  expect(new GmailStore(store).inspectionSummary("me").unextracted).toBe(1);
 }, 15_000);
 
 test("subscription extraction rejects source drift", async () => {

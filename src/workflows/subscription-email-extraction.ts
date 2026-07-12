@@ -1,11 +1,12 @@
 import type { GmailSourceAdapter } from "../adapters/gmail";
 import type { OperationalStore } from "../db/store";
+import {
+  EMAIL_EXTRACTION_PROMPT_VERSION,
+  EMAIL_EXTRACTION_SCHEMA_VERSION,
+} from "../gmail/extraction-contract";
 import { GmailStore } from "../gmail/store";
 import { newId } from "../util/ids";
 import { previewGmailExtractionContext } from "./gmail-extraction-preview";
-
-export const EMAIL_EXTRACTION_PROMPT_VERSION = "email-extraction-v1";
-export const EMAIL_EXTRACTION_SCHEMA_VERSION = "email-extraction-schema-v1";
 
 const classifications = [
   "actionable", "relationship_update", "project_update", "calendar_relevant",
@@ -38,9 +39,16 @@ export async function prepareSubscriptionEmailExtraction(input: {
   adapter: GmailSourceAdapter; store: OperationalStore; accountId: string;
   model: string; policyVersion: string;
 }): Promise<Record<string, unknown>> {
+  input.store.migrate();
+  const gmailStore = new GmailStore(input.store);
+  gmailStore.invalidateExtractionVersion({
+    accountId: input.accountId,
+    promptVersion: EMAIL_EXTRACTION_PROMPT_VERSION,
+    schemaVersion: EMAIL_EXTRACTION_SCHEMA_VERSION,
+    policyVersion: input.policyVersion,
+  });
   const preview = await previewGmailExtractionContext(input);
   if (!preview) return { cached: false, empty: true, message: "No unextracted important messages." };
-  const gmailStore = new GmailStore(input.store);
   const cached = gmailStore.findExtraction({
     accountId: input.accountId, messageId: preview.messageId, sourceHash: preview.sourceHash,
     promptVersion: EMAIL_EXTRACTION_PROMPT_VERSION,

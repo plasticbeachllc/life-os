@@ -43,6 +43,7 @@ export async function previewGmailExtractionContext(input: {
   const turns = redactedTurns.map(({ turn, redacted }) => ({
       message_id: turn.messageId,
       internal_date: turn.internalDate,
+      message_type: gmailMessageType(turn),
       from: turn.fromAddress,
       authored_excerpt: boundedText(redacted.text, 1200),
       sensitive_entities_redacted: redacted.findings.map((finding) => finding.entityType),
@@ -59,6 +60,7 @@ export async function previewGmailExtractionContext(input: {
         evidence_id: evidenceId, message_id: normalized.messageId,
         thread_id: normalized.threadId, thread_state_hash: threadStateHash,
         internal_date: normalized.internalDate,
+        message_type: gmailMessageType(normalized),
         from: normalized.fromAddress, to: normalized.toAddresses,
         cc: normalized.ccAddresses, subject: redactedSubject.text,
         subject_sensitive_entities_redacted: redactedSubject.findings.map((finding) => finding.entityType),
@@ -71,6 +73,7 @@ export async function previewGmailExtractionContext(input: {
       id: `gmail-authored:${normalized.messageId}`, category: "source", retrievalLevel: 2,
       content: {
         evidence_id: evidenceId,
+        message_type: gmailMessageType(normalized),
         untrusted_authored_text: boundedText(redactedSelected.text, 6000),
         truncated: redactedSelected.text.length > 6000,
         sensitive_entities_redacted: redactedSelected.findings.map((finding) => finding.entityType),
@@ -117,6 +120,12 @@ export async function previewGmailExtractionContext(input: {
     manifest, promptInjectionIndicators,
     modelCalls: 0, retainedBody: false,
   };
+}
+
+function gmailMessageType(message: ReturnType<typeof normalizeGmailMessage>): "draft" | "sent" | "received" {
+  if (message.labelIds.includes("DRAFT")) return "draft";
+  if (message.labelIds.includes("SENT")) return "sent";
+  return "received";
 }
 
 function exactEntityCandidates(store: OperationalStore, message: ReturnType<typeof normalizeGmailMessage>): Array<{

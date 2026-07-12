@@ -27,6 +27,7 @@ import {
   submitSubscriptionMorningReasoning,
 } from "../workflows/subscription-reasoning";
 import { GmailStore } from "../gmail/store";
+import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { MacOsKeychainGmailCredentialStore } from "../gmail/keychain";
 import { previewGmailExtractionContext } from "../workflows/gmail-extraction-preview";
 import { ingestCalendar } from "../workflows/calendar-ingest";
@@ -125,7 +126,9 @@ export function createLifeOsMcpServer(): McpServer {
     const config = loadConfig();
     const store = new OperationalStore(config.databasePath);
     store.migrate();
-    return jsonResult(new GmailStore(store).inspectionSummary(config.gmailAccountId));
+    return jsonResult(new GmailStore(store).inspectionSummary(
+      config.gmailAccountId, currentEmailExtractionIdentity,
+    ));
   });
 
   server.registerTool("life_os_calendar_status", {
@@ -184,7 +187,9 @@ export function createLifeOsMcpServer(): McpServer {
     const config = loadConfig();
     const store = new OperationalStore(config.databasePath);
     store.migrate();
-    return jsonResult(new GmailStore(store).extractionReview(config.gmailAccountId));
+    return jsonResult(new GmailStore(store).extractionReview(
+      config.gmailAccountId, currentEmailExtractionIdentity,
+    ));
   });
 
   server.registerTool("life_os_propose_email_task", {
