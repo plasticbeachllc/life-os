@@ -10,31 +10,47 @@ export interface TdJsonClientConfig {
   libraryPath?: string;
 }
 
-type Pending = { resolve(value: Record<string, unknown>): void; reject(error: Error): void };
+type Pending = {
+  requestType: string;
+  timeout: ReturnType<typeof setTimeout>;
+  resolve(value: Record<string, unknown>): void;
+  reject(error: Error): void;
+};
+
+export interface TdJsonNativeLibrary {
+  symbols: {
+    td_create_client_id(): number;
+    td_send(clientId: number, request: Uint8Array): void;
+    td_receive(timeout: number): string | null;
+  };
+  close(): void;
+}
 
 /**
  * Thin owner of TDLib's ordered JSON stream. It deliberately exposes no generic
  * request surface outside the provider adapter.
  */
 export class NativeTdJsonClient implements TdLibJsonClient {
-  private readonly library;
+  private readonly library: TdJsonNativeLibrary;
   private readonly clientId: number;
   private readonly pending = new Map<string, Pending>();
   private authorization = "authorizationStateUnknown";
   private sequence = 0;
   private pumping = false;
+  private closed = false;
+  private pumpTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(private readonly config: TdJsonClientConfig) {
+  constructor(private readonly config: TdJsonClientConfig, nativeLibrary?: TdJsonNativeLibrary) {
     if (existsSync(config.databaseDirectory) && lstatSync(config.databaseDirectory).isSymbolicLink()) {
       throw new Error("TDLib database directory must not be a symbolic link");
     }
     mkdirSync(config.databaseDirectory, { recursive: true, mode: 0o700 });
     const libraryPath = config.libraryPath ?? `libtdjson.${suffix}`;
-    this.library = dlopen(libraryPath, {
+    this.library = nativeLibrary ?? dlopen(libraryPath, {
       td_create_client_id: { args: [], returns: FFIType.i32 },
       td_send: { args: [FFIType.i32, FFIType.buffer], returns: FFIType.void },
       td_receive: { args: [FFIType.f64], returns: FFIType.cstring },
-    });
+    }) as unknown as TdJsonNativeLibrary;
     this.clientId = this.library.symbols.td_create_client_id();
     this.startPump();
   }
@@ -47,13 +63,16 @@ export class NativeTdJsonClient implements TdLibJsonClient {
   }
 
   request<T extends Record<string, unknown>>(request: Record<string, unknown>): Promise<T> {
+    if (this.closed) return Promise.reject(new Error("TDLib client is closed"));
     const extra = `life-os-${++this.sequence}`;
+    const requestType = String(request["@type"] ?? "unknown");
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(extra);
-        reject(new Error(`TDLib request timed out: ${String(request["@type"] ?? "unknown")}`));
+        reject(new Error(`TDLib request timed out: ${requestType}`));
       }, 30_000);
       this.pending.set(extra, {
+        requestType, timeout,
         resolve: (value) => { clearTimeout(timeout); resolve(value as T); },
         reject: (error) => { clearTimeout(timeout); reject(error); },
       });
@@ -62,7 +81,16 @@ export class NativeTdJsonClient implements TdLibJsonClient {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.pumping = false;
+    if (this.pumpTimer) clearTimeout(this.pumpTimer);
+    this.pumpTimer = undefined;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("TDLib client closed before request completed"));
+    }
+    this.pending.clear();
     this.send({ "@type": "close" });
     this.library.close();
   }
@@ -74,8 +102,11 @@ export class NativeTdJsonClient implements TdLibJsonClient {
       try {
         const raw = this.library.symbols.td_receive(0.01);
         if (raw) this.handle(JSON.parse(String(raw)) as Record<string, unknown>);
+      } catch {
+        // Native receive/JSON failures are contained; requests retain their
+        // bounded timeout and shutdown will reject them deterministically.
       } finally {
-        if (this.pumping) setTimeout(pump, 5);
+        if (this.pumping) this.pumpTimer = setTimeout(pump, 5);
       }
     };
     pump();
@@ -109,7 +140,7 @@ export class NativeTdJsonClient implements TdLibJsonClient {
     if (!pending) return;
     this.pending.delete(extra);
     if (value["@type"] === "error") {
-      pending.reject(new Error(`TDLib error ${String(value.code ?? "")}: ${String(value.message ?? "unknown")}`));
+      pending.reject(sanitizedTdLibError(value.code, pending.requestType));
     } else pending.resolve(value);
   }
 
@@ -117,4 +148,14 @@ export class NativeTdJsonClient implements TdLibJsonClient {
     const encoded = Buffer.from(`${JSON.stringify(request)}\0`, "utf8");
     this.library.symbols.td_send(this.clientId, encoded);
   }
+}
+
+function sanitizedTdLibError(code: unknown, requestType: string): Error {
+  const numericCode = typeof code === "number" ? code : Number(code);
+  const classification = numericCode === 400 ? "invalid_request"
+    : numericCode === 401 ? "authorization_required"
+      : numericCode === 404 ? "not_found"
+        : numericCode === 429 ? "rate_limited"
+          : numericCode >= 500 ? "provider_unavailable" : "provider_error";
+  return new Error(`TDLib ${requestType} failed: ${classification}`);
 }

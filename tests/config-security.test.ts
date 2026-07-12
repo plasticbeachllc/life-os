@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -73,6 +73,25 @@ test("workspace-local TDLib credentials are rejected", () => {
   expect(result.exitCode).not.toBe(0);
   expect(result.stderr).toContain("must not be stored in workspace");
   expect(result.stderr).not.toContain("workspace-secret");
+});
+
+test("TDLib native library override rejects symbolic links", () => {
+  const directory = mkdtempSync(join(tmpdir(), "life-os-telegram-library-"));
+  const credentialsDirectory = mkdtempSync(join(tmpdir(), "life-os-telegram-library-env-"));
+  const library = join(credentialsDirectory, "libtdjson.dylib");
+  const link = join(credentialsDirectory, "linked-tdjson.dylib");
+  writeFileSync(library, "not loaded by this config test");
+  symlinkSync(library, link);
+  const envFile = join(credentialsDirectory, ".env");
+  writeFileSync(envFile, `TELEGRAM_API_ID=12345\nTELEGRAM_API_HASH=api-secret\nTELEGRAM_DATABASE_ENCRYPTION_KEY=db-secret\nLIFE_OS_TDLIB_LIBRARY_PATH=${link}\n`, { mode: 0o600 });
+  const result = runConfig(directory, envFile, `
+    import { loadTelegramTdLibConfig } from ${JSON.stringify(configModule)};
+    loadTelegramTdLibConfig();
+  `);
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr).toContain("must not be a symbolic link");
+  expect(result.stderr).not.toContain("api-secret");
+  expect(result.stderr).not.toContain("db-secret");
 });
 
 function runConfig(cwd: string, envFile: string, source: string): { exitCode: number; stdout: string; stderr: string } {

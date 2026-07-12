@@ -83,8 +83,12 @@ export class TdLibTelegramAdapter implements TelegramSourceAdapter {
       if (!reachedCursor) {
         throw new Error("Telegram history delta exceeds the bounded 20-page synchronization window");
       }
-      chatMessages.sort((left, right) => compareMessages(left, right));
-      collected.push(...chatMessages.slice(0, input.limitPerChat));
+      const uniqueMessages = [...new Map(chatMessages.map((message) =>
+        [message.sourceMessageId, message])).values()];
+      uniqueMessages.sort((left, right) => compareMessages(left, right));
+      // limitPerChat is the TDLib page size, not an ingestion cap. Once the
+      // stored cursor is reached every collected delta must be persisted.
+      collected.push(...uniqueMessages);
     }
     return collected.sort(compareMessages);
   }
@@ -97,7 +101,7 @@ export class TdLibTelegramAdapter implements TelegramSourceAdapter {
       });
       return projectMessage(message);
     } catch (error) {
-      if (error instanceof Error && /not found/i.test(error.message)) return undefined;
+      if (error instanceof Error && /not[_ ]found/i.test(error.message)) return undefined;
       throw error;
     }
   }

@@ -73,6 +73,24 @@ test("TDLib adapter uses fixed history and message requests for only selected ch
     .rejects.toThrow("allowlist");
 });
 
+test("TDLib adapter returns every collected delta when changes exceed the page size", async () => {
+  const pages = [
+    [30, 29, 28], [28, 27, 26], [26, 25, 24], [24, 23, 20],
+  ];
+  let page = 0;
+  const client: TdLibJsonClient = {
+    authorizationState: async () => "authorizationStateReady",
+    request: async <T extends Record<string, unknown>>() => ({ messages: (pages[page++] ?? []).map((id) => ({
+      id, chat_id: -1001234567890, date: 1_750_000_000 + id, is_outgoing: false,
+      content: { "@type": "messageText", text: { text: `message ${id}` } },
+    })) }) as unknown as T,
+  };
+  const messages = await new TdLibTelegramAdapter(client).listMessageChanges({
+    chatIds: ["-1001234567890"], afterMessageIds: { "-1001234567890": "20" }, limitPerChat: 3,
+  });
+  expect(messages.map((message) => Number(message.sourceMessageId))).toEqual([23, 24, 25, 26, 27, 28, 29, 30]);
+});
+
 test("allowlisted ingestion stores metadata and immutable hashes without Telegram text", async () => {
   const { path, store } = database();
   const adapter = new FakeAdapter([sourceMessage()]);

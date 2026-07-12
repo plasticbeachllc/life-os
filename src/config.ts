@@ -107,7 +107,8 @@ export function loadTelegramTdLibConfig(): TelegramTdLibConfig {
     if (value.startsWith("op://")) throw new Error("unresolved 1Password reference; run Life OS through op run");
   }
   const libraryPath = Bun.env.LIFE_OS_TDLIB_LIBRARY_PATH;
-  return { apiId, apiHash, databaseEncryptionKey, ...(libraryPath ? { libraryPath } : {}) };
+  return { apiId, apiHash, databaseEncryptionKey,
+    ...(libraryPath ? { libraryPath: validateNativeLibraryPath(libraryPath) } : {}) };
 }
 
 export interface GmailAuthConfig {
@@ -167,4 +168,17 @@ function parseTelegramChatIds(value: string): string[] {
     throw new Error("LIFE_OS_TELEGRAM_CHAT_IDS must be at most 100 comma-separated TDLib chat identifiers");
   }
   return ids;
+}
+
+function validateNativeLibraryPath(value: string): string {
+  const path = resolve(expandHome(value));
+  if (!existsSync(path)) throw new Error(`TDLib library does not exist: ${path}`);
+  const stats = lstatSync(path);
+  if (stats.isSymbolicLink()) throw new Error(`TDLib library must not be a symbolic link: ${path}`);
+  if (!stats.isFile()) throw new Error(`TDLib library path must be a regular file: ${path}`);
+  const uid = process.getuid?.();
+  if (uid !== undefined && stats.uid !== uid && stats.uid !== 0) {
+    throw new Error(`TDLib library must be owned by the current user or root: ${path}`);
+  }
+  return path;
 }
