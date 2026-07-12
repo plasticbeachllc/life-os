@@ -25,6 +25,25 @@ test("canonical policy compiler is bounded, deterministic, and workflow-aware", 
   expect(compilePolicyPrompt(policy, "morning_reasoning").text).toContain("morning recommendations");
 });
 
+test("canonical policy compiler includes mandatory permission clauses before matching excerpts", () => {
+  const crowdedPolicy: LoadedPolicy = {
+    ...policy,
+    found: {
+      ...policy.found,
+      constitution: [
+        "# Constitution",
+        ...Array.from({ length: 13 }, (_, index) => `- Email evidence filler rule ${index + 1}.`),
+      ].join("\n"),
+      permissions: "# Permissions\n- All vault writes require an approved proposal.",
+    },
+  };
+
+  const compiled = compilePolicyPrompt(crowdedPolicy, "gmail_extraction");
+  expect(compiled.text).toContain("permissions: All vault writes require an approved proposal.");
+  expect(compiled.text.split("\n").length).toBeLessThanOrEqual(12);
+  expect(compiled.text.length).toBeLessThanOrEqual(800);
+});
+
 test("prompt contracts are concise, content-addressed, and share extraction rules", () => {
   for (const spec of [gmailPromptSpec, imessagePromptSpec, morningPromptSpec]) {
     expect(spec.version).toContain(spec.specHash.slice(7, 15));

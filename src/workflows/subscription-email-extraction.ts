@@ -215,11 +215,15 @@ function gmailEvidence(value: unknown): EvidenceDescriptor[] {
 
 function enforceInjectionConsistency(output: EmailExtractionOutput, value: unknown): void {
   const indicators: string[] = [];
+  const selectedMessageIndicators: string[] = [];
   visitRecords(value, (record) => {
     if (Array.isArray(record.prompt_injection_indicators)) indicators.push(...record.prompt_injection_indicators.map(String));
+    if (Array.isArray(record.selected_message_prompt_injection_indicators)) {
+      selectedMessageIndicators.push(...record.selected_message_prompt_injection_indicators.map(String));
+    }
   });
   if (output.promptInjectionDetected !== (indicators.length > 0)
-    || output.classification === "malicious_or_untrusted_instruction" && !output.promptInjectionDetected) {
+    || output.classification === "malicious_or_untrusted_instruction" && selectedMessageIndicators.length === 0) {
     throw new Error("email extraction contradicts deterministic prompt-injection indicators");
   }
 }
