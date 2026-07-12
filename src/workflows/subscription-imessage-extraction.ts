@@ -4,6 +4,9 @@ import { IMessageStore } from "../imessage/store";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
+import {
+  completeReasoningCall, prepareReasoningCall, requirePreparedReasoningCall,
+} from "../orchestration/prepared-reasoning";
 import { previewIMessageExtractionContext } from "./imessage-extraction-preview";
 import { refetchIMessage } from "./imessage-refetch";
 
@@ -43,20 +46,18 @@ export async function prepareSubscriptionIMessageExtraction(input: {
   });
   if (cached) return { cached: true, extractionId: cached.extractionId, output: cached.output };
 
-  const callId = newId("call");
-  const startedAt = new Date().toISOString();
-  input.store.recordModelCall({
-    callId, workflow: "imessage_extraction", taskType: "subscription_imessage_extraction",
-    model: input.model, promptVersion: IMESSAGE_EXTRACTION_PROMPT_VERSION,
-    sourceHash: preview.sourceHash, contextHash: preview.manifest.contextHash,
-    cached: false, startedAt, status: "prepared",
-  });
-  input.store.recordContextManifest({
-    ...preview.auditManifest,
-    callId,
+  const call = prepareReasoningCall({
+    store: input.store,
+    identity: {
+      workflow: "imessage_extraction", taskType: "subscription_imessage_extraction",
+      model: input.model, promptVersion: IMESSAGE_EXTRACTION_PROMPT_VERSION,
+      sourceHash: preview.sourceHash,
+    },
+    manifest: preview.manifest,
+    auditManifest: preview.auditManifest,
   });
   return {
-    cached: false, callId, conversationStateHash: preview.conversationStateHash,
+    cached: false, callId: call.callId, conversationStateHash: preview.conversationStateHash,
     promptVersion: imessagePromptSpec.version, promptSpecHash: imessagePromptSpec.specHash,
     instructions: renderInstructions(imessagePromptSpec, input.policyPrompt), schema: imessagePromptSpec.schema,
     context: preview.manifest.includedItems.map((item) => item.content),
@@ -71,12 +72,11 @@ export async function submitSubscriptionIMessageExtraction(input: {
   conversationStateHash: string; policyVersion: string; output: IMessageExtractionOutput;
   inputTokens?: number; outputTokens?: number; cachedTokens?: number;
 }): Promise<{ extractionId: string; output: IMessageExtractionOutput }> {
-  const call = input.store.getModelCall(input.callId);
-  if (!call || call.status !== "prepared" || call.taskType !== "subscription_imessage_extraction") {
-    throw new Error("prepared subscription Messages extraction call not found");
-  }
-  const manifest = input.store.getContextManifestForCall(input.callId);
-  if (!manifest || manifest.contextHash !== call.contextHash) throw new Error("context manifest mismatch");
+  const { call, manifest } = requirePreparedReasoningCall({
+    store: input.store, callId: input.callId,
+    workflow: "imessage_extraction", taskType: "subscription_imessage_extraction",
+    notFoundMessage: "prepared subscription Messages extraction call not found",
+  });
   const prepared = preparedSourceIdentity(manifest.includedItems);
   const preparedPolicyVersion = findStringField(manifest.includedItems, "policy_version");
   if (!prepared || prepared.sourceHash !== call.sourceHash
@@ -111,12 +111,14 @@ export async function submitSubscriptionIMessageExtraction(input: {
     schemaVersion: IMESSAGE_EXTRACTION_SCHEMA_VERSION,
     policyVersion: input.policyVersion, model: call.model, createdAt: completedAt,
   });
-  input.store.recordModelCall({
-    ...call,
-    ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
-    ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
-    ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
-    completedAt, status: "completed",
+  completeReasoningCall({
+    store: input.store, call,
+    usage: {
+      ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+      ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
+      ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
+    },
+    now: new Date(completedAt),
   });
   return { extractionId, output: input.output };
 }

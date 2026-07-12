@@ -1,4 +1,6 @@
 import type { GmailSourceAdapter } from "../adapters/gmail";
+import type { ContextCandidate } from "../context/builder";
+import { persistableContextManifest } from "../context/manifests";
 import type { OperationalStore } from "../db/store";
 import {
   EMAIL_EXTRACTION_PROMPT_VERSION,
@@ -8,6 +10,9 @@ import { GmailStore } from "../gmail/store";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, gmailPromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
+import {
+  completeReasoningCall, prepareReasoningCall, requirePreparedReasoningCall,
+} from "../orchestration/prepared-reasoning";
 import { previewGmailExtractionContext } from "./gmail-extraction-preview";
 
 export interface EmailExtractionItem {
@@ -49,24 +54,18 @@ export async function prepareSubscriptionEmailExtraction(input: {
   });
   if (cached) return { cached: true, extractionId: cached.extractionId, output: cached.output };
 
-  const callId = newId("call");
-  const startedAt = new Date().toISOString();
-  input.store.recordModelCall({
-    callId, workflow: "gmail_extraction", taskType: "subscription_email_extraction",
-    model: input.model, promptVersion: EMAIL_EXTRACTION_PROMPT_VERSION,
-    sourceHash: preview.sourceHash, contextHash: preview.manifest.contextHash,
-    cached: false, startedAt, status: "prepared",
-  });
-  input.store.recordContextManifest({
-    manifestId: preview.manifest.manifestId, callId,
-    includedItems: gmailAuditItems(preview.manifest.includedItems),
-    omittedItems: gmailAuditItems(preview.manifest.omittedItems),
-    tokenBudget: preview.manifest.tokenBudget, retrievalLevels: preview.manifest.retrievalLevels,
-    rankingVersion: preview.manifest.rankingVersion, contextHash: preview.manifest.contextHash,
-    createdAt: preview.manifest.createdAt,
+  const call = prepareReasoningCall({
+    store: input.store,
+    identity: {
+      workflow: "gmail_extraction", taskType: "subscription_email_extraction",
+      model: input.model, promptVersion: EMAIL_EXTRACTION_PROMPT_VERSION,
+      sourceHash: preview.sourceHash,
+    },
+    manifest: preview.manifest,
+    auditManifest: persistableContextManifest(preview.manifest, gmailAuditItems),
   });
   return {
-    cached: false, callId, messageId: preview.messageId, threadStateHash: preview.threadStateHash,
+    cached: false, callId: call.callId, messageId: preview.messageId, threadStateHash: preview.threadStateHash,
     promptVersion: gmailPromptSpec.version, promptSpecHash: gmailPromptSpec.specHash,
     instructions: renderInstructions(gmailPromptSpec, input.policyPrompt), schema: gmailPromptSpec.schema,
     context: preview.manifest.includedItems.map((item) => item.content),
@@ -75,7 +74,7 @@ export async function prepareSubscriptionEmailExtraction(input: {
   };
 }
 
-export function gmailAuditItems(items: unknown[]): unknown[] {
+export function gmailAuditItems(items: ContextCandidate[]): unknown[] {
   return items.map((item) => stripSourceText(item));
 }
 
@@ -93,12 +92,11 @@ export async function submitSubscriptionEmailExtraction(input: {
   callId: string; threadStateHash: string; policyVersion: string; output: EmailExtractionOutput;
   inputTokens?: number; outputTokens?: number; cachedTokens?: number;
 }): Promise<{ extractionId: string; output: EmailExtractionOutput }> {
-  const call = input.store.getModelCall(input.callId);
-  if (!call || call.status !== "prepared" || call.taskType !== "subscription_email_extraction") {
-    throw new Error("prepared subscription email extraction call not found");
-  }
-  const manifest = input.store.getContextManifestForCall(input.callId);
-  if (!manifest || manifest.contextHash !== call.contextHash) throw new Error("context manifest mismatch");
+  const { call, manifest } = requirePreparedReasoningCall({
+    store: input.store, callId: input.callId,
+    workflow: "gmail_extraction", taskType: "subscription_email_extraction",
+    notFoundMessage: "prepared subscription email extraction call not found",
+  });
   const preparedSource = preparedSourceIdentity(manifest.includedItems);
   const preparedPolicyVersion = findStringField(manifest.includedItems, "policy_version");
   if (preparedPolicyVersion !== input.policyVersion) {
@@ -124,12 +122,14 @@ export async function submitSubscriptionEmailExtraction(input: {
     schemaVersion: EMAIL_EXTRACTION_SCHEMA_VERSION, policyVersion: input.policyVersion,
     model: call.model, createdAt: completedAt,
   });
-  input.store.recordModelCall({
-    ...call,
-    ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
-    ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
-    ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
-    completedAt, status: "completed",
+  completeReasoningCall({
+    store: input.store, call,
+    usage: {
+      ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+      ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
+      ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
+    },
+    now: new Date(completedAt),
   });
   return { extractionId, output: input.output };
 }

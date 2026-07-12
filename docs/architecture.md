@@ -1508,6 +1508,29 @@ Downstream implementations should extend the subject-link enum and public workfl
 coordinated schema and policy review. They should not turn the initial table into a generic graph-write
 surface.
 
+## 22. Initial prepared-reasoning lifecycle
+
+The second implemented slice extracts the common durable lifecycle used by subscription-host
+prepare/submit workflows. `src/orchestration/prepared-reasoning.ts` now owns:
+
+- creation of a `prepared` model-call record with exact workflow and task identity;
+- persistence of a workflow-sanitized audit manifest under the live context hash;
+- submit-time lookup requiring the exact workflow, task type, status, and manifest hash;
+- completion with optional input, output, and cached-token usage.
+
+Gmail extraction, Messages extraction, and subscription morning reasoning use this service. Their
+provider selection, refetch, source/container identity, evidence validation, output validation, and
+derived-result persistence remain workflow-owned. This is intentionally a lifecycle service rather
+than a generic callback-driven workflow engine.
+
+Morning reasoning now persists evidence identity without duplicating compact-state content in the
+context manifest. Submission verifies that each prepared daily and chief-of-staff projection remains
+current. A superseded projection makes the preparation stale and requires a fresh reasoning request.
+
+The direct `ModelGateway` remains unchanged as a separate transport-oriented path. Unifying it with the
+prepared subscription lifecycle requires a later ADR because cache execution and synchronous adapter
+calls have different operational states.
+
 ## Appendix A: Example end-to-end flows
 
 ### A.1 Incoming message to reviewed finding

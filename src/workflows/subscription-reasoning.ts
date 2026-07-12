@@ -1,9 +1,13 @@
 import { buildContext, type ContextCandidate } from "../context/builder";
+import { persistableContextManifest } from "../context/manifests";
 import type { DerivedStateRecord, OperationalStore } from "../db/store";
 import { sha256Value } from "../util/hashing";
 import { newId } from "../util/ids";
 import { morningPromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
+import {
+  completeReasoningCall, prepareReasoningCall, requirePreparedReasoningCall,
+} from "../orchestration/prepared-reasoning";
 
 export interface SubscriptionRecommendation {
   summary: string;
@@ -45,21 +49,17 @@ export function prepareSubscriptionMorningReasoning(input: {
     maxInputTokens: 3000, reservedOutputTokens: 700, sourceTokens: 0,
     entityStateTokens: 2200, recentChangeTokens: 0, policyTokens: 400, contingencyTokens: 400,
   });
-  const callId = newId("call");
-  const startedAt = new Date().toISOString();
-  input.store.recordModelCall({
-    callId, workflow: "morning_briefing", taskType: "subscription_synthesis",
-    model: input.model, promptVersion: morningPromptSpec.version, sourceHash,
-    contextHash: manifest.contextHash, cached: false, startedAt, status: "prepared",
-  });
-  input.store.recordContextManifest({
-    manifestId: manifest.manifestId, callId, includedItems: manifest.includedItems,
-    omittedItems: manifest.omittedItems, tokenBudget: manifest.tokenBudget,
-    retrievalLevels: manifest.retrievalLevels, rankingVersion: manifest.rankingVersion,
-    contextHash: manifest.contextHash, createdAt: manifest.createdAt,
+  const call = prepareReasoningCall({
+    store: input.store,
+    identity: {
+      workflow: "morning_briefing", taskType: "subscription_synthesis",
+      model: input.model, promptVersion: morningPromptSpec.version, sourceHash,
+    },
+    manifest,
+    auditManifest: persistableContextManifest(manifest, morningAuditItems),
   });
   return {
-    cached: false, callId,
+    cached: false, callId: call.callId,
     promptVersion: morningPromptSpec.version, promptSpecHash: morningPromptSpec.specHash,
     instructions: renderInstructions(morningPromptSpec, input.policyPrompt), schema: morningPromptSpec.schema,
     context: manifest.includedItems.map((item) => item.content),
@@ -72,12 +72,12 @@ export function submitSubscriptionMorningReasoning(input: {
   store: OperationalStore; callId: string; recommendations: SubscriptionRecommendation[];
   inputTokens?: number; outputTokens?: number; cachedTokens?: number;
 }): DerivedStateRecord {
-  const call = input.store.getModelCall(input.callId);
-  if (!call || call.status !== "prepared" || call.taskType !== "subscription_synthesis") {
-    throw new Error("prepared subscription reasoning call not found");
-  }
-  const manifest = input.store.getContextManifestForCall(input.callId);
-  if (!manifest || manifest.contextHash !== call.contextHash) throw new Error("context manifest mismatch");
+  const { call, manifest } = requirePreparedReasoningCall({
+    store: input.store, callId: input.callId,
+    workflow: "morning_briefing", taskType: "subscription_synthesis",
+    notFoundMessage: "prepared subscription reasoning call not found",
+  });
+  assertMorningContextStatesCurrent(input.store, manifest.includedItems);
   validateRecommendations(input.recommendations);
   const allowed = new Set(morningEvidenceDescriptors(manifest.includedItems).map((item) => item.id));
   for (const recommendation of input.recommendations) {
@@ -99,12 +99,14 @@ export function submitSubscriptionMorningReasoning(input: {
     promptVersion: call.promptVersion, model: call.model, createdAt: completedAt,
   };
   input.store.saveDerivedState(state);
-  input.store.recordModelCall({
-    ...call,
-    ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
-    ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
-    ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
-    completedAt, status: "completed",
+  completeReasoningCall({
+    store: input.store, call,
+    usage: {
+      ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+      ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
+      ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
+    },
+    now: new Date(completedAt),
   });
   return state;
 }
@@ -116,6 +118,32 @@ function compactCandidate(state: DerivedStateRecord): ContextCandidate {
     relevance: 1, impact: 1, recency: 1,
     sourceRefs: [state.stateId, ...(state.entityId ? [state.entityId] : []), ...state.sourceHashes],
   };
+}
+
+function morningAuditItems(items: ContextCandidate[]): unknown[] {
+  return items.map((item) => item.category === "entity_state"
+    ? {
+      ...item,
+      content: {
+        compact_state_content_omitted: true,
+        evidence_ids: morningEvidenceDescriptors([item]).map((evidence) => evidence.id),
+      },
+    }
+    : item);
+}
+
+function assertMorningContextStatesCurrent(store: OperationalStore, items: unknown[]): void {
+  for (const value of items) {
+    if (!value || typeof value !== "object") continue;
+    const item = value as Partial<ContextCandidate>;
+    if (item.category !== "entity_state" || typeof item.id !== "string") continue;
+    const prepared = store.getDerivedStateById(item.id);
+    if (!prepared) throw new Error("prepared morning contextual state changed; prepare reasoning again");
+    const current = store.getCurrentDerivedState(prepared.stateType, prepared.entityId);
+    if (!current || current.stateId !== prepared.stateId) {
+      throw new Error("prepared morning contextual state changed; prepare reasoning again");
+    }
+  }
 }
 
 export function validateRecommendations(value: unknown): asserts value is SubscriptionRecommendation[] {
