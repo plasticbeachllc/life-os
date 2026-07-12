@@ -1,6 +1,7 @@
 import type { IMessageConversationSelection, IMessageSourceAdapter } from "../adapters/imessage";
 import type { OperationalStore } from "../db/store";
 import { IMessageStore } from "../imessage/store";
+import { projectExtractionFindings } from "../findings/projector";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
@@ -119,6 +120,13 @@ export async function submitSubscriptionIMessageExtraction(input: {
       ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
     },
     now: new Date(completedAt),
+  });
+  projectExtractionFindings({
+    store: input.store,
+    extraction: {
+      sourceType: "imessage_extraction", extractionId, callId: input.callId,
+      output: input.output as unknown as Record<string, unknown>, createdAt: completedAt,
+    },
   });
   return { extractionId, output: input.output };
 }

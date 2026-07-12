@@ -118,6 +118,44 @@ export const ddl = [
   ON subject_links(from_type, from_source_id, from_id, relationship)
   `,
   `
+  CREATE TABLE IF NOT EXISTS findings (
+    finding_id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL CHECK(source_type IN ('gmail_extraction', 'imessage_extraction')),
+    source_extraction_id TEXT NOT NULL,
+    source_item_index INTEGER NOT NULL CHECK(source_item_index >= 0),
+    reasoning_call_id TEXT NOT NULL REFERENCES model_calls(call_id),
+    kind TEXT NOT NULL,
+    statement TEXT NOT NULL,
+    owner TEXT NOT NULL CHECK(owner IN ('user', 'other', 'shared', 'unknown')),
+    due_date TEXT,
+    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    ambiguities_json TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    evidence_count INTEGER NOT NULL CHECK(evidence_count > 0),
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_type, source_extraction_id, source_item_index)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_findings_kind_created
+  ON findings(kind, created_at)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS finding_status_events (
+    event_id TEXT PRIMARY KEY,
+    finding_id TEXT NOT NULL REFERENCES findings(finding_id),
+    status TEXT NOT NULL CHECK(status IN ('active', 'dismissed', 'superseded', 'converted')),
+    related_finding_id TEXT REFERENCES findings(finding_id),
+    reason TEXT,
+    created_at TEXT NOT NULL
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_finding_status_events_current
+  ON finding_status_events(finding_id, created_at DESC)
+  `,
+  `
   CREATE TABLE IF NOT EXISTS model_calls (
     call_id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES runs(run_id),

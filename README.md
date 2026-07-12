@@ -20,6 +20,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Sanitized extraction review with no Gmail IDs, hashes, headers, addresses, subjects, or source text.
 - Allowlisted, incremental read-only ingestion from the local macOS Messages database.
 - Bounded, high-risk-redacted Messages extraction with hash-verified refetch and sanitized review.
+- Deterministic cross-provider findings projected from validated Gmail and Messages extraction items.
 - Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
   and order-pickup alerts.
 - Primary Google Calendar read-only ingestion and deterministic compact calendar state.
@@ -109,8 +110,15 @@ bun run src/cli.ts doctor --vault ~/worktable/vault
 bun run src/cli.ts state rebuild --vault ~/worktable/vault
 bun run src/cli.ts state show chief-of-staff --vault ~/worktable/vault
 bun run src/cli.ts briefing morning --vault ~/worktable/vault
+bun run src/cli.ts findings review --vault ~/worktable/vault
 bun run src/cli.ts metrics efficiency --vault ~/worktable/vault
 ```
+
+`state rebuild` idempotently backfills common findings from existing validated Gmail and Messages
+model extractions without invoking a model. New validated extractions project immediately. Findings
+retain structured meaning and internal evidence provenance in SQLite, while `findings review` omits
+provider extraction IDs, reasoning-call IDs, evidence IDs, and hashes. Finding creation does not create
+a task, proposal, reply, or provider mutation.
 
 Proposal lifecycle:
 

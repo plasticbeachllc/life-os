@@ -39,6 +39,8 @@ test("additively migrates an existing schema v7 database to combined provider sc
   expect(store.countRows("calendar_events")).toBe(0);
   expect(store.countRows("calendar_event_versions")).toBe(0);
   expect(store.countRows("subject_links")).toBe(0);
+  expect(store.countRows("findings")).toBe(0);
+  expect(store.countRows("finding_status_events")).toBe(0);
 });
 
 test("records runs, actions, and action results", () => {

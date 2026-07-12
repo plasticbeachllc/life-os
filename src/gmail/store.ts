@@ -2,6 +2,7 @@ import type { OperationalStore } from "../db/store";
 import type { NormalizedGmailMessage } from "./normalizer";
 import { gmailNormalizerVersion } from "./normalizer";
 import { sha256Value } from "../util/hashing";
+import type { ExtractionRecordForProjection } from "../findings/contract";
 
 export function gmailThreadStateHash(messages: NormalizedGmailMessage[]): string {
   return sha256Value([...messages]
@@ -198,6 +199,26 @@ export class GmailStore {
       ).get(extractionId);
       return row ? { sourceHash: row.source_hash, output: JSON.parse(row.output_json) } : undefined;
     } finally { db.close(); }
+  }
+
+  listExtractionsForFindingProjection(): ExtractionRecordForProjection[] {
+    const db = this.store.open();
+    try {
+      return db.query<{
+        extraction_id: string; call_id: string; output_json: string; created_at: string;
+      }, []>(`
+        SELECT extraction_id, call_id, output_json, created_at
+        FROM gmail_extractions ORDER BY created_at, extraction_id
+      `).all().map((row) => ({
+        sourceType: "gmail_extraction",
+        extractionId: row.extraction_id,
+        callId: row.call_id,
+        output: JSON.parse(row.output_json) as Record<string, unknown>,
+        createdAt: row.created_at,
+      }));
+    } finally {
+      db.close();
+    }
   }
 
   extractionCandidates(accountId: string, limit: number): Array<{

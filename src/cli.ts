@@ -38,6 +38,7 @@ import { loadTelegramTdLibConfig } from "./config";
 import { NativeTdJsonClient } from "./telegram/tdjson-client";
 import { TelegramStore } from "./telegram/store";
 import { ingestTelegramChanges } from "./workflows/telegram-ingest";
+import { FindingStore } from "./findings/store";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -189,6 +190,17 @@ async function main(argv: string[]): Promise<number> {
     const proposals = proposal ? [store.getProposal(proposal)].filter((item): item is ProposalRecord => Boolean(item)) : store.listPendingProposals();
     if (proposal && proposals.length === 0) throw new Error(`proposal not found: ${proposal}`);
     console.log(proposals.length === 0 ? "No pending proposals." : proposals.map(formatProposal).join("\n"));
+    return 0;
+  }
+
+  if (command === "findings") {
+    const [subcommand, ...findingRest] = rest;
+    if (subcommand !== "review") throw new Error("findings requires the review subcommand");
+    const args = parseFlags(findingRest);
+    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+    const store = new OperationalStore(config.databasePath);
+    store.migrate();
+    console.log(JSON.stringify(new FindingStore(store).review(), null, 2));
     return 0;
   }
 
@@ -620,6 +632,7 @@ function printUsage(): void {
   life-os calendar ingest --vault <path>
   life-os calendar status --vault <path>
   life-os message triage --vault <path> [--limit <n>]
+  life-os findings review --vault <path>
   life-os telegram ingest --vault <path> [--limit <1-100>]
   life-os telegram status --vault <path>`);
 }

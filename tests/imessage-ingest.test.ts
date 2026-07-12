@@ -433,6 +433,8 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
   });
   expect(result.extractionId).toStartWith("extract_");
   expect(store.countRows("imessage_extractions")).toBe(1);
+  expect(store.countRows("findings")).toBe(1);
+  expect(store.countRows("finding_status_events")).toBe(1);
   expect(store.countRows("proposals")).toBe(0);
   const review = new IMessageStore(store).extractionReview("local-messages");
   expect(review).toMatchObject({ total: 1, unresolved: 1 });

@@ -1531,6 +1531,29 @@ The direct `ModelGateway` remains unchanged as a separate transport-oriented pat
 prepared subscription lifecycle requires a later ADR because cache execution and synchronous adapter
 calls have different operational states.
 
+## 23. Initial common findings projection
+
+The third implemented slice adds immutable common findings while retaining Gmail and Messages
+extraction tables as the canonical provider-specific records.
+
+- Schema version 14 includes `findings` and append-only `finding_status_events` alongside subject links.
+- A finding identity is derived deterministically from source type, extraction ID, and item index.
+- Semantic content and evidence are content-hashed; replay with different content under the same source
+  identity fails closed.
+- Validated new Gmail and Messages extraction submissions project findings immediately.
+- `state rebuild` scans existing model extraction records and performs an idempotent no-model backfill.
+- Deterministic Messages service triage is not projected in this slice because it does not have the same
+  reasoning-call and evidence contract.
+- SQLite findings retain kind, statement, owner, due date, confidence, ambiguities, exact internal
+  evidence provenance, source extraction identity, reasoning call, content hash, and initial status.
+- Sanitized `findings review` returns useful finding content, evidence count, and current lifecycle state,
+  but omits provider/source type, extraction ID, reasoning-call ID, evidence IDs, and hashes.
+- Finding creation and backfill create no proposal or canonical/provider mutation.
+
+Dismissal, supersession, conversion, and finding-based task proposals remain later work. Their schema
+states exist so lifecycle changes can be append-only, but no generic status mutation surface is exposed
+by this slice.
+
 ## Appendix A: Example end-to-end flows
 
 ### A.1 Incoming message to reviewed finding

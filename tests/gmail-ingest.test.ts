@@ -245,6 +245,8 @@ test("subscription extraction validates evidence and persists no proposal or bod
   });
   expect(result.extractionId).toStartWith("extract_");
   expect(store.countRows("gmail_extractions")).toBe(1);
+  expect(store.countRows("findings")).toBe(1);
+  expect(store.countRows("finding_status_events")).toBe(1);
   expect(store.countRows("proposals")).toBe(0);
   expect(store.getModelCall(callId)?.status).toBe("completed");
   expect(store.getModelCall(String(prepared.callId))?.status).toBe("superseded");

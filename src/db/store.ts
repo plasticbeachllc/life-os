@@ -760,6 +760,8 @@ export class OperationalStore {
       "change_events",
       "derived_states",
       "subject_links",
+      "findings",
+      "finding_status_events",
       "model_calls",
       "context_manifests",
       "model_cache",

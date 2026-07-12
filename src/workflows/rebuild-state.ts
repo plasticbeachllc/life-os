@@ -4,6 +4,7 @@ import { ChangeTracker } from "../state/change-tracker";
 import { StateProjector } from "../state/projections";
 import { rebuildChiefOfStaffState } from "../state/chief-of-staff";
 import { markdownTasks, sectionBody, type MarkdownTask } from "../util/markdown";
+import { backfillExtractionFindings } from "../findings/projector";
 
 export interface StateRebuildIssue {
   path: string;
@@ -19,6 +20,9 @@ export interface StateRebuildReport {
   people: number;
   tasks: number;
   taskCandidates: number;
+  findingExtractions: number;
+  findingsCreated: number;
+  findingsUnchanged: number;
   chiefOfStaffStateVersion: number;
   issues: StateRebuildIssue[];
 }
@@ -36,9 +40,14 @@ export async function rebuildState(input: {
   const report: StateRebuildReport = {
     scanned: notes.length, changed: 0, unchanged: 0, projected: 0,
     projects: 0, people: 0, tasks: 0, taskCandidates: 0,
+    findingExtractions: 0, findingsCreated: 0, findingsUnchanged: 0,
     chiefOfStaffStateVersion: 0, issues: [],
   };
   const recentChanges: string[] = [];
+  const findingBackfill = backfillExtractionFindings(input.store);
+  report.findingExtractions = findingBackfill.extractions;
+  report.findingsCreated = findingBackfill.created;
+  report.findingsUnchanged = findingBackfill.unchanged;
 
   for (const note of notes) {
     const expectedType = note.relativePath.startsWith("20 Projects/") ? "project" : "person";
