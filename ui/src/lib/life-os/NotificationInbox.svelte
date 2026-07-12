@@ -19,13 +19,13 @@
 		onAction: (notification: InboxNotification, action: "primary" | "secondary") => void;
 	} = $props();
 
-	let filter = $state<Filter>("for_you");
+	let filter = $state<Filter>("needs_you");
 	let visibleNotifications = $derived(
 		filter === "all" ? notifications : notifications.filter((item) => item.category === filter),
 	);
 
 	const filters: Array<{ value: Filter; label: string }> = [
-		{ value: "for_you", label: "For you" },
+		{ value: "needs_you", label: "Needs you" },
 		{ value: "activity", label: "Activity" },
 		{ value: "approvals", label: "Approvals" },
 		{ value: "all", label: "All" },
@@ -58,7 +58,7 @@
 	<div class="space-y-4 border-b px-5 py-5 sm:px-6">
 		<div class="flex items-start justify-between gap-4">
 			<div>
-				<p class="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">Handled and waiting</p>
+				<p class="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">Only what needs your attention</p>
 				<h1 id="inbox-heading" class="mt-1 text-2xl font-semibold tracking-tight">Inbox</h1>
 			</div>
 			<Badge variant="secondary" class="mt-1">

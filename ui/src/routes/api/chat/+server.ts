@@ -1,5 +1,6 @@
 import { parseChatInput } from "$lib/server/chat-input";
 import { getCodexAppServerClient } from "$lib/server/codex/app-server";
+import { getNotificationSummary } from "$lib/server/notification-summaries";
 import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 
@@ -21,11 +22,19 @@ export const POST: RequestHandler = async ({ request }) => {
 				controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
 			};
 
-			void getCodexAppServerClient().streamTurn({
+			const operation = input.intent === "summarize_context"
+				? getNotificationSummary(input.notificationId!).then((summary) => {
+					for (const [index, sentence] of summary.sentences.entries()) {
+						emit({ type: "message", text: sentence, index });
+					}
+				})
+				: getCodexAppServerClient().streamTurn({
 				message: input.message,
+				conversationId: input.conversationId,
 				...(input.context ? { context: input.context } : {}),
 				onDelta: (delta) => emit({ type: "delta", delta }),
-			}).then(() => {
+			});
+			void operation.then(() => {
 				emit({ type: "done" });
 				controller.close();
 			}).catch((error: unknown) => {
