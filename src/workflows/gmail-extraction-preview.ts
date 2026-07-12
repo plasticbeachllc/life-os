@@ -15,6 +15,7 @@ export interface GmailExtractionPreview {
   threadStateHash: string;
   manifest: ContextManifest;
   promptInjectionIndicators: string[];
+  selectedMessagePromptInjectionIndicators: string[];
   modelCalls: 0;
   retainedBody: false;
 }
@@ -54,6 +55,10 @@ export async function previewGmailExtractionContext(input: {
     }));
   const evidenceId = `gmail:${normalized.messageId}:${normalized.contentHash}`;
   const threadStateHash = gmailThreadStateHash(normalizedThread);
+  const selectedMessagePromptInjectionIndicators = detectPromptInjection([
+    boundedText(redactedSubject.text, 1200),
+    boundedText(redactedSelected.text, 6000),
+  ].join("\n"));
   const promptInjectionIndicators = detectPromptInjection([
     boundedText(redactedSubject.text, 1200),
     boundedText(redactedSelected.text, 6000),
@@ -72,6 +77,7 @@ export async function previewGmailExtractionContext(input: {
         cc: normalized.ccAddresses, subject: boundedText(redactedSubject.text, 1200),
         subject_sensitive_entities_redacted: redactedSubject.findings.map((finding) => finding.entityType),
         prompt_injection_indicators: promptInjectionIndicators,
+        selected_message_prompt_injection_indicators: selectedMessagePromptInjectionIndicators,
       },
       tokenEstimate: 180, relevance: 1, impact: 1, recency: 1,
       sourceRefs: [evidenceId, normalized.contentHash],
@@ -113,7 +119,7 @@ export async function previewGmailExtractionContext(input: {
   return {
     messageId: normalized.messageId, threadId: normalized.threadId,
     sourceHash: normalized.contentHash, threadStateHash,
-    manifest, promptInjectionIndicators,
+    manifest, promptInjectionIndicators, selectedMessagePromptInjectionIndicators,
     modelCalls: 0, retainedBody: false,
   };
 }

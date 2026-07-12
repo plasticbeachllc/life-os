@@ -132,6 +132,7 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   expect(preview?.modelCalls).toBe(0);
   expect(preview?.retainedBody).toBe(false);
   expect(preview?.promptInjectionIndicators).toEqual(["instruction_override", "secret_exfiltration"]);
+  expect(preview?.selectedMessagePromptInjectionIndicators).toEqual([]);
   expect(preview?.manifest.retrievalLevels).toEqual([0, 1, 2]);
   expect(preview?.manifest.includedItems.length).toBeGreaterThan(0);
   expect(JSON.stringify(preview?.manifest.includedItems)).not.toContain("4111 1111 1111 1111");
@@ -147,9 +148,18 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
     threadStateHash: String(prepared.threadStateHash), policyVersion: "sha256:policy",
     output: {
       classification: "malicious_or_untrusted_instruction", summary: "Unsafe embedded directive.",
-      items: [], unresolved: [], promptInjectionDetected: false,
+      items: [], unresolved: [], promptInjectionDetected: true,
     },
   })).rejects.toThrow("contradicts deterministic prompt-injection indicators");
+
+  await expect(submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(prepared.callId),
+    threadStateHash: String(prepared.threadStateHash), policyVersion: "sha256:policy",
+    output: {
+      classification: "reference_only", summary: "Current message contains a benign payment update.",
+      items: [], unresolved: [], promptInjectionDetected: true,
+    },
+  })).resolves.toMatchObject({ output: { classification: "reference_only", promptInjectionDetected: true } });
 }, 15_000);
 
 test("extraction preview distinguishes received, draft, and sent thread messages", async () => {

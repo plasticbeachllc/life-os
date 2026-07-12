@@ -29,19 +29,34 @@ const workflowTerms: Record<PromptWorkflow, RegExp> = {
   morning_reasoning: /agent|brief|reason|priorit|decision|evidence|context|untrusted/i,
 };
 
+const mandatoryPolicyTerms = /\b(?:approval|approved|credential|do not|forbid|must|never|only|permission|privacy|prohibit|require|secret|untrusted|write|writes)\b/i;
+const maxCompiledPolicyLines = 12;
+const maxCompiledPolicyCharacters = 800;
+
 /** Compile trusted canonical policy into a small, deterministic workflow excerpt. */
 export function compilePolicyPrompt(policy: LoadedPolicy, workflow: PromptWorkflow): CompiledPolicyPrompt {
   if (!policy.policyVersion) throw new Error("validated policy is required");
+  const mandatory: string[] = [];
   const preferred: string[] = [];
   const fallback: string[] = [];
   for (const name of ["constitution", "permissions", "agent", "schemas"] as PolicyDocName[]) {
     for (const line of policyLines(policy.found[name] ?? "")) {
       const labeled = `${name}: ${line}`;
-      (workflowTerms[workflow].test(line) ? preferred : fallback).push(labeled);
+      if (name === "permissions" || mandatoryPolicyTerms.test(line)) mandatory.push(labeled);
+      else (workflowTerms[workflow].test(line) ? preferred : fallback).push(labeled);
     }
   }
-  const selected = unique([...preferred, ...fallback]).slice(0, 12);
-  const text = bound(selected.join("\n"), 800);
+  const required = unique(mandatory);
+  if (required.length > maxCompiledPolicyLines || required.join("\n").length > maxCompiledPolicyCharacters) {
+    throw new Error("mandatory canonical policy clauses exceed the compiled policy prompt budget");
+  }
+  const selected = [...required];
+  for (const line of unique([...preferred, ...fallback])) {
+    if (selected.length >= maxCompiledPolicyLines) break;
+    const candidate = [...selected, line].join("\n");
+    if (candidate.length <= maxCompiledPolicyCharacters) selected.push(line);
+  }
+  const text = selected.join("\n");
   if (!text) throw new Error("canonical policy contains no compilable instructions");
   return { version: policy.policyVersion, text };
 }
@@ -89,8 +104,4 @@ function policyLines(text: string): string[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
-}
-
-function bound(value: string, max: number): string {
-  return value.length <= max ? value : `${value.slice(0, max - 1).trimEnd()}…`;
 }
