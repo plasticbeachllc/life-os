@@ -286,6 +286,11 @@ ingestion fails closed; interactive authorization tooling is not yet included.
 Telegram extraction is not currently supported; status output reports this capability explicitly
 and does not present ingested messages as a pending extraction backlog.
 
+All provider ingestion plugins implement the shared contract in `src/integrations/contract.ts` and
+are wired through the typed provider registry. The registry generates consistent MCP status and
+ingest tools, common sanitized result envelopes, capability declarations, and bounded provider-specific
+limit schemas. Provider adapters retain ownership of their narrow selection and cursor semantics.
+
 ## Verification
 
 ```bash

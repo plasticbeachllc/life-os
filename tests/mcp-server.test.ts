@@ -43,6 +43,14 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
       "life_os_triage_imessage_service_messages",
       "life_os_undo_action",
     ]);
+    for (const provider of ["gmail", "imessage", "calendar", "telegram"]) {
+      const status = tools.tools.find((tool) => tool.name === `life_os_${provider}_status`);
+      const ingest = tools.tools.find((tool) => tool.name === `life_os_ingest_${provider}`);
+      expect(status?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+      expect(ingest?.annotations).toMatchObject({
+        readOnlyHint: false, destructiveHint: false, idempotentHint: true,
+      });
+    }
     const resources = await client.listResources();
     expect(resources.resources.map((resource) => resource.uri).sort()).toEqual([
       "life-os://policy/schemas",

@@ -7,7 +7,6 @@ import * as z from "zod";
 import { ObsidianVault } from "../adapters/obsidian";
 import { GmailRestAdapter } from "../adapters/gmail";
 import { MacOsMessagesAdapter } from "../adapters/imessage";
-import { GoogleCalendarRestAdapter } from "../adapters/calendar";
 import { loadConfig, loadGmailAuthConfig } from "../config";
 import { OperationalStore } from "../db/store";
 import type { ProposalRecord } from "../db/store";
@@ -30,13 +29,6 @@ import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { MacOsKeychainGmailCredentialStore } from "../gmail/keychain";
 import { previewGmailExtractionContext } from "../workflows/gmail-extraction-preview";
-import { ingestCalendar } from "../workflows/calendar-ingest";
-import { CalendarStore } from "../calendar/store";
-import { TdLibTelegramAdapter } from "../adapters/telegram";
-import { loadTelegramTdLibConfig } from "../config";
-import { NativeTdJsonClient } from "../telegram/tdjson-client";
-import { TelegramStore } from "../telegram/store";
-import { ingestTelegramChanges } from "../workflows/telegram-ingest";
 import { proposeEmailExtractionTask } from "../workflows/email-task-proposal";
 import {
   prepareSubscriptionEmailExtraction,
@@ -49,11 +41,12 @@ import {
   submitSubscriptionIMessageExtraction,
 } from "../workflows/subscription-imessage-extraction";
 import { triageIMessageServiceConversations } from "../workflows/imessage-deterministic-triage";
-import { ingestImportantGmail } from "../workflows/gmail-ingest";
-import { ingestIMessageChanges } from "../workflows/imessage-ingest";
+import { createIntegrationRegistry } from "../integrations/providers";
+import { registerIntegrationTools } from "./ingestion-tools";
 
 export function createLifeOsMcpServer(): McpServer {
   const server = new McpServer({ name: "life-os", version: "0.1.0" });
+  registerIntegrationTools(server, createIntegrationRegistry());
 
   server.registerTool("life_os_doctor", {
     description: "Inspect Life OS vault and operational-state health without changing vault files.",
@@ -118,76 +111,6 @@ export function createLifeOsMcpServer(): McpServer {
     store.migrate();
     const proposals = store.listPendingProposals().map(sanitizeProposal);
     return jsonResult({ count: proposals.length, proposals });
-  });
-
-  server.registerTool("life_os_gmail_status", {
-    description: "Return metadata-only Gmail ingestion counts and state. Never returns message IDs, subjects, addresses, hashes, or bodies.",
-    inputSchema: {},
-    annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async () => {
-    const config = loadConfig();
-    const store = new OperationalStore(config.databasePath);
-    store.migrate();
-    return jsonResult(new GmailStore(store).inspectionSummary(
-      config.gmailAccountId, currentEmailExtractionIdentity,
-    ));
-  });
-
-  server.registerTool("life_os_ingest_gmail", {
-    description: "Incrementally ingest metadata and hashes for IMPORTANT Gmail messages using gmail.readonly. Never sends, labels, archives, or deletes email.",
-    inputSchema: { limit: z.number().int().min(1).max(5000).default(50) },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, async ({ limit }) => {
-    const { adapter, store, accountId } = gmailRuntimeContext();
-    return jsonResult(await ingestImportantGmail({ adapter, store, accountId, limit }));
-  });
-
-  server.registerTool("life_os_calendar_status", {
-    description: "Return metadata-only Google Calendar ingestion counts. Returns no event details.",
-    inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async () => {
-    const config = loadConfig(); const store = new OperationalStore(config.databasePath); store.migrate();
-    return jsonResult(new CalendarStore(store).summary(config.gmailAccountId));
-  });
-
-  server.registerTool("life_os_ingest_calendar", {
-    description: "Incrementally ingest the primary Google Calendar using calendar.readonly and rebuild compact calendar state. Never writes Google Calendar.",
-    inputSchema: {}, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, async () => {
-    const config = loadConfig();
-    if (!config.calendarEnabled) throw new Error("Calendar ingestion is disabled");
-    const refreshToken = Bun.env.GMAIL_REFRESH_TOKEN
-      ?? new MacOsKeychainGmailCredentialStore().getRefreshToken(config.gmailAccountId);
-    if (!refreshToken) throw new Error("Google refresh token unavailable; reauthorize first");
-    const store = new OperationalStore(config.databasePath);
-    return jsonResult(await ingestCalendar({
-      adapter: new GoogleCalendarRestAdapter(loadGmailAuthConfig(refreshToken)), store,
-      accountId: config.gmailAccountId,
-    }));
-  });
-
-  server.registerTool("life_os_telegram_status", {
-    description: "Return sanitized TDLib Telegram ingestion counts. Returns no chat IDs, message IDs, sender IDs, hashes, or text.",
-    inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async () => {
-    const config = loadConfig(); const store = new OperationalStore(config.databasePath); store.migrate();
-    return jsonResult(new TelegramStore(store).status(config.telegramSourceId));
-  });
-
-  server.registerTool("life_os_ingest_telegram", {
-    description: "Incrementally ingest metadata and hashes from explicitly allowlisted TDLib chats. Never sends or modifies Telegram messages.",
-    inputSchema: {}, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, async () => {
-    const config = loadConfig();
-    if (!config.telegramEnabled) throw new Error("Telegram ingestion is disabled");
-    if (config.telegramChatIds.length === 0) throw new Error("Telegram ingestion requires a configured chat allowlist");
-    const client = new NativeTdJsonClient({ ...loadTelegramTdLibConfig(),
-      databaseDirectory: config.telegramDatabaseDirectory });
-    try {
-      return jsonResult(await ingestTelegramChanges({ adapter: new TdLibTelegramAdapter(client),
-        store: new OperationalStore(config.databasePath), sourceId: config.telegramSourceId,
-        chatIds: config.telegramChatIds, limitPerChat: 50 }));
-    } finally { client.close(); }
   });
 
   server.registerTool("life_os_review_email_extractions", {
@@ -280,33 +203,6 @@ export function createLifeOsMcpServer(): McpServer {
       ...(inputTokens !== undefined ? { inputTokens } : {}),
       ...(outputTokens !== undefined ? { outputTokens } : {}),
       ...(cachedTokens !== undefined ? { cachedTokens } : {}),
-    }));
-  });
-
-  server.registerTool("life_os_imessage_status", {
-    description: "Return metadata-only Messages ingestion and extraction counts. Returns no provider IDs, participants, hashes, or source text.",
-    inputSchema: {},
-    annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async () => {
-    const config = loadConfig();
-    const store = new OperationalStore(config.databasePath);
-    store.migrate();
-    return jsonResult({
-      enabled: config.imessageEnabled,
-      selectionMode: config.imessageSelectionMode,
-      configuredConversationIds: config.imessageConversationIds.length,
-      ...new IMessageStore(store).inspectionSummary(config.imessageSourceId),
-    });
-  });
-
-  server.registerTool("life_os_ingest_imessage", {
-    description: "Incrementally ingest metadata and hashes from the configured Messages conversation selection. Never sends or modifies messages.",
-    inputSchema: { limit: z.number().int().min(1).max(5000).default(500) },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, async ({ limit }) => {
-    const { config, adapter, store, selection } = imessageRuntimeContext();
-    return jsonResult(await ingestIMessageChanges({
-      adapter, store, sourceId: config.imessageSourceId, selection, limit,
     }));
   });
 

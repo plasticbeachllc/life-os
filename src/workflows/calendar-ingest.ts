@@ -9,7 +9,7 @@ import { runIngestion } from "../integrations/ingestion-run";
 export async function ingestCalendar(input: {
   adapter: CalendarSourceAdapter; store: OperationalStore; accountId: string;
   now?: Date; daysPast?: number; daysFuture?: number;
-}): Promise<{ discovered: number; changed: number; unchanged: number; stateId: string }> {
+}): Promise<{ runId: string; discovered: number; changed: number; unchanged: number; stateId: string }> {
   input.store.migrate();
   const now = input.now ?? new Date();
   const runId = newId("run");
@@ -50,7 +50,7 @@ export async function ingestCalendar(input: {
       if (!prior?.sourceHashes.includes(sourceHash)) input.store.saveDerivedState(state);
       rebuildChiefOfStaffState({ store: input.store, now });
       store.markProcessed(input.accountId, upcoming);
-      return { discovered: events.length, changed, unchanged,
+      return { runId, discovered: events.length, changed, unchanged,
         stateId: prior?.sourceHashes.includes(sourceHash) ? prior.stateId : state.stateId };
     },
     complete: (report) => store.finishRun({ runId, now: new Date().toISOString(), status: "completed",
