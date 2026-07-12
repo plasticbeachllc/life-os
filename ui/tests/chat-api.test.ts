@@ -5,7 +5,7 @@ import { conversationBindingKey } from "../src/lib/server/codex/app-server";
 import { normalizeSummary, summarySchedulerStatus } from "../src/lib/server/notification-summaries";
 
 describe("LifeOS chat API input", () => {
-	test("accepts a bounded message and sanitized Inbox context", () => {
+	test("accepts a bounded message and untrusted Inbox context", () => {
 		expect(parseChatInput({
 			conversationId: "conversation_email_1",
 			message: "  What needs my attention?  ",
