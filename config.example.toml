@@ -1,0 +1,30 @@
+vault_path = "/Users/<user>/Documents/Obsidian/Personal"
+database_path = "/Users/<user>/.local/share/life-os/life-os.db"
+backup_path = "/Users/<user>/.local/share/life-os/backups"
+timezone = "America/New_York"
+default_mode = "dry-run"
+
+[gmail]
+enabled = false
+selection_label_id = "IMPORTANT"
+poll_minutes = 30
+allow_label_changes = false
+
+[calendar]
+enabled = false
+allow_writes = false
+
+[permissions]
+max_files_per_run = 5
+
+[workflows.email]
+enabled = false
+mode = "disabled"
+
+[workflows.morning]
+enabled = true
+mode = "read-only"
+
+[workflows.weekly]
+enabled = false
+mode = "disabled"
