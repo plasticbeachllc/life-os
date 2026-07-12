@@ -1579,6 +1579,40 @@ projection content.
 The status-event writer remains an internal narrow repository method used to prove lifecycle
 invalidation. No CLI, MCP, or model-facing generic finding-status mutation is introduced here.
 
+## 25. Reviewed finding lifecycle and task conversion
+
+The fifth implemented slice adds narrow reviewed lifecycle operations and generalizes fixed-inbox task
+proposals from provider-specific extraction items to common findings.
+
+Finding lifecycle behavior:
+
+- CLI `findings dismiss` appends a `dismissed` event and requires a non-empty reason.
+- CLI `findings supersede` appends a `superseded` event, requires a distinct existing replacement
+  finding, and records a non-empty reason.
+- Only active findings may transition through these operations; repeated terminal transitions fail.
+- Both commands immediately rebuild finding attention and chief-of-staff state.
+- No generic lifecycle MCP mutation is exposed.
+
+Finding task behavior:
+
+- `life_os_propose_finding_task` accepts only one `finding_*` ID.
+- The finding must be active, user-owned, and one of `explicit_request`, `open_loop`, or
+  `user_commitment`.
+- Life OS derives the fixed inbox path, exact task line, due date, stable task ID, finding-content hash,
+  target hash, and review preview. The caller supplies none of them.
+- The proposal workflow identity includes the finding ID, allowing distinct findings to have distinct
+  pending proposals against the same unchanged inbox while retaining idempotent replay per finding.
+- Authorization preparation and consumption both reject a non-active or content-mismatched finding.
+- Application repeats the finding, plan, policy, path, and target checks before an atomic file write.
+- The `converted` finding event is committed in the same SQLite transaction as applied proposal/action
+  state and undo metadata, and is related to the stable task ID.
+- Undo restores the file and appends a new `active` finding event related to that task.
+
+`life_os_propose_email_task` remains backward compatible at its input boundary. It performs a
+deterministic no-model findings backfill if necessary, resolves the extraction ID and item index to a
+finding, and then uses the same finding proposal path. Previously created `append_email_task` proposals
+remain registered and applicable.
+
 ## Appendix A: Example end-to-end flows
 
 ### A.1 Incoming message to reviewed finding

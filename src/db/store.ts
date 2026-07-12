@@ -126,6 +126,15 @@ export class OperationalStore {
     try {
       db.transaction(() => {
         for (const statement of ddl) db.exec(statement);
+        const findingStatusColumns = new Set(db.query<{ name: string }, []>(
+          "PRAGMA table_info(finding_status_events)",
+        ).all().map((column) => column.name));
+        if (!findingStatusColumns.has("related_entity_type")) {
+          db.exec("ALTER TABLE finding_status_events ADD COLUMN related_entity_type TEXT CHECK(related_entity_type IN ('task'))");
+        }
+        if (!findingStatusColumns.has("related_entity_id")) {
+          db.exec("ALTER TABLE finding_status_events ADD COLUMN related_entity_id TEXT");
+        }
         db.query("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
           .run(schemaVersion, new Date().toISOString());
       })();
@@ -326,6 +335,9 @@ export class OperationalStore {
   markProposalApplied(input: {
     proposalId: string; actionId: string; appliedAt: string; targetHash: string;
     backupPath: string; beforeHash: string; afterHash: string;
+    findingConversion?: {
+      eventId: string; findingId: string; expectedContentHash: string; taskId: string;
+    };
   }): void {
     const db = this.open();
     try {
@@ -336,6 +348,24 @@ export class OperationalStore {
           .run(input.appliedAt, input.proposalId);
         db.query("INSERT INTO undo_records (action_id, target_path, backup_path, before_hash, after_hash, created_at) VALUES (?, (SELECT target_path FROM actions WHERE action_id = ?), ?, ?, ?, ?)")
           .run(input.actionId, input.actionId, input.backupPath, input.beforeHash, input.afterHash, input.appliedAt);
+        if (input.findingConversion) {
+          const finding = db.query<{ content_hash: string; status: string }, [string]>(`
+            SELECT finding.content_hash,
+              (SELECT event.status FROM finding_status_events event
+               WHERE event.finding_id = finding.finding_id
+               ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) AS status
+            FROM findings finding WHERE finding.finding_id = ?
+          `).get(input.findingConversion.findingId);
+          if (!finding || finding.content_hash !== input.findingConversion.expectedContentHash
+            || finding.status !== "active") {
+            throw new Error("finding changed before task conversion was recorded");
+          }
+          db.query(`INSERT INTO finding_status_events (
+            event_id, finding_id, status, related_entity_type, related_entity_id, created_at
+          ) VALUES (?, ?, 'converted', 'task', ?, ?)`)
+            .run(input.findingConversion.eventId, input.findingConversion.findingId,
+              input.findingConversion.taskId, input.appliedAt);
+        }
       })();
     } finally {
       db.close();
@@ -364,8 +394,24 @@ export class OperationalStore {
     const db = this.open();
     try {
       db.transaction(() => {
+        const findingTask = db.query<{
+          tool_name: string; source_id: string; arguments_json: string;
+        }, [string]>(`
+          SELECT action.tool_name, proposal.source_id, action.arguments_json
+          FROM actions action JOIN proposals proposal ON proposal.run_id = action.run_id
+          WHERE action.action_id = ?
+        `).get(actionId);
         db.query("UPDATE undo_records SET undone_at = ? WHERE action_id = ? AND undone_at IS NULL").run(undoneAt, actionId);
         db.query("UPDATE actions SET lifecycle_state = 'undone' WHERE action_id = ?").run(actionId);
+        if (findingTask?.tool_name === "append_finding_task") {
+          const args = JSON.parse(findingTask.arguments_json) as Record<string, unknown>;
+          const taskId = typeof args.taskId === "string" ? args.taskId : undefined;
+          if (!taskId) throw new Error("finding task action lacks a stable task ID");
+          db.query(`INSERT INTO finding_status_events (
+            event_id, finding_id, status, related_entity_type, related_entity_id, reason, created_at
+          ) VALUES (?, ?, 'active', 'task', ?, 'task creation undone', ?)`)
+            .run(`findingevent_undo_${actionId}`, findingTask.source_id, taskId, undoneAt);
+        }
       })();
     } finally {
       db.close();

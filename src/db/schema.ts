@@ -147,6 +147,8 @@ export const ddl = [
     finding_id TEXT NOT NULL REFERENCES findings(finding_id),
     status TEXT NOT NULL CHECK(status IN ('active', 'dismissed', 'superseded', 'converted')),
     related_finding_id TEXT REFERENCES findings(finding_id),
+    related_entity_type TEXT CHECK(related_entity_type IN ('task')),
+    related_entity_id TEXT,
     reason TEXT,
     created_at TEXT NOT NULL
   )

@@ -25,7 +25,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
   and order-pickup alerts.
 - Primary Google Calendar read-only ingestion and deterministic compact calendar state.
-- User-selected email extraction items can become fixed-inbox, approval-gated task proposals.
+- User-selected active findings can become fixed-inbox, approval-gated task proposals.
 
 No version 1 workflow can send or delete email, mutate Gmail labels, merge entities autonomously,
 rewrite journal prose, expose arbitrary shell access, or give a model unrestricted filesystem writes.
@@ -112,6 +112,9 @@ bun run src/cli.ts state rebuild --vault ~/worktable/vault
 bun run src/cli.ts state show chief-of-staff --vault ~/worktable/vault
 bun run src/cli.ts briefing morning --vault ~/worktable/vault
 bun run src/cli.ts findings review --vault ~/worktable/vault
+bun run src/cli.ts findings dismiss <finding-id> --reason 'not actionable' --vault ~/worktable/vault
+bun run src/cli.ts findings supersede <finding-id> --replacement <finding-id> \
+  --reason 'replaced by newer evidence' --vault ~/worktable/vault
 bun run src/cli.ts metrics efficiency --vault ~/worktable/vault
 ```
 
@@ -248,7 +251,7 @@ args = ["run", "--env-file", "/Users/you/.config/life-os/.env", "--",
         "/opt/homebrew/bin/bun", "run", "/path/to/life-os/src/mcp/server.ts"]
 ```
 
-Life OS currently exposes 26 narrow tools covering health, compact state, briefings, Gmail, Calendar,
+Life OS exposes a narrow tool set covering health, compact state, briefings, Gmail, Calendar,
 and Messages status/review/extraction, subscription prepare/submit workflows, and exact proposal
 authorization/apply/undo. It exposes
 no arbitrary path, patch, command, or generic write tool.
@@ -269,9 +272,15 @@ Email extraction sequence:
 4. `life_os_submit_email_extraction`
 5. `life_os_review_email_extractions`
 
-Extraction never creates a proposal automatically. Converting selected extraction items into tasks is
-explicit through `life_os_propose_email_task`, which accepts only an extraction ID and item index,
-fixes the target to `00 Inbox/Inbox.md`, and enters the standard review/authorization flow.
+Extraction never creates a proposal automatically. Converting an eligible active finding into a task is
+explicit through `life_os_propose_finding_task`, which accepts only a finding ID, fixes the target to
+`00 Inbox/Inbox.md`, and derives the task text, due date, stable ID, and preview. The original
+`life_os_propose_email_task` remains as a compatibility surface that resolves its extraction ID and
+item index to the corresponding finding before entering the same review/authorization flow.
+
+Finding task application appends a `converted` lifecycle event in the same SQLite transaction as the
+action, proposal, backup, and undo metadata. Undo reactivates the finding. Dismissal and supersession
+are explicit CLI operations; no generic finding-status MCP mutation is exposed.
 
 Calendar is primary-calendar-only in version 1. It retains event title, optional location, status,
 start/end, all-day state, and hashes; descriptions, attendees, organizers, conference links, and

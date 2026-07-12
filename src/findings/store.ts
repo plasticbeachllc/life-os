@@ -8,6 +8,14 @@ export interface ActiveFindingProjectionInput {
   contentHash: string; statusEventId: string; statusChangedAt: string;
 }
 
+export interface StoredFinding extends SemanticFinding {
+  status: FindingStatus;
+}
+
+export interface PreparedFindingConversion {
+  eventId: string; findingId: string; expectedContentHash: string; taskId: string;
+}
+
 export class FindingStore {
   constructor(private readonly store: OperationalStore) {}
 
@@ -56,38 +64,120 @@ export class FindingStore {
     }
   }
 
-  recordStatus(input: {
-    findingId: string; status: FindingStatus; relatedFindingId?: string;
-    reason?: string; createdAt?: string;
+  get(findingId: string): StoredFinding | undefined {
+    const db = this.store.open();
+    try {
+      const row = db.query<{
+        finding_id: string; source_type: SemanticFinding["sourceType"];
+        source_extraction_id: string; source_item_index: number; reasoning_call_id: string;
+        kind: SemanticFinding["kind"]; statement: string; owner: SemanticFinding["owner"];
+        due_date: string | null; confidence: number; ambiguities_json: string;
+        evidence_json: string; content_hash: string; created_at: string; status: FindingStatus;
+      }, [string]>(`
+        SELECT finding.*,
+          (SELECT event.status FROM finding_status_events event
+           WHERE event.finding_id = finding.finding_id
+           ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) AS status
+        FROM findings finding WHERE finding.finding_id = ?
+      `).get(findingId);
+      return row ? {
+        findingId: row.finding_id, sourceType: row.source_type,
+        sourceExtractionId: row.source_extraction_id, sourceItemIndex: row.source_item_index,
+        reasoningCallId: row.reasoning_call_id, kind: row.kind, statement: row.statement,
+        owner: row.owner, dueDate: row.due_date, confidence: row.confidence,
+        ambiguities: JSON.parse(row.ambiguities_json) as string[],
+        evidenceIds: JSON.parse(row.evidence_json) as string[], contentHash: row.content_hash,
+        createdAt: row.created_at, status: row.status,
+      } : undefined;
+    } finally {
+      db.close();
+    }
+  }
+
+  findBySource(sourceType: SemanticFinding["sourceType"], extractionId: string,
+    itemIndex: number): StoredFinding | undefined {
+    const db = this.store.open();
+    try {
+      const findingId = db.query<{ finding_id: string }, [string, string, number]>(`
+        SELECT finding_id FROM findings
+        WHERE source_type = ? AND source_extraction_id = ? AND source_item_index = ?
+      `).get(sourceType, extractionId, itemIndex)?.finding_id;
+      return findingId ? this.get(findingId) : undefined;
+    } finally {
+      db.close();
+    }
+  }
+
+  dismiss(input: { findingId: string; reason: string; createdAt?: string }): string {
+    if (!input.reason.trim()) throw new Error("finding dismissal requires a reason");
+    return this.appendTerminalStatus({
+      findingId: input.findingId, status: "dismissed", reason: input.reason.trim(),
+      ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    });
+  }
+
+  supersede(input: {
+    findingId: string; replacementFindingId: string; reason: string; createdAt?: string;
   }): string {
+    if (input.findingId === input.replacementFindingId) throw new Error("finding cannot supersede itself");
+    if (!input.reason.trim()) throw new Error("finding supersession requires a reason");
+    const replacement = this.get(input.replacementFindingId);
+    if (!replacement) throw new Error("replacement finding not found");
+    if (replacement.status !== "active") throw new Error("replacement finding is not active");
+    return this.appendTerminalStatus({
+      findingId: input.findingId, status: "superseded",
+      relatedFindingId: input.replacementFindingId, reason: input.reason.trim(),
+      ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    });
+  }
+
+  prepareTaskConversion(input: {
+    findingId: string; taskId: string; createdAt?: string;
+  }): PreparedFindingConversion {
+    const finding = this.requireActive(input.findingId);
+    if (!/^task_[a-f0-9]+$/.test(input.taskId)) throw new Error("invalid stable task ID for finding conversion");
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    return {
+      eventId: this.statusEventId({
+        findingId: finding.findingId, status: "converted", relatedEntityType: "task",
+        relatedEntityId: input.taskId, createdAt,
+      }),
+      findingId: finding.findingId, expectedContentHash: finding.contentHash, taskId: input.taskId,
+    };
+  }
+
+  private appendTerminalStatus(input: {
+    findingId: string; status: "dismissed" | "superseded";
+    relatedFindingId?: string; reason: string; createdAt?: string;
+  }): string {
+    this.requireActive(input.findingId);
     const createdAt = input.createdAt ?? new Date().toISOString();
     const db = this.store.open();
     try {
-      const finding = db.query<{ finding_id: string }, [string]>(
-        "SELECT finding_id FROM findings WHERE finding_id = ?",
-      ).get(input.findingId);
-      if (!finding) throw new Error("finding not found");
-      if (input.relatedFindingId && !db.query(
-        "SELECT 1 FROM findings WHERE finding_id = ?",
-      ).get(input.relatedFindingId)) throw new Error("related finding not found");
-      const identity = {
-        findingId: input.findingId, status: input.status,
-        relatedFindingId: input.relatedFindingId ?? null,
-        reason: input.reason ?? null, createdAt,
-      };
-      const eventId = `findingevent_${sha256Value(identity).slice("sha256:".length, "sha256:".length + 24)}`;
+      const eventId = this.statusEventId({ ...input, createdAt });
       db.query(`
         INSERT OR IGNORE INTO finding_status_events (
           event_id, finding_id, status, related_finding_id, reason, created_at
         ) VALUES (?, ?, ?, ?, ?, ?)
       `).run(
         eventId, input.findingId, input.status, input.relatedFindingId ?? null,
-        input.reason ?? null, createdAt,
+        input.reason, createdAt,
       );
       return eventId;
     } finally {
       db.close();
     }
+  }
+
+  private requireActive(findingId: string): StoredFinding {
+    const finding = this.get(findingId);
+    if (!finding) throw new Error("finding not found");
+    if (finding.status !== "active") throw new Error(`finding is not active: ${finding.status}`);
+    return finding;
+  }
+
+  private statusEventId(identity: Record<string, unknown>): string {
+    return `findingevent_${sha256Value(identity).slice("sha256:".length, "sha256:".length + 24)}`;
   }
 
   activeProjectionInputs(): ActiveFindingProjectionInput[] {

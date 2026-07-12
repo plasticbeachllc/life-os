@@ -46,8 +46,8 @@ test("a finding status event removes it from regenerated attention state", () =>
   const now = new Date("2026-07-12T09:00:00.000Z");
   const first = rebuildFindingAttentionState({ store, now });
   const overdueFindingId = String((first.content.overdue_finding_ids as string[])[0]);
-  new FindingStore(store).recordStatus({
-    findingId: overdueFindingId, status: "dismissed", reason: "No longer relevant",
+  new FindingStore(store).dismiss({
+    findingId: overdueFindingId, reason: "No longer relevant",
     createdAt: "2026-07-12T10:00:00.000Z",
   });
   const changed = rebuildFindingAttentionState({ store, now });

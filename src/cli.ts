@@ -39,6 +39,10 @@ import { NativeTdJsonClient } from "./telegram/tdjson-client";
 import { TelegramStore } from "./telegram/store";
 import { ingestTelegramChanges } from "./workflows/telegram-ingest";
 import { FindingStore } from "./findings/store";
+import { rebuildFindingAttentionState } from "./state/finding-attention";
+import { rebuildChiefOfStaffState } from "./state/chief-of-staff";
+import { applyEmailTaskProposal } from "./tools/append-email-task";
+import { applyFindingTaskProposal } from "./tools/append-finding-task";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -195,13 +199,40 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "findings") {
     const [subcommand, ...findingRest] = rest;
-    if (subcommand !== "review") throw new Error("findings requires the review subcommand");
     const args = parseFlags(findingRest);
     const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
     const store = new OperationalStore(config.databasePath);
     store.migrate();
-    console.log(JSON.stringify(new FindingStore(store).review(), null, 2));
-    return 0;
+    const findings = new FindingStore(store);
+    if (subcommand === "review") {
+      console.log(JSON.stringify(findings.review(), null, 2));
+      return 0;
+    }
+    const findingId = args.positionals[0];
+    if (!findingId) throw new Error(`findings ${subcommand ?? "command"} requires <finding-id>`);
+    if (subcommand === "dismiss") {
+      if (!args.flags.reason) throw new Error("findings dismiss requires --reason <text>");
+      const eventId = findings.dismiss({ findingId, reason: args.flags.reason });
+      const attention = rebuildFindingAttentionState({ store });
+      rebuildChiefOfStaffState({ store });
+      console.log(JSON.stringify({ findingId, status: "dismissed", eventId,
+        attentionStateId: attention.stateId }, null, 2));
+      return 0;
+    }
+    if (subcommand === "supersede") {
+      if (!args.flags.replacement || !args.flags.reason) {
+        throw new Error("findings supersede requires --replacement <finding-id> --reason <text>");
+      }
+      const eventId = findings.supersede({
+        findingId, replacementFindingId: args.flags.replacement, reason: args.flags.reason,
+      });
+      const attention = rebuildFindingAttentionState({ store });
+      rebuildChiefOfStaffState({ store });
+      console.log(JSON.stringify({ findingId, status: "superseded", eventId,
+        replacementFindingId: args.flags.replacement, attentionStateId: attention.stateId }, null, 2));
+      return 0;
+    }
+    throw new Error("findings supports review, dismiss, or supersede");
   }
 
   if (command === "approve") {
@@ -231,7 +262,11 @@ async function main(argv: string[]): Promise<number> {
       ? await applyPolicyBootstrapProposal(toolInput)
       : proposal.toolName === "apply_task_id_patch"
         ? await applyTaskIdProposal(toolInput)
-        : await applyApprovedProposal(toolInput);
+        : proposal.toolName === "append_email_task"
+          ? await applyEmailTaskProposal(toolInput)
+          : proposal.toolName === "append_finding_task"
+            ? await applyFindingTaskProposal(toolInput)
+            : await applyApprovedProposal(toolInput);
     console.log(`Applied ${result.actionId} to ${result.targetPath}\nBackup: ${result.backupPath}`);
     return 0;
   }
@@ -633,6 +668,8 @@ function printUsage(): void {
   life-os calendar status --vault <path>
   life-os message triage --vault <path> [--limit <n>]
   life-os findings review --vault <path>
+  life-os findings dismiss <finding-id> --reason <text> --vault <path>
+  life-os findings supersede <finding-id> --replacement <finding-id> --reason <text> --vault <path>
   life-os telegram ingest --vault <path> [--limit <1-100>]
   life-os telegram status --vault <path>`);
 }

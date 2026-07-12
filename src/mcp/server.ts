@@ -32,6 +32,7 @@ import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { MacOsKeychainGmailCredentialStore } from "../gmail/keychain";
 import { previewGmailExtractionContext } from "../workflows/gmail-extraction-preview";
 import { proposeEmailExtractionTask } from "../workflows/email-task-proposal";
+import { proposeFindingTask } from "../workflows/finding-task-proposal";
 import {
   prepareSubscriptionEmailExtraction,
   submitSubscriptionEmailExtraction,
@@ -140,12 +141,22 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_propose_email_task", {
-    description: "Create one approval-gated task proposal from a selected user-owned actionable email extraction item. Destination is fixed to the canonical inbox; this does not write the vault.",
+    description: "Compatibility surface that resolves one email extraction item to its active finding and creates an approval-gated fixed-inbox task proposal. This does not write the vault.",
     inputSchema: { extractionId: z.string().startsWith("extract_"), itemIndex: z.number().int().nonnegative() },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, async ({ extractionId, itemIndex }) => {
     const { vault, store } = runtimeContext();
     const proposal = await proposeEmailExtractionTask({ extractionId, itemIndex, vault, store });
+    return jsonResult(sanitizeProposal(proposal));
+  });
+
+  server.registerTool("life_os_propose_finding_task", {
+    description: "Create one approval-gated fixed-inbox task proposal from an active user-owned actionable finding. The caller cannot supply task text, due date, ID, or path; this does not write the vault.",
+    inputSchema: { findingId: z.string().startsWith("finding_") },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async ({ findingId }) => {
+    const { vault, store } = runtimeContext();
+    const proposal = await proposeFindingTask({ findingId, vault, store });
     return jsonResult(sanitizeProposal(proposal));
   });
 

@@ -35,12 +35,17 @@ test("additively migrates an existing schema v7 database to combined provider sc
   expect(store.countRows("imessage_messages")).toBe(0);
   const migrated = store.open();
   expect(migrated.query<{ count: number }, []>("SELECT COUNT(*) count FROM telegram_messages").get()?.count).toBe(0);
-  migrated.close();
   expect(store.countRows("calendar_events")).toBe(0);
   expect(store.countRows("calendar_event_versions")).toBe(0);
   expect(store.countRows("subject_links")).toBe(0);
   expect(store.countRows("findings")).toBe(0);
   expect(store.countRows("finding_status_events")).toBe(0);
+  const findingStatusColumns = migrated.query<{ name: string }, []>(
+    "PRAGMA table_info(finding_status_events)",
+  ).all().map((column) => column.name);
+  expect(findingStatusColumns).toContain("related_entity_type");
+  expect(findingStatusColumns).toContain("related_entity_id");
+  migrated.close();
 });
 
 test("records runs, actions, and action results", () => {

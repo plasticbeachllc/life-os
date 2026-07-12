@@ -89,6 +89,48 @@ test("finding projection rejects invalid items and immutable projection conflict
   expect(store.countRows("findings")).toBe(1);
 });
 
+test("finding lifecycle dismissal and supersession are explicit and append-only", () => {
+  const store = testStore();
+  recordCall(store, "call_lifecycle", "gmail_extraction", "subscription_email_extraction");
+  projectExtractionFindings({
+    store,
+    extraction: {
+      sourceType: "gmail_extraction", extractionId: "extract_lifecycle",
+      callId: "call_lifecycle", createdAt: "2026-07-12T12:00:00.000Z",
+      output: { items: [
+        { kind: "open_loop", statement: "Old plan", owner: "user", dueDate: null,
+          confidence: 1, ambiguities: [], evidenceIds: ["gmail:m1:sha256:one"] },
+        { kind: "open_loop", statement: "Replacement plan", owner: "user", dueDate: null,
+          confidence: 1, ambiguities: [], evidenceIds: ["gmail:m2:sha256:two"] },
+        { kind: "open_loop", statement: "Dismiss me", owner: "user", dueDate: null,
+          confidence: 1, ambiguities: [], evidenceIds: ["gmail:m3:sha256:three"] },
+      ] },
+    },
+  });
+  const active = new FindingStore(store).review().findings;
+  const old = active.find((finding) => finding.statement === "Old plan")!;
+  const replacement = active.find((finding) => finding.statement === "Replacement plan")!;
+  const dismissed = active.find((finding) => finding.statement === "Dismiss me")!;
+  const findings = new FindingStore(store);
+  findings.supersede({
+    findingId: old.findingId, replacementFindingId: replacement.findingId,
+    reason: "A newer explicit plan replaced it", createdAt: "2026-07-12T13:00:00.000Z",
+  });
+  findings.dismiss({
+    findingId: dismissed.findingId, reason: "User reviewed it as irrelevant",
+    createdAt: "2026-07-12T13:01:00.000Z",
+  });
+  expect(findings.get(old.findingId)?.status).toBe("superseded");
+  expect(findings.get(replacement.findingId)?.status).toBe("active");
+  expect(findings.get(dismissed.findingId)?.status).toBe("dismissed");
+  expect(() => findings.dismiss({ findingId: old.findingId, reason: "again" }))
+    .toThrow("not active");
+  expect(() => findings.supersede({
+    findingId: replacement.findingId, replacementFindingId: replacement.findingId, reason: "self",
+  })).toThrow("supersede itself");
+  expect(store.countRows("finding_status_events")).toBe(5);
+});
+
 test("finding backfill processes existing Gmail and Messages extractions without model work", () => {
   const store = testStore();
   recordCall(store, "call_gmail_backfill", "gmail_extraction", "subscription_email_extraction");

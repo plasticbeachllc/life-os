@@ -7,12 +7,14 @@ import type { OperationalStore, ProposalRecord } from "../db/store";
 import { compileActionPolicy, loadPolicy } from "./loader";
 import { disabledActions } from "./invariants";
 import { sha256File, sha256Text } from "../util/hashing";
+import { FindingStore } from "../findings/store";
 
 const registeredProposalTools = new Set([
   "apply_frontmatter_patch",
   "apply_task_id_patch",
   "bootstrap_policy_file",
   "append_email_task",
+  "append_finding_task",
 ]);
 
 export async function prepareProposalAuthorization(input: {
@@ -23,6 +25,7 @@ export async function prepareProposalAuthorization(input: {
 }> {
   const proposal = requireApplicableProposal(input.store, input.proposalId);
   await assertProposalPolicy(proposal, input.vault);
+  assertProposalSourceCurrent(proposal, input.store);
   await assertProposalTargetCurrent(proposal, input.vault);
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + (input.ttlSeconds ?? 300) * 1000).toISOString();
@@ -46,6 +49,7 @@ export async function consumeProposalAuthorization(input: {
   const proposal = requireApplicableProposal(input.store, input.proposalId);
   if (proposal.actionId !== input.actionId) throw new Error("action does not belong to proposal");
   await assertProposalPolicy(proposal, input.vault);
+  assertProposalSourceCurrent(proposal, input.store);
   await assertProposalTargetCurrent(proposal, input.vault);
   input.store.consumeAuthorizationToken({
     tokenHash: sha256Text(input.token), purpose: "apply_proposal",
@@ -102,7 +106,8 @@ function requireApplicableProposal(store: OperationalStore, proposalId: string):
 
 async function assertProposalPolicy(proposal: ProposalRecord, vault: ObsidianVault): Promise<void> {
   if (proposal.toolName === "bootstrap_policy_file") return;
-  const actionName = ["apply_task_id_patch", "append_email_task"].includes(proposal.toolName) ? "create_task" : proposal.toolName;
+  const actionName = ["apply_task_id_patch", "append_email_task", "append_finding_task"]
+    .includes(proposal.toolName) ? "create_task" : proposal.toolName;
   const decision = compileActionPolicy(await loadPolicy(vault), actionName);
   if (!decision.allowed || !decision.requiresApproval) throw new Error(`policy does not permit approval for ${actionName}`);
 }
@@ -110,6 +115,15 @@ async function assertProposalPolicy(proposal: ProposalRecord, vault: ObsidianVau
 async function assertProposalTargetCurrent(proposal: ProposalRecord, vault: ObsidianVault): Promise<void> {
   if (await currentTargetHash(vault, proposal.targetPath) !== proposal.targetHash) {
     throw new Error("proposal target changed; regenerate proposal");
+  }
+}
+
+function assertProposalSourceCurrent(proposal: ProposalRecord, store: OperationalStore): void {
+  if (proposal.toolName !== "append_finding_task") return;
+  const finding = new FindingStore(store).get(proposal.sourceId);
+  if (!finding || finding.status !== "active" || finding.contentHash !== proposal.sourceHash
+    || proposal.arguments.findingId !== finding.findingId) {
+    throw new Error("finding changed; regenerate task proposal");
   }
 }
 
