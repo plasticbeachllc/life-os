@@ -759,6 +759,7 @@ export class OperationalStore {
       "workflow_state",
       "change_events",
       "derived_states",
+      "subject_links",
       "model_calls",
       "context_manifests",
       "model_cache",

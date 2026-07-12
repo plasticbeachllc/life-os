@@ -1,4 +1,4 @@
-export const schemaVersion = 13;
+export const schemaVersion = 14;
 
 export const ddl = [
   `
@@ -96,6 +96,26 @@ export const ddl = [
   `
   CREATE INDEX IF NOT EXISTS idx_derived_states_current
   ON derived_states(state_type, entity_id, superseded_at)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS subject_links (
+    link_id TEXT PRIMARY KEY,
+    from_type TEXT NOT NULL CHECK(from_type IN ('imessage_conversation')),
+    from_source_id TEXT NOT NULL,
+    from_id TEXT NOT NULL,
+    relationship TEXT NOT NULL CHECK(relationship IN ('concerns')),
+    to_type TEXT NOT NULL CHECK(to_type IN ('person')),
+    to_id TEXT NOT NULL,
+    basis TEXT NOT NULL CHECK(basis IN ('explicit_config', 'reviewed')),
+    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    source_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(from_type, from_source_id, from_id, relationship, to_type, to_id, source_hash)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_subject_links_from
+  ON subject_links(from_type, from_source_id, from_id, relationship)
   `,
   `
   CREATE TABLE IF NOT EXISTS model_calls (

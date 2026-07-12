@@ -58,7 +58,9 @@ the vault or Gmail.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
 assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
-current provider architecture. Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
+current provider architecture. The comprehensive target architecture, normative contracts, reference
+code, and phased implementation checklist are in [`docs/architecture.md`](docs/architecture.md).
+Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
@@ -169,6 +171,8 @@ copy only the desired source conversation IDs into the external environment file
 bun run src/cli.ts message conversations --vault ~/worktable/vault
 bun run src/cli.ts message status --vault ~/worktable/vault
 bun run src/cli.ts message ingest --vault ~/worktable/vault --limit 500
+bun run src/cli.ts message link-person --conversation '<source-conversation-id>' \
+  --person person_example --vault ~/worktable/vault
 bun run src/cli.ts message preview-extraction --vault ~/worktable/vault
 bun run src/cli.ts message review-extractions --vault ~/worktable/vault
 bun run src/cli.ts message triage --vault ~/worktable/vault --limit 100
@@ -189,6 +193,13 @@ LIFE_OS_IMESSAGE_BLACKLIST_CONVERSATION_IDS=
 
 Selection identifiers remain in the external mode-600 environment file. They are not returned through
 MCP, and operational records use derived internal conversation IDs.
+
+After ingesting a selected conversation and rebuilding canonical person state, `message link-person`
+can explicitly associate that conversation with one existing person ID. The command validates the
+configured Messages selection and stores only the derived internal conversation identity, bound to the
+current participant-set hash. It does not merge people or expose a general association write through
+MCP. Linked Messages extraction may then receive bounded person state, that person's open tasks, and
+calendar entries that deterministically mention an established name or alias.
 
 The adapter opens only `~/Library/Messages/chat.db`, read-only, and uses fixed queries. Apple's
 attributed-body archives are decoded by a fixed, bounded macOS Foundation subprocess with archive data

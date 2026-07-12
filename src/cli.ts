@@ -30,6 +30,7 @@ import { IMessageStore } from "./imessage/store";
 import { ingestIMessageChanges } from "./workflows/imessage-ingest";
 import { previewIMessageExtractionContext } from "./workflows/imessage-extraction-preview";
 import { triageIMessageServiceConversations } from "./workflows/imessage-deterministic-triage";
+import { linkIMessageConversationToPerson } from "./workflows/link-imessage-person";
 import { ingestCalendar } from "./workflows/calendar-ingest";
 import { CalendarStore } from "./calendar/store";
 import { TdLibTelegramAdapter } from "./adapters/telegram";
@@ -358,6 +359,25 @@ async function main(argv: string[]): Promise<number> {
     const args = parseFlags(messageRest);
     const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
     const adapter = new MacOsMessagesAdapter(config.imessageDatabasePath);
+    if (subcommand === "link-person") {
+      const sourceConversationId = args.flags.conversation;
+      const personId = args.flags.person;
+      if (!sourceConversationId || !personId) {
+        throw new Error("message link-person requires --conversation <source-id> --person <person-id>");
+      }
+      const result = linkIMessageConversationToPerson({
+        store: new OperationalStore(config.databasePath),
+        sourceId: config.imessageSourceId,
+        sourceConversationId,
+        personId,
+        selection: {
+          mode: config.imessageSelectionMode,
+          conversationIds: config.imessageConversationIds,
+        },
+      });
+      console.log(JSON.stringify(result, null, 2));
+      return 0;
+    }
     if (subcommand === "status") {
       const store = new OperationalStore(config.databasePath);
       store.migrate();
@@ -594,6 +614,7 @@ function printUsage(): void {
   life-os message status --vault <path>
   life-os message conversations --vault <path> [--limit <n>]
   life-os message ingest --vault <path> [--limit <n>]
+  life-os message link-person --conversation <source-id> --person <person-id> --vault <path>
   life-os message preview-extraction --vault <path>
   life-os message review-extractions --vault <path>
   life-os calendar ingest --vault <path>

@@ -9,6 +9,7 @@ import type {
 } from "../src/adapters/imessage";
 import { MacOsMessagesAdapter } from "../src/adapters/imessage";
 import { OperationalStore } from "../src/db/store";
+import { imessageDevelopmentContextCandidates } from "../src/context/imessage-development";
 import { normalizeIMessage } from "../src/imessage/normalizer";
 import { IMessageStore } from "../src/imessage/store";
 import { ingestIMessageChanges } from "../src/workflows/imessage-ingest";
@@ -18,6 +19,7 @@ import {
   prepareSubscriptionIMessageExtraction, submitSubscriptionIMessageExtraction,
 } from "../src/workflows/subscription-imessage-extraction";
 import { triageIMessageServiceConversations } from "../src/workflows/imessage-deterministic-triage";
+import { linkIMessageConversationToPerson } from "../src/workflows/link-imessage-person";
 
 class FakeMessagesAdapter implements IMessageSourceAdapter {
   constructor(readonly messages: IMessageSourceMessage[]) {}
@@ -60,7 +62,7 @@ class FakeMessagesAdapter implements IMessageSourceAdapter {
 
 function sourceMessage(input: {
   rowId: number; id?: string; conversation?: string; text?: string | null;
-  attributedBodyPresent?: boolean;
+  attributedBodyPresent?: boolean; participants?: string[];
 }): IMessageSourceMessage {
   return {
     sourceRowId: input.rowId,
@@ -72,7 +74,7 @@ function sourceMessage(input: {
     text: input.text === undefined ? "Hello" : input.text,
     attributedBodyPresent: input.attributedBodyPresent ?? false,
     attributedBodyHash: input.attributedBodyPresent ? "sha256:attributed-body" : null,
-    participants: ["+15555550100"],
+    participants: input.participants ?? ["+15555550100"],
   };
 }
 
@@ -271,6 +273,37 @@ test("all-except mode ingests generally while excluding blacklisted conversation
   expect(store.countRows("imessage_messages")).toBe(1);
 });
 
+test("Messages person links are invalidated when the participant set changes", async () => {
+  const adapter = new FakeMessagesAdapter([
+    sourceMessage({ rowId: 1, participants: ["+15555550100"] }),
+  ]);
+  const store = testStore();
+  const selection = { mode: "all_except" as const, conversationIds: [] };
+  await ingestIMessageChanges({ adapter, store, sourceId: "local-messages", selection, limit: 100 });
+  saveState(store, {
+    stateId: "state_person_link_v1", stateType: "person_state", entityId: "person_linked",
+    stateVersion: 1, sourceHashes: ["sha256:person-link-v1"],
+    content: { entity_id: "person_linked", display_name: "Linked Person", aliases: [] },
+  });
+  linkIMessageConversationToPerson({
+    store, sourceId: "local-messages", sourceConversationId: "chat-allowed",
+    personId: "person_linked", selection,
+  });
+  const conversationId = normalizeIMessage(adapter.messages[0]!).conversationId;
+  expect(imessageDevelopmentContextCandidates({
+    store, sourceId: "local-messages", conversationId,
+  })).toHaveLength(1);
+
+  adapter.messages.push(sourceMessage({
+    rowId: 2, participants: ["+15555550100", "+15555550101"],
+  }));
+  await ingestIMessageChanges({ adapter, store, sourceId: "local-messages", selection, limit: 100 });
+  expect(imessageDevelopmentContextCandidates({
+    store, sourceId: "local-messages", conversationId,
+  })).toHaveLength(0);
+  expect(store.countRows("subject_links")).toBe(1);
+});
+
 test("deterministic service triage avoids model work and feeds focused sanitized views", async () => {
   const adapter = new FakeMessagesAdapter([
     sourceMessage({
@@ -447,6 +480,131 @@ test("Messages extraction submission rejects provider drift after prepare", asyn
   expect(store.countRows("imessage_extractions")).toBe(0);
 }, 15_000);
 
+test("Messages context includes only linked person developments and rejects changed projections", async () => {
+  const selected = sourceMessage({ rowId: 50, text: "Thursday works. Same place as last time?" });
+  const adapter = new FakeMessagesAdapter([selected]);
+  const store = testStore();
+  const selection = { mode: "all_except" as const, conversationIds: [] };
+  await ingestIMessageChanges({ adapter, store, sourceId: "local-messages", selection, limit: 100 });
+
+  saveState(store, {
+    stateId: "state_person_alex_v1", stateType: "person_state", entityId: "person_alex",
+    stateVersion: 1, sourceHashes: ["sha256:person-alex-v1"],
+    content: {
+      entity_id: "person_alex", display_name: "Alex Morgan", aliases: ["Alex"],
+      last_contact: "2026-07-10", next_contact: null, open_loop_count: 1,
+      recent_interaction_summary: "Last met at Cafe North.", active_project_ids: [],
+    },
+  });
+  saveState(store, {
+    stateId: "state_person_jamie_v1", stateType: "person_state", entityId: "person_jamie",
+    stateVersion: 1, sourceHashes: ["sha256:person-jamie-v1"],
+    content: {
+      entity_id: "person_jamie", display_name: "Jamie Rivera", aliases: ["Jamie"],
+      last_contact: null, next_contact: null, open_loop_count: 1,
+      recent_interaction_summary: "Unrelated private context.", active_project_ids: [],
+    },
+  });
+  saveState(store, {
+    stateId: "state_task_alex_v1", stateType: "task_state", entityId: "task_alex_venue",
+    stateVersion: 1, sourceHashes: ["sha256:task-alex-v1"],
+    content: {
+      task_id: "task_alex_venue", description: "Confirm the venue with Alex",
+      status: "open", person_id: "person_alex", project_id: null,
+      due_date: "2026-07-16", scheduled_date: null, waiting: false,
+    },
+  });
+  saveState(store, {
+    stateId: "state_task_jamie_v1", stateType: "task_state", entityId: "task_jamie_unrelated",
+    stateVersion: 1, sourceHashes: ["sha256:task-jamie-v1"],
+    content: {
+      task_id: "task_jamie_unrelated", description: "Unrelated Jamie task",
+      status: "open", person_id: "person_jamie", project_id: null,
+      due_date: null, scheduled_date: null, waiting: false,
+    },
+  });
+  saveState(store, {
+    stateId: "state_calendar_me_v1", stateType: "calendar_state", entityId: "me",
+    stateVersion: 1, sourceHashes: ["sha256:calendar-v1"],
+    content: {
+      as_of: "2026-07-12T12:00:00.000Z", window_end: "2026-08-12T12:00:00.000Z",
+      event_count: 2,
+      next_events: [
+        { summary: "Coffee with Alex", location: "Cafe North", startAt: "2026-07-16T16:00:00-04:00", endAt: "2026-07-16T17:00:00-04:00", allDay: false },
+        { summary: "Unrelated planning", location: "Room 4", startAt: "2026-07-17T10:00:00-04:00", endAt: "2026-07-17T11:00:00-04:00", allDay: false },
+      ],
+    },
+  });
+
+  const conversationId = normalizeIMessage(selected).conversationId;
+  expect(linkIMessageConversationToPerson({
+    store, sourceId: "local-messages", sourceConversationId: "chat-allowed",
+    personId: "person_alex", selection,
+  })).toMatchObject({ linked: true, personId: "person_alex" });
+  expect(() => linkIMessageConversationToPerson({
+    store, sourceId: "local-messages", sourceConversationId: "chat-denied",
+    personId: "person_alex",
+    selection: { mode: "allowlist", conversationIds: ["chat-allowed"] },
+  })).toThrow("outside the configured selection");
+  const preview = await previewIMessageExtractionContext({
+    adapter, store, sourceId: "local-messages", selection,
+  });
+  expect(preview?.request).toMatchObject({
+    workflow: "imessage_extraction", purpose: "extract",
+    trigger: { type: "source_delta", subjectId: conversationId },
+  });
+  const live = JSON.stringify(preview?.manifest.includedItems);
+  expect(live).toContain("Alex Morgan");
+  expect(live).toContain("Confirm the venue with Alex");
+  expect(live).toContain("Coffee with Alex");
+  expect(live).not.toContain("Jamie Rivera");
+  expect(live).not.toContain("Unrelated Jamie task");
+  expect(live).not.toContain("Unrelated planning");
+  const audit = JSON.stringify(preview?.auditManifest);
+  expect(audit).not.toContain("Alex Morgan");
+  expect(audit).not.toContain("Cafe North");
+  expect(audit).not.toContain("Confirm the venue with Alex");
+  expect(audit).not.toContain("Same place as last time");
+
+  const prepared = await prepareSubscriptionIMessageExtraction({
+    adapter, store, sourceId: "local-messages", selection,
+    model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  expect(prepared.allowedEvidenceIds).toEqual(expect.arrayContaining([
+    "state:state_person_alex_v1", "state:state_task_alex_v1", "state:state_calendar_me_v1",
+  ]));
+  saveState(store, {
+    stateId: "state_person_alex_v2", stateType: "person_state", entityId: "person_alex",
+    stateVersion: 2, sourceHashes: ["sha256:person-alex-v2"],
+    content: {
+      entity_id: "person_alex", display_name: "Alex Morgan", aliases: ["Alex"],
+      last_contact: "2026-07-12", next_contact: null, open_loop_count: 0,
+      recent_interaction_summary: "Context changed after preparation.", active_project_ids: [],
+    },
+  });
+  await expect(submitSubscriptionIMessageExtraction({
+    adapter, store, sourceId: "local-messages", selection,
+    callId: String(prepared.callId),
+    conversationStateHash: String(prepared.conversationStateHash),
+    policyVersion: "sha256:policy",
+    output: {
+      classification: "ambiguous", summary: "The exact meeting details remain unresolved.",
+      items: [], unresolved: ["Exact time and place are unresolved."],
+      promptInjectionDetected: false,
+    },
+  })).rejects.toThrow("contextual state changed");
+  expect(store.countRows("imessage_extractions")).toBe(0);
+}, 15_000);
+
 function testStore(): OperationalStore {
   return new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-imessage-")), "store.db"));
+}
+
+function saveState(store: OperationalStore, input: {
+  stateId: string; stateType: string; entityId: string; stateVersion: number;
+  sourceHashes: string[]; content: Record<string, unknown>;
+}): void {
+  store.saveDerivedState({
+    ...input, generationMethod: "test-fixture", createdAt: new Date().toISOString(),
+  });
 }

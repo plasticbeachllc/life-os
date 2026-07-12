@@ -4,9 +4,7 @@ import { IMessageStore } from "../imessage/store";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
-import {
-  imessageAuditItems, previewIMessageExtractionContext,
-} from "./imessage-extraction-preview";
+import { previewIMessageExtractionContext } from "./imessage-extraction-preview";
 import { refetchIMessage } from "./imessage-refetch";
 
 export const IMESSAGE_EXTRACTION_PROMPT_VERSION = imessagePromptSpec.version;
@@ -54,14 +52,8 @@ export async function prepareSubscriptionIMessageExtraction(input: {
     cached: false, startedAt, status: "prepared",
   });
   input.store.recordContextManifest({
-    manifestId: preview.manifest.manifestId, callId,
-    includedItems: imessageAuditItems(preview.manifest.includedItems),
-    omittedItems: imessageAuditItems(preview.manifest.omittedItems),
-    tokenBudget: preview.manifest.tokenBudget,
-    retrievalLevels: preview.manifest.retrievalLevels,
-    rankingVersion: preview.manifest.rankingVersion,
-    contextHash: preview.manifest.contextHash,
-    createdAt: preview.manifest.createdAt,
+    ...preview.auditManifest,
+    callId,
   });
   return {
     cached: false, callId, conversationStateHash: preview.conversationStateHash,
@@ -97,6 +89,7 @@ export async function submitSubscriptionIMessageExtraction(input: {
     !== input.conversationStateHash) {
     throw new Error("ingested Messages conversation changed; prepare extraction again");
   }
+  assertContextStatesCurrent(input.store, manifest.includedItems);
   const current = await refetchIMessage({
     adapter: input.adapter, store: input.store, sourceId: input.sourceId,
     messageId: prepared.messageId, selection: input.selection,
@@ -210,9 +203,25 @@ function imessageEvidence(value: unknown, deltaIds: string[]): EvidenceDescripto
     const id = record.evidence_id;
     if (typeof id === "string" && /^imessage:imsg_[^:]+:sha256:/.test(id)) {
       records.push({ id, type: "provider_message", scope: deltaIds.includes(id) ? "delta" : "context" });
+    } else if (typeof id === "string" && /^state:state_[A-Za-z0-9_-]+$/.test(id)) {
+      records.push({ id, type: "state", scope: "context" });
     }
   });
   return [...new Map(records.map((item) => [item.id, item])).values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function assertContextStatesCurrent(store: OperationalStore, value: unknown): void {
+  visitRecords(value, (record) => {
+    if (typeof record.evidence_id !== "string" || !record.evidence_id.startsWith("state:")) return;
+    if (typeof record.state_id !== "string" || typeof record.state_type !== "string") {
+      throw new Error("prepared Messages contextual state identity is incomplete");
+    }
+    const entityId = typeof record.entity_id === "string" ? record.entity_id : undefined;
+    const current = store.getCurrentDerivedState(record.state_type, entityId);
+    if (!current || current.stateId !== record.state_id) {
+      throw new Error("prepared Messages contextual state changed; prepare extraction again");
+    }
+  });
 }
 
 function enforceInjectionConsistency(output: IMessageExtractionOutput, value: unknown): void {

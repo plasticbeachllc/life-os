@@ -50,6 +50,13 @@ export function normalizeIMessage(message: IMessageSourceMessage): NormalizedIMe
   };
 }
 
+export function internalIMessageConversationId(sourceConversationId: string): string {
+  if (!sourceConversationId || sourceConversationId.length > 512 || /[\u0000-\u001f]/.test(sourceConversationId)) {
+    throw new Error("invalid source Messages conversation ID");
+  }
+  return internalId("imchat", sourceConversationId);
+}
+
 function internalId(prefix: "imsg" | "imchat", sourceId: string): string {
   return `${prefix}_${sha256Text(sourceId).slice("sha256:".length)}`;
 }
