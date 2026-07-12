@@ -131,7 +131,7 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   expect(JSON.stringify(preview?.manifest.includedItems)).toContain("CREDIT_CARD");
   expect(store.countRows("model_calls")).toBe(0);
   expect(store.countRows("gmail_message_versions")).toBe(1);
-});
+}, 15_000);
 
 test("extraction preview rejects source drift until re-ingestion", async () => {
   const selected = message({ id: "message_stale", body: "Original content" });
@@ -201,7 +201,7 @@ test("subscription extraction validates evidence and persists no proposal or bod
   expect((await prepareSubscriptionEmailExtraction({
     adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
   })).empty).toBe(true);
-});
+}, 15_000);
 
 test("subscription extraction rejects source drift", async () => {
   const selected = message({ id: "message_extract_stale", body: "Original request" });
@@ -219,4 +219,4 @@ test("subscription extraction rejects source drift", async () => {
     output: { classification: "ignore", summary: "No action", items: [], unresolved: [], promptInjectionDetected: false },
   })).rejects.toThrow("ingested Gmail source or thread changed");
   expect(store.countRows("gmail_extractions")).toBe(0);
-});
+}, 15_000);

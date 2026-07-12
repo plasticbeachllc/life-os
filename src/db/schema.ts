@@ -1,4 +1,4 @@
-export const schemaVersion = 7;
+export const schemaVersion = 10;
 
 export const ddl = [
   `
@@ -343,5 +343,127 @@ export const ddl = [
     UNIQUE(account_id, message_id, source_hash, prompt_version, schema_version, policy_version),
     FOREIGN KEY(account_id, message_id) REFERENCES gmail_messages(account_id, message_id)
   )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS imessage_sources (
+    source_id TEXT PRIMARY KEY,
+    last_row_id INTEGER NOT NULL DEFAULT 0,
+    normalizer_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS imessage_ingestion_runs (
+    ingestion_run_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES imessage_sources(source_id),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL,
+    discovered_count INTEGER NOT NULL DEFAULT 0,
+    ingested_count INTEGER NOT NULL DEFAULT 0,
+    unchanged_count INTEGER NOT NULL DEFAULT 0,
+    unavailable_text_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS imessage_conversations (
+    source_id TEXT NOT NULL REFERENCES imessage_sources(source_id),
+    conversation_id TEXT NOT NULL,
+    participant_set_hash TEXT NOT NULL,
+    conversation_state_hash TEXT NOT NULL,
+    service TEXT NOT NULL,
+    message_count INTEGER NOT NULL,
+    latest_message_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(source_id, conversation_id)
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS imessage_messages (
+    source_id TEXT NOT NULL REFERENCES imessage_sources(source_id),
+    message_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    source_row_id INTEGER NOT NULL,
+    sent_at TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('incoming', 'outgoing')),
+    service TEXT NOT NULL,
+    participant_set_hash TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    text_hash TEXT NOT NULL,
+    text_character_count INTEGER NOT NULL,
+    text_available INTEGER NOT NULL,
+    last_processed_hash TEXT,
+    first_ingested_at TEXT NOT NULL,
+    last_ingested_at TEXT NOT NULL,
+    PRIMARY KEY(source_id, message_id),
+    UNIQUE(source_id, source_row_id)
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS imessage_message_versions (
+    source_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    source_row_id INTEGER NOT NULL,
+    text_hash TEXT NOT NULL,
+    participant_set_hash TEXT NOT NULL,
+    normalizer_version TEXT NOT NULL,
+    text_character_count INTEGER NOT NULL,
+    text_available INTEGER NOT NULL,
+    discovered_at TEXT NOT NULL,
+    PRIMARY KEY(source_id, message_id, content_hash),
+    FOREIGN KEY(source_id, message_id) REFERENCES imessage_messages(source_id, message_id)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_imessage_messages_conversation
+  ON imessage_messages(source_id, conversation_id, source_row_id)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS imessage_extractions (
+    extraction_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    conversation_state_hash TEXT NOT NULL,
+    call_id TEXT NOT NULL REFERENCES model_calls(call_id),
+    classification TEXT NOT NULL,
+    output_json TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_id, message_id, source_hash, prompt_version, schema_version, policy_version),
+    FOREIGN KEY(source_id, message_id) REFERENCES imessage_messages(source_id, message_id)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_imessage_extractions_conversation
+  ON imessage_extractions(source_id, conversation_id, created_at)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS imessage_deterministic_triage (
+    triage_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    conversation_state_hash TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    output_json TEXT NOT NULL,
+    rule_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_id, conversation_id, conversation_state_hash, rule_version),
+    FOREIGN KEY(source_id, message_id) REFERENCES imessage_messages(source_id, message_id)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_imessage_triage_conversation
+  ON imessage_deterministic_triage(source_id, conversation_id, created_at)
   `,
 ];

@@ -2,6 +2,7 @@
 
 import { ObsidianVault } from "./adapters/obsidian";
 import { GmailRestAdapter } from "./adapters/gmail";
+import { MacOsMessagesAdapter } from "./adapters/imessage";
 import { loadConfig, loadGmailAuthConfig, loadGmailClientConfig } from "./config";
 import { OperationalStore } from "./db/store";
 import type { ProposalRecord } from "./db/store";
@@ -23,6 +24,10 @@ import { MacOsKeychainGmailCredentialStore } from "./gmail/keychain";
 import { authorizeGmailDesktop } from "./workflows/gmail-auth";
 import { GmailStore } from "./gmail/store";
 import { previewGmailExtractionContext } from "./workflows/gmail-extraction-preview";
+import { IMessageStore } from "./imessage/store";
+import { ingestIMessageChanges } from "./workflows/imessage-ingest";
+import { previewIMessageExtractionContext } from "./workflows/imessage-extraction-preview";
+import { triageIMessageServiceConversations } from "./workflows/imessage-deterministic-triage";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -335,8 +340,100 @@ async function main(argv: string[]): Promise<number> {
     }
   }
 
+  if (command === "message") {
+    const [subcommand, ...messageRest] = rest;
+    const args = parseFlags(messageRest);
+    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+    const adapter = new MacOsMessagesAdapter(config.imessageDatabasePath);
+    if (subcommand === "status") {
+      const store = new OperationalStore(config.databasePath);
+      store.migrate();
+      const access = await adapter.checkAccess();
+      console.log(JSON.stringify({
+        enabled: config.imessageEnabled,
+        access,
+        selectionMode: config.imessageSelectionMode,
+        configuredConversationIds: config.imessageConversationIds.length,
+        ...new IMessageStore(store).inspectionSummary(config.imessageSourceId),
+      }, null, 2));
+      return access.ok ? 0 : 1;
+    }
+    if (subcommand === "conversations") {
+      const access = await adapter.checkAccess();
+      if (!access.ok) throw new Error(access.reason ?? "Messages database is unavailable");
+      const conversations = await adapter.listConversations(parseLimit(args.flags.limit, 50, 200));
+      console.log(JSON.stringify(conversations.map((conversation) => ({
+        sourceConversationId: conversation.sourceConversationId,
+        displayName: conversation.displayName,
+        service: conversation.service,
+        participantCount: conversation.participants.length,
+        latestSourceRowId: conversation.latestSourceRowId,
+      })), null, 2));
+      return 0;
+    }
+    if (subcommand === "ingest") {
+      if (!config.imessageEnabled) {
+        throw new Error("iMessage ingestion is disabled; set LIFE_OS_IMESSAGE_ENABLED=true");
+      }
+      const report = await ingestIMessageChanges({
+        adapter, store: new OperationalStore(config.databasePath),
+        sourceId: config.imessageSourceId,
+        selection: {
+          mode: config.imessageSelectionMode,
+          conversationIds: config.imessageConversationIds,
+        },
+        limit: parseLimit(args.flags.limit, 500, 5000),
+      });
+      console.log(JSON.stringify(report, null, 2));
+      return 0;
+    }
+    if (subcommand === "preview-extraction") {
+      if (!config.imessageEnabled) throw new Error("Messages ingestion is disabled");
+      const preview = await previewIMessageExtractionContext({
+        adapter, store: new OperationalStore(config.databasePath),
+        sourceId: config.imessageSourceId,
+        selection: {
+          mode: config.imessageSelectionMode,
+          conversationIds: config.imessageConversationIds,
+        },
+      });
+      console.log(JSON.stringify(preview ?? { message: "No unextracted Messages sources." }, null, 2));
+      return 0;
+    }
+    if (subcommand === "review-extractions") {
+      const store = new OperationalStore(config.databasePath);
+      store.migrate();
+      console.log(JSON.stringify(new IMessageStore(store).extractionReview(
+        config.imessageSourceId, { timeZone: config.timezone },
+      ), null, 2));
+      return 0;
+    }
+    if (subcommand === "triage") {
+      if (!config.imessageEnabled) throw new Error("Messages ingestion is disabled");
+      const report = await triageIMessageServiceConversations({
+        adapter, store: new OperationalStore(config.databasePath),
+        sourceId: config.imessageSourceId,
+        selection: {
+          mode: config.imessageSelectionMode,
+          conversationIds: config.imessageConversationIds,
+        },
+        limit: parseLimit(args.flags.limit, 100, 1000),
+      });
+      console.log(JSON.stringify(report, null, 2));
+      return 0;
+    }
+  }
+
   printUsage();
   return 2;
+}
+
+function parseLimit(value: string | undefined, fallback: number, maximum: number): number {
+  const limit = Number(value ?? fallback);
+  if (!Number.isInteger(limit) || limit < 1 || limit > maximum) {
+    throw new Error(`--limit must be an integer between 1 and ${maximum}`);
+  }
+  return limit;
 }
 
 function parseFlags(args: string[]): { flags: Record<string, string>; positionals: string[] } {
@@ -433,7 +530,13 @@ function printUsage(): void {
   life-os email ingest --vault <path> [--limit <n>]
   life-os email status --vault <path>
   life-os email review-extractions --vault <path>
-  life-os email preview-extraction --vault <path>`);
+  life-os email preview-extraction --vault <path>
+  life-os message status --vault <path>
+  life-os message conversations --vault <path> [--limit <n>]
+  life-os message ingest --vault <path> [--limit <n>]
+  life-os message preview-extraction --vault <path>
+  life-os message review-extractions --vault <path>
+  life-os message triage --vault <path> [--limit <n>]`);
 }
 
 const exitCode = await main(Bun.argv.slice(2));

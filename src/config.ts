@@ -11,6 +11,11 @@ export interface Config {
   defaultMode: string;
   gmailEnabled: boolean;
   gmailAccountId: string;
+  imessageEnabled: boolean;
+  imessageSourceId: string;
+  imessageDatabasePath: string;
+  imessageSelectionMode: "allowlist" | "all_except";
+  imessageConversationIds: string[];
   envFilePath: string;
 }
 
@@ -44,8 +49,34 @@ export function loadConfig(options: { vaultPath?: string } = {}): Config {
     defaultMode: Bun.env.LIFE_OS_DEFAULT_MODE ?? "dry-run",
     gmailEnabled: Bun.env.LIFE_OS_GMAIL_ENABLED === "true",
     gmailAccountId: Bun.env.LIFE_OS_GMAIL_ACCOUNT_ID ?? "me",
+    imessageEnabled: Bun.env.LIFE_OS_IMESSAGE_ENABLED === "true",
+    imessageSourceId: "local-messages",
+    imessageDatabasePath: resolve(homedir(), "Library/Messages/chat.db"),
+    imessageSelectionMode: parseIMessageSelectionMode(Bun.env.LIFE_OS_IMESSAGE_SELECTION_MODE),
+    imessageConversationIds: parseIMessageConversationIds(
+      Bun.env.LIFE_OS_IMESSAGE_SELECTION_MODE === "all_except"
+        ? Bun.env.LIFE_OS_IMESSAGE_BLACKLIST_CONVERSATION_IDS ?? ""
+        : Bun.env.LIFE_OS_IMESSAGE_CONVERSATION_IDS ?? "",
+    ),
     envFilePath,
   };
+}
+
+function parseIMessageSelectionMode(value: string | undefined): "allowlist" | "all_except" {
+  const mode = value ?? "allowlist";
+  if (mode !== "allowlist" && mode !== "all_except") {
+    throw new Error("LIFE_OS_IMESSAGE_SELECTION_MODE must be allowlist or all_except");
+  }
+  return mode;
+}
+
+function parseIMessageConversationIds(value: string): string[] {
+  const ids = [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+  if (ids.length > 100) throw new Error("at most 100 iMessage conversations may be allowlisted");
+  if (ids.some((id) => id.length > 512 || /[\u0000-\u001f]/.test(id))) {
+    throw new Error("invalid iMessage conversation identifier in allowlist");
+  }
+  return ids;
 }
 
 export interface GmailAuthConfig {

@@ -767,6 +767,13 @@ export class OperationalStore {
       "gmail_messages",
       "gmail_message_versions",
       "gmail_extractions",
+      "imessage_sources",
+      "imessage_ingestion_runs",
+      "imessage_conversations",
+      "imessage_messages",
+      "imessage_message_versions",
+      "imessage_extractions",
+      "imessage_deterministic_triage",
     ]);
     if (!allowed.has(table)) throw new Error(`unsupported table: ${table}`);
     const db = this.open();

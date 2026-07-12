@@ -18,6 +18,10 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Incremental, evidence-grounded Gmail extraction through a subscription-agent prepare/submit flow.
 - Stock Microsoft Presidio redaction of standard high-risk PII before email context reaches a model.
 - Sanitized extraction review with no Gmail IDs, hashes, headers, addresses, subjects, or source text.
+- Allowlisted, incremental read-only ingestion from the local macOS Messages database.
+- Bounded, high-risk-redacted Messages extraction with hash-verified refetch and sanitized review.
+- Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
+  and order-pickup alerts.
 
 No version 1 workflow can send or delete email, mutate Gmail labels, merge entities autonomously,
 rewrite journal prose, expose arbitrary shell access, or give a model unrestricted filesystem writes.
@@ -150,6 +154,60 @@ The OAuth refresh token is stored by the current desktop authorization adapter i
 under service `life-os.gmail.refresh-token`. Google client credentials remain 1Password references
 resolved only into the MCP/CLI subprocess environment.
 
+## Messages
+
+Phase 1 provides read-only local ingestion for explicitly allowlisted conversations. Grant Full Disk
+Access to the terminal or subscription host running Life OS, then inspect available conversations and
+copy only the desired source conversation IDs into the external environment file:
+
+```bash
+bun run src/cli.ts message conversations --vault ~/worktable/vault
+bun run src/cli.ts message status --vault ~/worktable/vault
+bun run src/cli.ts message ingest --vault ~/worktable/vault --limit 500
+bun run src/cli.ts message preview-extraction --vault ~/worktable/vault
+bun run src/cli.ts message review-extractions --vault ~/worktable/vault
+bun run src/cli.ts message triage --vault ~/worktable/vault --limit 100
+```
+
+```dotenv
+LIFE_OS_IMESSAGE_ENABLED=true
+LIFE_OS_IMESSAGE_SELECTION_MODE=allowlist
+LIFE_OS_IMESSAGE_CONVERSATION_IDS=iMessage;-;example
+```
+
+To ingest every conversation except an explicit blacklist, use:
+
+```dotenv
+LIFE_OS_IMESSAGE_SELECTION_MODE=all_except
+LIFE_OS_IMESSAGE_BLACKLIST_CONVERSATION_IDS=
+```
+
+Selection identifiers remain in the external mode-600 environment file. They are not returned through
+MCP, and operational records use derived internal conversation IDs.
+
+The adapter opens only `~/Library/Messages/chat.db`, read-only, and uses fixed queries. Apple's
+attributed-body archives are decoded by a fixed, bounded macOS Foundation subprocess with archive data
+passed through stdin. SQLite retains message and participant hashes, timestamps, direction, service,
+counts, and ingestion cursors but no message text, participant addresses, display names, attachments,
+or decoded archive data. Exact refetch re-reads a selected source row and rejects content or participant
+drift before returning transient text.
+
+Messages extraction preserves useful names, dates, locations, phone numbers, email addresses, and
+ordinary personal context. Stock Presidio redacts only configured high-risk financial, government,
+network, and medical identifiers. Preparation groups new turns by changed conversation and includes up
+to twelve recent turns under a recorded token budget. Earlier turns may support interpretation, while
+every extracted item must cite at least one newly changed turn. Message text is treated as untrusted and
+removed from the persisted context manifest. Submission
+binds the result to source, conversation, context, schema, prompt, and policy versions. Sanitized review
+contains useful summaries and structured items but no evidence IDs, provider identifiers, source hashes,
+participant addresses, or source text. Extraction creates no task, proposal, reply, or outgoing message.
+No Messages send capability is enabled in this phase.
+
+Deterministic service triage runs before optional model extraction. It stores only generic structured
+results, never verification codes or order identifiers, and records zero model calls. The review exposes
+focused sanitized queues for likely replies, open loops, upcoming dates, stale plans, and relationship
+updates, along with model-versus-deterministic origin counts and pending conversation totals.
+
 ## MCP
 
 The stdio server is configured as:
@@ -161,8 +219,8 @@ args = ["run", "--env-file", "/Users/you/.config/life-os/.env", "--",
         "/opt/homebrew/bin/bun", "run", "/path/to/life-os/src/mcp/server.ts"]
 ```
 
-Life OS currently exposes 17 narrow tools covering health, compact state, briefings, Gmail status and
-review, subscription prepare/submit workflows, and exact proposal authorization/apply/undo. It exposes
+Life OS currently exposes 23 narrow tools covering health, compact state, briefings, Gmail and Messages
+status/review/extraction, subscription prepare/submit workflows, and exact proposal authorization/apply/undo. It exposes
 no arbitrary path, patch, command, or generic write tool.
 
 Morning reasoning sequence:
@@ -183,6 +241,16 @@ Email extraction sequence:
 
 Extraction never creates a proposal automatically. Converting selected extraction items into tasks is
 a separate, future approval-gated workflow.
+
+Messages extraction sequence:
+
+1. Deterministic Messages ingestion.
+2. `life_os_prepare_imessage_extraction`
+3. Host returns schema-constrained, evidence-grounded extraction.
+4. `life_os_submit_imessage_extraction`
+5. `life_os_review_imessage_extractions`
+
+This workflow is read/extraction-only and cannot draft or send Messages.
 
 ## Verification
 

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 
 import { OperationalStore } from "../src/db/store";
 
@@ -13,8 +14,25 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(7);
+  expect(store.getSchemaVersion()).toBe(10);
   expect(store.countRows("schema_migrations")).toBe(1);
+});
+
+test("additively migrates an existing schema v7 database to Messages schema v10", () => {
+  const dir = mkdtempSync(join(tmpdir(), "life-os-db-v7-"));
+  const path = join(dir, "life-os.db");
+  const db = new Database(path);
+  db.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+  db.query("INSERT INTO schema_migrations (version, applied_at) VALUES (7, ?)")
+    .run("2026-07-12T00:00:00.000Z");
+  db.close();
+
+  const store = new OperationalStore(path);
+  store.migrate();
+
+  expect(store.getSchemaVersion()).toBe(10);
+  expect(store.countRows("schema_migrations")).toBe(2);
+  expect(store.countRows("imessage_messages")).toBe(0);
 });
 
 test("records runs, actions, and action results", () => {

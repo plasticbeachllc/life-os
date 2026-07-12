@@ -6,6 +6,7 @@ import * as z from "zod";
 
 import { ObsidianVault } from "../adapters/obsidian";
 import { GmailRestAdapter } from "../adapters/gmail";
+import { MacOsMessagesAdapter } from "../adapters/imessage";
 import { loadConfig, loadGmailAuthConfig } from "../config";
 import { OperationalStore } from "../db/store";
 import type { ProposalRecord } from "../db/store";
@@ -31,6 +32,13 @@ import {
   prepareSubscriptionEmailExtraction,
   submitSubscriptionEmailExtraction,
 } from "../workflows/subscription-email-extraction";
+import { IMessageStore } from "../imessage/store";
+import { previewIMessageExtractionContext } from "../workflows/imessage-extraction-preview";
+import {
+  prepareSubscriptionIMessageExtraction,
+  submitSubscriptionIMessageExtraction,
+} from "../workflows/subscription-imessage-extraction";
+import { triageIMessageServiceConversations } from "../workflows/imessage-deterministic-triage";
 
 export function createLifeOsMcpServer(): McpServer {
   const server = new McpServer({ name: "life-os", version: "0.1.0" });
@@ -185,6 +193,117 @@ export function createLifeOsMcpServer(): McpServer {
     if (!policy.policyVersion) throw new Error("complete valid policy required before extraction");
     return jsonResult(await submitSubscriptionEmailExtraction({
       store, accountId, callId, threadStateHash, policyVersion: policy.policyVersion, output,
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {}),
+      ...(cachedTokens !== undefined ? { cachedTokens } : {}),
+    }));
+  });
+
+  server.registerTool("life_os_imessage_status", {
+    description: "Return metadata-only Messages ingestion and extraction counts. Returns no provider IDs, participants, hashes, or source text.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  }, async () => {
+    const config = loadConfig();
+    const store = new OperationalStore(config.databasePath);
+    store.migrate();
+    return jsonResult({
+      enabled: config.imessageEnabled,
+      selectionMode: config.imessageSelectionMode,
+      configuredConversationIds: config.imessageConversationIds.length,
+      ...new IMessageStore(store).inspectionSummary(config.imessageSourceId),
+    });
+  });
+
+  server.registerTool("life_os_review_imessage_extractions", {
+    description: "Review sanitized structured Messages extractions. Returns no provider IDs, source hashes, participant addresses, evidence IDs, or source text.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  }, async () => {
+    const config = loadConfig();
+    const store = new OperationalStore(config.databasePath);
+    store.migrate();
+    return jsonResult(new IMessageStore(store).extractionReview(
+      config.imessageSourceId, { timeZone: config.timezone },
+    ));
+  });
+
+  server.registerTool("life_os_triage_imessage_service_messages", {
+    description: "Apply fixed deterministic rules to verification codes, service enrollments, routine notices, and pickup alerts. Persists only generic structured results and makes no model call, proposal, reply, send, or vault write.",
+    inputSchema: { limit: z.number().int().min(1).max(1000).default(100) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async ({ limit }) => {
+    const { config, adapter, store, selection } = imessageRuntimeContext();
+    return jsonResult(await triageIMessageServiceConversations({
+      adapter, store, sourceId: config.imessageSourceId, selection, limit,
+    }));
+  });
+
+  server.registerTool("life_os_preview_imessage_extraction_context", {
+    description: "Hash-verify one unextracted Messages source and return bounded, high-risk-redacted, untrusted transient context. Makes no model call and creates no proposal.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  }, async () => {
+    const { config, adapter, store, selection } = imessageRuntimeContext();
+    const preview = await previewIMessageExtractionContext({
+      adapter, store, sourceId: config.imessageSourceId, selection,
+    });
+    return jsonResult(preview ?? { message: "No unextracted Messages sources." });
+  });
+
+  server.registerTool("life_os_prepare_imessage_extraction", {
+    description: "Prepare one audited, bounded Messages context for structured extraction by the subscription host. Creates no task, proposal, reply, send, or vault write.",
+    inputSchema: { model: z.string().min(1) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  }, async ({ model }) => {
+    const { config, adapter, store, selection, vault } = imessageRuntimeContext();
+    const policy = await loadPolicy(vault);
+    if (!policy.policyVersion) throw new Error("complete valid policy required before extraction");
+    return jsonResult(await prepareSubscriptionIMessageExtraction({
+      adapter, store, sourceId: config.imessageSourceId, selection,
+      model, policyVersion: policy.policyVersion,
+    }));
+  });
+
+  server.registerTool("life_os_submit_imessage_extraction", {
+    description: "Validate evidence, recheck source and conversation state, and persist a structured Messages extraction. Creates no task, proposal, reply, send, or vault write.",
+    inputSchema: {
+      callId: z.string().min(1),
+      conversationStateHash: z.string().startsWith("sha256:"),
+      output: z.object({
+        classification: z.enum([
+          "actionable", "relationship_update", "project_update", "calendar_relevant",
+          "decision", "reference_only", "ignore", "ambiguous",
+          "malicious_or_untrusted_instruction",
+        ]),
+        summary: z.string().min(1),
+        items: z.array(z.object({
+          kind: z.enum([
+            "explicit_request", "user_commitment", "other_commitment", "decision",
+            "cancellation", "reschedule", "date", "relationship_update",
+            "project_update", "open_loop",
+          ]),
+          statement: z.string().min(1), evidenceIds: z.array(z.string().min(1)).min(1),
+          confidence: z.number().min(0).max(1),
+          owner: z.enum(["user", "other", "shared", "unknown"]),
+          dueDate: z.string().nullable(), ambiguities: z.array(z.string()),
+        })).max(20),
+        unresolved: z.array(z.string()), promptInjectionDetected: z.boolean(),
+      }),
+      inputTokens: z.number().int().nonnegative().optional(),
+      outputTokens: z.number().int().nonnegative().optional(),
+      cachedTokens: z.number().int().nonnegative().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  }, async ({
+    callId, conversationStateHash, output, inputTokens, outputTokens, cachedTokens,
+  }) => {
+    const { config, adapter, store, selection, vault } = imessageRuntimeContext();
+    const policy = await loadPolicy(vault);
+    if (!policy.policyVersion) throw new Error("complete valid policy required before extraction");
+    return jsonResult(await submitSubscriptionIMessageExtraction({
+      adapter, store, sourceId: config.imessageSourceId, selection,
+      callId, conversationStateHash, policyVersion: policy.policyVersion, output,
       ...(inputTokens !== undefined ? { inputTokens } : {}),
       ...(outputTokens !== undefined ? { outputTokens } : {}),
       ...(cachedTokens !== undefined ? { cachedTokens } : {}),
@@ -362,6 +481,25 @@ function gmailRuntimeContext(): {
     vault: new ObsidianVault(config.vaultPath), store,
     adapter: new GmailRestAdapter(loadGmailAuthConfig(refreshToken)),
     accountId: config.gmailAccountId,
+  };
+}
+
+function imessageRuntimeContext(): {
+  config: ReturnType<typeof loadConfig>; vault: ObsidianVault; store: OperationalStore;
+  adapter: MacOsMessagesAdapter;
+  selection: { mode: "allowlist" | "all_except"; conversationIds: string[] };
+} {
+  const config = loadConfig();
+  if (!config.imessageEnabled) throw new Error("Messages ingestion is disabled");
+  const store = new OperationalStore(config.databasePath);
+  store.migrate();
+  return {
+    config, vault: new ObsidianVault(config.vaultPath), store,
+    adapter: new MacOsMessagesAdapter(config.imessageDatabasePath),
+    selection: {
+      mode: config.imessageSelectionMode,
+      conversationIds: config.imessageConversationIds,
+    },
   };
 }
 
