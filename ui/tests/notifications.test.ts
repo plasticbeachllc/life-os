@@ -88,13 +88,13 @@ describe("LifeOS notification compiler", () => {
 			contextHash: firstCandidate!.manifest.contextHash,
 			schemaVersion: UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION,
 			policyVersion: UI_NOTIFICATION_SUMMARY_POLICY_VERSION,
-			output: { sentences: ["Grounded cached reaction.", "No immediate action is needed."], actionRequired: false },
+			output: { sentences: ["Grounded cached reaction.", "Review the underlying risk."], actionRequired: true },
 			createdAt: "2026-07-12T13:00:00.000Z",
 		});
 		const cached = compileUiNotifications(new Date("2026-07-12T13:10:00.000Z"));
 		expect(cached.notifications[0]?.agentSummary).toEqual({
-			sentences: ["Grounded cached reaction.", "No immediate action is needed."],
-			actionRequired: false,
+			sentences: ["Grounded cached reaction.", "Review the underlying risk."],
+			actionRequired: true,
 		});
 	});
 

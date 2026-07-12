@@ -10,12 +10,19 @@ interface PendingRequest {
 }
 
 interface ActiveTurn {
+	sessionId: string;
 	threadId: string;
 	turnId: string | null;
 	text: string;
+	maxOutputCharacters?: number;
 	onDelta: (delta: string) => void;
 	resolve: () => void;
 	reject: (error: Error) => void;
+}
+
+interface ThreadBinding {
+	threadId: string;
+	lastUsedAt: number;
 }
 
 export interface ChatContext {
@@ -68,7 +75,10 @@ export class CodexAppServerClient {
 	private readonly ready: Promise<void>;
 	private process: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null;
 	private nextId = 1;
-	private readonly threadIds = new Map<string, string>();
+	private readonly threadIds = new Map<string, ThreadBinding>();
+	private readonly threadTtlMs = 30 * 60_000;
+	private readonly maxThreadBindings = 100;
+	private readonly pendingSessionReleases = new Set<string>();
 	private activeTurn: ActiveTurn | null = null;
 	private stderrTail = "";
 	private protocolVersion = "unknown";
@@ -90,14 +100,18 @@ export class CodexAppServerClient {
 
 	async streamTurn(input: {
 		message: string;
+		sessionId: string;
 		conversationId: string;
 		context?: ChatContext;
 		model?: string;
+		effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+		outputSchema?: JsonObject;
+		maxOutputCharacters?: number;
 		onDelta: (delta: string) => void;
 	}): Promise<string> {
 		await this.ready;
 		if (this.activeTurn) throw new Error("LifeOS is already responding to another message");
-		const threadId = await this.threadForConversation(input.conversationId);
+		const threadId = await this.threadForConversation(input.sessionId, input.conversationId);
 
 		let resolveCompletion!: () => void;
 		let rejectCompletion!: (error: Error) => void;
@@ -106,8 +120,9 @@ export class CodexAppServerClient {
 			rejectCompletion = rejectTurn;
 		});
 		const activeTurn: ActiveTurn = {
-			threadId, turnId: null, text: "", onDelta: input.onDelta,
-				resolve: resolveCompletion, reject: rejectCompletion,
+			sessionId: input.sessionId, threadId, turnId: null, text: "", onDelta: input.onDelta,
+			resolve: resolveCompletion, reject: rejectCompletion,
+			...(input.maxOutputCharacters ? { maxOutputCharacters: input.maxOutputCharacters } : {}),
 		};
 		this.activeTurn = activeTurn;
 
@@ -116,6 +131,8 @@ export class CodexAppServerClient {
 				threadId,
 				input: [{ type: "text", text: userTurn(input.message, input.context), text_elements: [] }],
 				...(input.model ? { model: input.model } : {}),
+				...(input.effort ? { effort: input.effort } : {}),
+				...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
 				approvalPolicy: "never",
 				sandboxPolicy: { type: "readOnly", networkAccess: false },
 			});
@@ -128,6 +145,21 @@ export class CodexAppServerClient {
 			throw error;
 		} finally {
 			this.activeTurn = null;
+			if (this.pendingSessionReleases.delete(input.sessionId)) await this.releaseSession(input.sessionId);
+		}
+	}
+
+	async releaseConversation(sessionId: string, conversationId: string): Promise<void> {
+		await this.ready;
+		await this.deleteBinding(this.threadKey(sessionId, conversationId));
+	}
+
+	async releaseSession(sessionId: string): Promise<void> {
+		await this.ready;
+		if (this.activeTurn?.sessionId === sessionId) this.pendingSessionReleases.add(sessionId);
+		const prefix = `${sessionId}:`;
+		for (const key of [...this.threadIds.keys()]) {
+			if (key.startsWith(prefix)) await this.deleteBinding(key);
 		}
 	}
 
@@ -179,9 +211,14 @@ export class CodexAppServerClient {
 		}
 	}
 
-	private async threadForConversation(conversationId: string): Promise<string> {
-		const existing = this.threadIds.get(conversationId);
-		if (existing) return existing;
+	private async threadForConversation(sessionId: string, conversationId: string): Promise<string> {
+		await this.evictThreads();
+		const key = this.threadKey(sessionId, conversationId);
+		const existing = this.threadIds.get(key);
+		if (existing) {
+			existing.lastUsedAt = Date.now();
+			return existing.threadId;
+		}
 		const threadResponse = await this.request("thread/start", {
 			cwd: this.repoRoot,
 			approvalPolicy: "never",
@@ -192,8 +229,37 @@ export class CodexAppServerClient {
 		});
 		const threadId = string(object(threadResponse.thread)?.id, null);
 		if (!threadId) throw new Error("Codex App Server did not return a thread ID");
-		this.threadIds.set(conversationId, threadId);
+		this.threadIds.set(key, { threadId, lastUsedAt: Date.now() });
 		return threadId;
+	}
+
+	private threadKey(sessionId: string, conversationId: string): string {
+		return conversationBindingKey(sessionId, conversationId);
+	}
+
+	private async evictThreads(): Promise<void> {
+		const now = Date.now();
+		for (const [key, binding] of [...this.threadIds.entries()]) {
+			if (now - binding.lastUsedAt >= this.threadTtlMs) await this.deleteBinding(key);
+		}
+		while (this.threadIds.size >= this.maxThreadBindings) {
+			const oldest = [...this.threadIds.entries()]
+				.filter(([, binding]) => binding.threadId !== this.activeTurn?.threadId)
+				.sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt)[0];
+			if (!oldest) throw new Error("LifeOS chat thread capacity is exhausted");
+			await this.deleteBinding(oldest[0]);
+		}
+	}
+
+	private async deleteBinding(key: string): Promise<void> {
+		const binding = this.threadIds.get(key);
+		if (!binding || binding.threadId === this.activeTurn?.threadId) return;
+		this.threadIds.delete(key);
+		try {
+			await this.request("thread/delete", { threadId: binding.threadId });
+		} catch {
+			// The local mapping is still removed; App Server threads are ephemeral and process-scoped.
+		}
 	}
 
 	private request(method: string, params: JsonObject): Promise<JsonObject> {
@@ -281,6 +347,13 @@ export class CodexAppServerClient {
 		if (method === "item/agentMessage/delta") {
 			const delta = string(params.delta, "");
 			if (delta) {
+				if (this.activeTurn.maxOutputCharacters
+					&& this.activeTurn.text.length + delta.length > this.activeTurn.maxOutputCharacters) {
+					const turnId = this.activeTurn.turnId;
+					this.activeTurn.reject(new Error("Codex App Server output exceeded its configured bound"));
+					if (turnId) void this.request("turn/interrupt", { threadId: this.activeTurn.threadId, turnId }).catch(() => undefined);
+					return;
+				}
 				this.activeTurn.text += delta;
 				this.activeTurn.onDelta(delta);
 			}
@@ -346,4 +419,12 @@ const globalCodex = globalThis as typeof globalThis & { __lifeOsCodexClient?: Co
 export function getCodexAppServerClient(): CodexAppServerClient {
 	globalCodex.__lifeOsCodexClient ??= new CodexAppServerClient();
 	return globalCodex.__lifeOsCodexClient;
+}
+
+export async function releaseCodexSessionIfStarted(sessionId: string): Promise<void> {
+	await globalCodex.__lifeOsCodexClient?.releaseSession(sessionId);
+}
+
+export function conversationBindingKey(sessionId: string, conversationId: string): string {
+	return `${sessionId}:${conversationId}`;
 }

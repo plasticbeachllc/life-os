@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { parseChatInput } from "../src/lib/server/chat-input";
-import { normalizeSummary } from "../src/lib/server/notification-summaries";
+import { conversationBindingKey } from "../src/lib/server/codex/app-server";
+import { normalizeSummary, summarySchedulerStatus } from "../src/lib/server/notification-summaries";
 
 describe("LifeOS chat API input", () => {
 	test("accepts a bounded message and sanitized Inbox context", () => {
@@ -32,10 +33,31 @@ describe("LifeOS chat API input", () => {
 			context: { kind: "calendar", title: "Calendar is organized", summary: "Three upcoming events." },
 		}));
 		expect("error" in parsed ? "" : parsed.message).toContain("pre-generated grounded summary");
-		expect(normalizeSummary("First grounded point.\nSecond action point.", true)).toEqual({
+		expect(normalizeSummary(JSON.stringify({
+			sentences: ["First grounded point.", "Second action point."],
+			actionRequired: true,
+		}), true)).toEqual({
 			sentences: ["First grounded point.", "Second action point."],
 			actionRequired: true,
 		});
+		expect(() => normalizeSummary(JSON.stringify({
+			sentences: ["Only one sentence."], actionRequired: true,
+		}), true)).toThrow("2-3 sentences");
+		expect(() => normalizeSummary(JSON.stringify({
+			sentences: ["Contact person@example.com.", "This leaks an address."], actionRequired: true,
+		}), true)).toThrow("private or unsafe");
+		expect(() => normalizeSummary(JSON.stringify({
+			sentences: ["x".repeat(181), "Second sentence."], actionRequired: true,
+		}), true)).toThrow("exceeds its bound");
+		expect(() => normalizeSummary(JSON.stringify({
+			sentences: ["First sentence.", "Second sentence."], actionRequired: false,
+		}), true)).toThrow("action state is inconsistent");
+		expect(summarySchedulerStatus().capacity).toBe(16);
+	});
+
+	test("binds identical client conversation IDs to separate server sessions", () => {
+		expect(conversationBindingKey("session-a", "conversation_shared"))
+			.not.toBe(conversationBindingKey("session-b", "conversation_shared"));
 	});
 
 	test("rejects unbounded messages and arbitrary context fields", () => {

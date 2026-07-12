@@ -178,6 +178,12 @@ the installed CLI changes.
   Luna reaction after projection, and cache the structured sentences by workflow, prompt, model, source, context, schema, and
   policy identity. Card selection reads this cache and uses on-demand generation only to recover from a failed
   or incomplete prewarm.
+- Namespace every App Server conversation by an opaque HttpOnly server session, delete session threads on page
+  teardown, and enforce TTL/LRU bounds as a fallback. Summary prewarming uses a bounded priority queue with
+  selected-item promotion, deduplication, retry backoff, and immediate thread cleanup.
+- Constrain Luna reactions with a JSON schema and strict post-validation: exactly 2-3 sentences, bounded sentence
+  and total lengths, deterministic action state, and rejection of addresses, URLs, hashes, identifiers, paths,
+  HTML, unexpected fields, or malformed cached output.
 - Stream bounded agent text through a narrow NDJSON endpoint.
 - Add loading, empty, degraded, and provider-disabled states.
 - Verify raw provider data and hashes never reach browser payloads.

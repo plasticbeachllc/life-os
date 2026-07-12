@@ -11,8 +11,8 @@ import { routeModel } from "../orchestration/model-router";
 import { sha256Text, sha256Value } from "../util/hashing";
 
 export const UI_NOTIFICATION_SUMMARY_MODEL = "gpt-5.6-luna";
-export const UI_NOTIFICATION_SUMMARY_PROMPT_VERSION = "ui-notification-summary-v2-sentences";
-export const UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION = "ui-notification-summary-schema-v2";
+export const UI_NOTIFICATION_SUMMARY_PROMPT_VERSION = "ui-notification-summary-v3-strict";
+export const UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION = "ui-notification-summary-schema-v3";
 export const UI_NOTIFICATION_SUMMARY_POLICY_VERSION = "ui-read-only-v1";
 
 export type UiNotificationCategory = "needs_you" | "activity" | "approvals";
@@ -281,28 +281,36 @@ function buildSummaryCandidates(input: {
       schemaVersion: UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION,
       policyVersion: UI_NOTIFICATION_SUMMARY_POLICY_VERSION,
     });
-    const cachedSummary = parseCachedSummary(input.store.getModelCache(cacheKey)?.output);
+    const actionRequired = notification.category !== "activity";
+    const cachedSummary = parseCachedSummary(input.store.getModelCache(cacheKey)?.output, actionRequired);
     return { notificationId: notification.id, cacheKey,
       model: UI_NOTIFICATION_SUMMARY_MODEL,
       promptVersion: UI_NOTIFICATION_SUMMARY_PROMPT_VERSION,
       schemaVersion: UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION,
       policyVersion: UI_NOTIFICATION_SUMMARY_POLICY_VERSION,
       sourceHash, manifest,
-      actionRequired: notification.category !== "activity",
+      actionRequired,
       ...(cachedSummary ? { cachedSummary } : {}) };
   });
 }
 
-function parseCachedSummary(value: unknown): { sentences: string[]; actionRequired: boolean } | undefined {
+function parseCachedSummary(value: unknown, expectedActionRequired: boolean): { sentences: string[]; actionRequired: boolean } | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (!Array.isArray(record.sentences) || typeof record.actionRequired !== "boolean") return undefined;
+  if (record.actionRequired !== expectedActionRequired) return undefined;
+  if (Object.keys(record).some((key) => key !== "sentences" && key !== "actionRequired")) return undefined;
+  if (record.sentences.length < 2 || record.sentences.length > 3) return undefined;
+  const forbidden = /(?:sha256:|https?:\/\/|(?:^|\s)(?:~\/|\/Users\/|[A-Za-z]:\\)|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\b(?:message|thread|event|proposal|state|call|manifest|cache|run|action)_[A-Za-z0-9_-]+\b|\b[a-f0-9]{40,}\b|<[^>]+>)/i;
   const sentences = record.sentences
     .filter((sentence): sentence is string => typeof sentence === "string")
-    .map((sentence) => sentence.trim())
+    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .slice(0, 3);
-  return sentences.length > 0 ? { sentences, actionRequired: record.actionRequired } : undefined;
+  if (sentences.length !== record.sentences.length || sentences.some((sentence) => sentence.length > 180 || forbidden.test(sentence))) {
+    return undefined;
+  }
+  return sentences.join(" ").length <= 420 ? { sentences, actionRequired: record.actionRequired } : undefined;
 }
 
 export function shouldSurfaceClarification(extraction: {

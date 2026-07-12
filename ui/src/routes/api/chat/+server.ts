@@ -1,10 +1,12 @@
 import { parseChatInput } from "$lib/server/chat-input";
 import { getCodexAppServerClient } from "$lib/server/codex/app-server";
+import { ensureChatSession } from "$lib/server/chat-session";
 import { getNotificationSummary } from "$lib/server/notification-summaries";
 import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, cookies }) => {
+	const sessionId = ensureChatSession(cookies);
 	let body: unknown;
 	try {
 		body = await request.json();
@@ -30,6 +32,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				})
 				: getCodexAppServerClient().streamTurn({
 				message: input.message,
+				sessionId,
 				conversationId: input.conversationId,
 				...(input.context ? { context: input.context } : {}),
 				onDelta: (delta) => emit({ type: "delta", delta }),
