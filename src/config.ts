@@ -11,6 +11,7 @@ export interface Config {
   defaultMode: string;
   gmailEnabled: boolean;
   gmailAccountId: string;
+  calendarEnabled: boolean;
   envFilePath: string;
 }
 
@@ -44,6 +45,7 @@ export function loadConfig(options: { vaultPath?: string } = {}): Config {
     defaultMode: Bun.env.LIFE_OS_DEFAULT_MODE ?? "dry-run",
     gmailEnabled: Bun.env.LIFE_OS_GMAIL_ENABLED === "true",
     gmailAccountId: Bun.env.LIFE_OS_GMAIL_ACCOUNT_ID ?? "me",
+    calendarEnabled: Bun.env.LIFE_OS_CALENDAR_ENABLED === "true",
     envFilePath,
   };
 }

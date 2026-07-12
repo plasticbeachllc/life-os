@@ -13,7 +13,7 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(7);
+  expect(store.getSchemaVersion()).toBe(8);
   expect(store.countRows("schema_migrations")).toBe(1);
 });
 

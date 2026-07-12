@@ -1,4 +1,4 @@
-export const schemaVersion = 7;
+export const schemaVersion = 8;
 
 export const ddl = [
   `
@@ -343,5 +343,50 @@ export const ddl = [
     UNIQUE(account_id, message_id, source_hash, prompt_version, schema_version, policy_version),
     FOREIGN KEY(account_id, message_id) REFERENCES gmail_messages(account_id, message_id)
   )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS calendar_accounts (
+    account_id TEXT PRIMARY KEY,
+    calendar_id TEXT NOT NULL,
+    timezone TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS calendar_ingestion_runs (
+    ingestion_run_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL,
+    discovered_count INTEGER NOT NULL DEFAULT 0,
+    changed_count INTEGER NOT NULL DEFAULT 0,
+    unchanged_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS calendar_events (
+    account_id TEXT NOT NULL,
+    calendar_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    location TEXT,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    all_day INTEGER NOT NULL,
+    updated_at TEXT,
+    content_hash TEXT NOT NULL,
+    last_processed_hash TEXT,
+    first_ingested_at TEXT NOT NULL,
+    last_ingested_at TEXT NOT NULL,
+    PRIMARY KEY(account_id, calendar_id, event_id)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_calendar_events_window
+  ON calendar_events(account_id, start_at, end_at)
   `,
 ];

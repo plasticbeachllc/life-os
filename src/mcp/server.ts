@@ -6,6 +6,7 @@ import * as z from "zod";
 
 import { ObsidianVault } from "../adapters/obsidian";
 import { GmailRestAdapter } from "../adapters/gmail";
+import { GoogleCalendarRestAdapter } from "../adapters/calendar";
 import { loadConfig, loadGmailAuthConfig } from "../config";
 import { OperationalStore } from "../db/store";
 import type { ProposalRecord } from "../db/store";
@@ -27,6 +28,9 @@ import {
 import { GmailStore } from "../gmail/store";
 import { MacOsKeychainGmailCredentialStore } from "../gmail/keychain";
 import { previewGmailExtractionContext } from "../workflows/gmail-extraction-preview";
+import { ingestCalendar } from "../workflows/calendar-ingest";
+import { CalendarStore } from "../calendar/store";
+import { proposeEmailExtractionTask } from "../workflows/email-task-proposal";
 import {
   prepareSubscriptionEmailExtraction,
   submitSubscriptionEmailExtraction,
@@ -68,7 +72,7 @@ export function createLifeOsMcpServer(): McpServer {
   server.registerTool("life_os_list_compact_state", {
     description: "List current compact derived state without rereading canonical Markdown.",
     inputSchema: {
-      stateType: z.enum(["people", "projects", "tasks", "chief_of_staff", "daily", "morning_reasoning"]),
+      stateType: z.enum(["people", "projects", "tasks", "chief_of_staff", "daily", "morning_reasoning", "calendar"]),
     },
     annotations: { readOnlyHint: true, destructiveHint: false },
   }, async ({ stateType }) => {
@@ -78,6 +82,7 @@ export function createLifeOsMcpServer(): McpServer {
       people: "person_state", projects: "project_state", tasks: "task_state",
       chief_of_staff: "chief_of_staff_state", daily: "daily_state",
       morning_reasoning: "briefing_reasoning_state",
+      calendar: "calendar_state",
     } as const;
     const records = store.listCurrentDerivedStates(mapping[stateType]).map((record) => ({
       stateId: record.stateId, entityId: record.entityId ?? null,
@@ -110,6 +115,30 @@ export function createLifeOsMcpServer(): McpServer {
     return jsonResult(new GmailStore(store).inspectionSummary(config.gmailAccountId));
   });
 
+  server.registerTool("life_os_calendar_status", {
+    description: "Return metadata-only Google Calendar ingestion counts. Returns no event details.",
+    inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false },
+  }, async () => {
+    const config = loadConfig(); const store = new OperationalStore(config.databasePath); store.migrate();
+    return jsonResult(new CalendarStore(store).summary(config.gmailAccountId));
+  });
+
+  server.registerTool("life_os_ingest_calendar", {
+    description: "Incrementally ingest the primary Google Calendar using calendar.readonly and rebuild compact calendar state. Never writes Google Calendar.",
+    inputSchema: {}, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async () => {
+    const config = loadConfig();
+    if (!config.calendarEnabled) throw new Error("Calendar ingestion is disabled");
+    const refreshToken = Bun.env.GMAIL_REFRESH_TOKEN
+      ?? new MacOsKeychainGmailCredentialStore().getRefreshToken(config.gmailAccountId);
+    if (!refreshToken) throw new Error("Google refresh token unavailable; reauthorize first");
+    const store = new OperationalStore(config.databasePath);
+    return jsonResult(await ingestCalendar({
+      adapter: new GoogleCalendarRestAdapter(loadGmailAuthConfig(refreshToken)), store,
+      accountId: config.gmailAccountId,
+    }));
+  });
+
   server.registerTool("life_os_review_email_extractions", {
     description: "Review sanitized structured Gmail extraction results and aggregate classifications. Returns no Gmail IDs, headers, hashes, subjects, addresses, or source text.",
     inputSchema: {},
@@ -119,6 +148,16 @@ export function createLifeOsMcpServer(): McpServer {
     const store = new OperationalStore(config.databasePath);
     store.migrate();
     return jsonResult(new GmailStore(store).extractionReview(config.gmailAccountId));
+  });
+
+  server.registerTool("life_os_propose_email_task", {
+    description: "Create one approval-gated task proposal from a selected user-owned actionable email extraction item. Destination is fixed to the canonical inbox; this does not write the vault.",
+    inputSchema: { extractionId: z.string().startsWith("extract_"), itemIndex: z.number().int().nonnegative() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async ({ extractionId, itemIndex }) => {
+    const { vault, store } = runtimeContext();
+    const proposal = await proposeEmailExtractionTask({ extractionId, itemIndex, vault, store });
+    return jsonResult(sanitizeProposal(proposal));
   });
 
   server.registerTool("life_os_preview_email_extraction_context", {

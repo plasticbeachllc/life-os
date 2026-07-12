@@ -18,6 +18,7 @@ safety boundaries. Read this file before editing code.
 - All vault mutations use narrow tools, deterministic policy checks, source/target hashes, atomic writes,
   audit records, backups, and explicit approval.
 - Gmail remains `gmail.readonly`; no send, delete, archive, or label mutation in version 1.
+- Google Calendar remains `calendar.readonly`; primary-calendar ingestion does not create or modify events.
 - Ingestion and extraction remain separate stages.
 - Every model-backed workflow goes through the context builder/router and records a manifest.
 - Prepare/submit calls bind output to immutable source and context hashes and reject stale state.

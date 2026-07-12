@@ -767,6 +767,9 @@ export class OperationalStore {
       "gmail_messages",
       "gmail_message_versions",
       "gmail_extractions",
+      "calendar_accounts",
+      "calendar_ingestion_runs",
+      "calendar_events",
     ]);
     if (!allowed.has(table)) throw new Error(`unsupported table: ${table}`);
     const db = this.open();

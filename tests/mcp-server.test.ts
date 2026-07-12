@@ -13,10 +13,12 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "life_os_apply_approved_proposal",
+      "life_os_calendar_status",
       "life_os_doctor",
       "life_os_get_morning_briefing",
       "life_os_get_proposal",
       "life_os_gmail_status",
+      "life_os_ingest_calendar",
       "life_os_list_compact_state",
       "life_os_list_pending_proposals",
       "life_os_prepare_email_extraction",
@@ -24,6 +26,7 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
       "life_os_prepare_proposal_approval",
       "life_os_prepare_undo",
       "life_os_preview_email_extraction_context",
+      "life_os_propose_email_task",
       "life_os_rebuild_state",
       "life_os_review_email_extractions",
       "life_os_submit_email_extraction",

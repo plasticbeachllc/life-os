@@ -12,7 +12,6 @@ export interface ChiefOfStaffState {
   people_due_for_contact: string[];
   important_recent_changes: string[];
   overdue_commitments: string[];
-  calendar_pressure: string[];
   unresolved_ambiguities: string[];
   suggested_focus: string[];
 }
@@ -65,13 +64,13 @@ export function rebuildChiefOfStaffState(input: {
     people_due_for_contact: peopleDue.flatMap((state) => state.entityId ? [state.entityId] : []),
     important_recent_changes: [...new Set(retainedRecentChanges)].slice(0, 20),
     overdue_commitments: overdue.flatMap((state) => state.entityId ? [state.entityId] : []),
-    calendar_pressure: [],
     unresolved_ambiguities: unresolvedAmbiguities,
     suggested_focus: suggestedFocus(overdue.length, stalledProjects.length, waiting.length, priorities),
   };
   const dependencies = [...projects, ...people, ...tasks];
   const sourceHashes = [...new Set(dependencies.flatMap((state) => state.sourceHashes))].sort();
   const dependencyHash = sha256Value({
+    generatorVersion: "deterministic-chief-of-staff-v2",
     states: dependencies.map((state) => [state.stateId, state.stateVersion]),
     recentChanges: content.important_recent_changes,
     unresolvedAmbiguities,
@@ -83,7 +82,7 @@ export function rebuildChiefOfStaffState(input: {
     stateVersion: (prior?.stateVersion ?? 0) + 1,
     content: content as unknown as Record<string, unknown>,
     sourceHashes: [dependencyHash, ...sourceHashes],
-    generationMethod: "deterministic-chief-of-staff-v1", createdAt: now.toISOString(),
+    generationMethod: "deterministic-chief-of-staff-v2", createdAt: now.toISOString(),
   };
   input.store.saveDerivedState(record);
   return record;

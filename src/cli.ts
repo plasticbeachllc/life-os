@@ -2,6 +2,7 @@
 
 import { ObsidianVault } from "./adapters/obsidian";
 import { GmailRestAdapter } from "./adapters/gmail";
+import { GoogleCalendarRestAdapter } from "./adapters/calendar";
 import { loadConfig, loadGmailAuthConfig, loadGmailClientConfig } from "./config";
 import { OperationalStore } from "./db/store";
 import type { ProposalRecord } from "./db/store";
@@ -23,6 +24,8 @@ import { MacOsKeychainGmailCredentialStore } from "./gmail/keychain";
 import { authorizeGmailDesktop } from "./workflows/gmail-auth";
 import { GmailStore } from "./gmail/store";
 import { previewGmailExtractionContext } from "./workflows/gmail-extraction-preview";
+import { ingestCalendar } from "./workflows/calendar-ingest";
+import { CalendarStore } from "./calendar/store";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -295,7 +298,7 @@ async function main(argv: string[]): Promise<number> {
         ...client, accountId: config.gmailAccountId,
         credentialStore: new MacOsKeychainGmailCredentialStore(),
       });
-      console.log(`Authorized Gmail read-only for ${result.emailAddress}. Refresh token stored in ${result.storedIn}.`);
+      console.log(`Authorized Google read-only integrations for ${result.emailAddress}. Refresh token stored in ${result.storedIn}.`);
       return 0;
     }
     if (subcommand === "ingest") {
@@ -332,6 +335,26 @@ async function main(argv: string[]): Promise<number> {
       });
       console.log(JSON.stringify(preview ?? { message: "No unextracted important messages." }, null, 2));
       return 0;
+    }
+  }
+
+  if (command === "calendar") {
+    const [subcommand, ...calendarRest] = rest;
+    const args = parseFlags(calendarRest);
+    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+    const store = new OperationalStore(config.databasePath); store.migrate();
+    if (subcommand === "status") {
+      console.log(JSON.stringify(new CalendarStore(store).summary(config.gmailAccountId), null, 2));
+      return 0;
+    }
+    if (subcommand === "ingest") {
+      if (!config.calendarEnabled) throw new Error("Calendar ingestion is disabled; set LIFE_OS_CALENDAR_ENABLED=true");
+      const refreshToken = Bun.env.GMAIL_REFRESH_TOKEN
+        ?? new MacOsKeychainGmailCredentialStore().getRefreshToken(config.gmailAccountId);
+      if (!refreshToken) throw new Error("Google refresh token unavailable; run email auth first");
+      const report = await ingestCalendar({ adapter: new GoogleCalendarRestAdapter(loadGmailAuthConfig(refreshToken)),
+        store, accountId: config.gmailAccountId });
+      console.log(JSON.stringify(report, null, 2)); return 0;
     }
   }
 
@@ -433,7 +456,9 @@ function printUsage(): void {
   life-os email ingest --vault <path> [--limit <n>]
   life-os email status --vault <path>
   life-os email review-extractions --vault <path>
-  life-os email preview-extraction --vault <path>`);
+  life-os email preview-extraction --vault <path>
+  life-os calendar ingest --vault <path>
+  life-os calendar status --vault <path>`);
 }
 
 const exitCode = await main(Bun.argv.slice(2));

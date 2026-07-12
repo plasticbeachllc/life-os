@@ -12,6 +12,7 @@ const registeredProposalTools = new Set([
   "apply_frontmatter_patch",
   "apply_task_id_patch",
   "bootstrap_policy_file",
+  "append_email_task",
 ]);
 
 export async function prepareProposalAuthorization(input: {
@@ -101,7 +102,7 @@ function requireApplicableProposal(store: OperationalStore, proposalId: string):
 
 async function assertProposalPolicy(proposal: ProposalRecord, vault: ObsidianVault): Promise<void> {
   if (proposal.toolName === "bootstrap_policy_file") return;
-  const actionName = proposal.toolName === "apply_task_id_patch" ? "create_task" : proposal.toolName;
+  const actionName = ["apply_task_id_patch", "append_email_task"].includes(proposal.toolName) ? "create_task" : proposal.toolName;
   const decision = compileActionPolicy(await loadPolicy(vault), actionName);
   if (!decision.allowed || !decision.requiresApproval) throw new Error(`policy does not permit approval for ${actionName}`);
 }
