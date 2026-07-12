@@ -106,7 +106,9 @@ test("allowlisted ingestion stores metadata and immutable hashes without Telegra
   expect(readFileSync(path)).not.toContain("Central Park");
   expect(new TelegramStore(store).status("primary")).toMatchObject({
     configured: true, chats: 1, messages: 1, versions: 1, ingestionRuns: 2,
+    extractionSupported: false,
   });
+  expect(new TelegramStore(store).status("primary")).not.toHaveProperty("unextracted");
 });
 
 test("edited Telegram source creates a new immutable version", async () => {

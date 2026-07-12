@@ -777,6 +777,7 @@ export class OperationalStore {
       "calendar_accounts",
       "calendar_ingestion_runs",
       "calendar_events",
+      "calendar_event_versions",
     ]);
     if (!allowed.has(table)) throw new Error(`unsupported table: ${table}`);
     const db = this.open();
