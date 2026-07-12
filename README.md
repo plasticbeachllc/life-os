@@ -53,7 +53,8 @@ protocols bind reasoning to immutable source and context hashes. Model output ca
 the vault or Gmail.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
-assessment. Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
+assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
+current provider architecture. Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
