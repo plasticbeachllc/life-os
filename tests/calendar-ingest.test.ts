@@ -48,3 +48,14 @@ test("calendar ingestion records provider failures as terminal", async () => {
     now: new Date("2026-07-12T12:00:00Z") })).rejects.toThrow("calendar unavailable");
   expect(new CalendarStore(store).summary("me").lastRunStatus).toBe("failed");
 });
+
+test("calendar ingestion records primary-calendar failures as terminal", async () => {
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-calendar-primary-failure-")), "store.db"));
+  const adapter = new FakeCalendar();
+  adapter.getPrimaryCalendar = async () => { throw new Error("calendar auth unavailable"); };
+  await expect(ingestCalendar({ adapter, store, accountId: "me",
+    now: new Date("2026-07-12T12:00:00Z") })).rejects.toThrow("calendar auth unavailable");
+  expect(new CalendarStore(store).summary("me")).toMatchObject({
+    configured: false, ingestionRuns: 1, lastRunStatus: "failed",
+  });
+});

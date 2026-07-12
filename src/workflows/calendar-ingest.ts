@@ -15,15 +15,15 @@ export async function ingestCalendar(input: {
   const runId = newId("run");
   const timeMin = new Date(now.getTime() - (input.daysPast ?? 1) * 86400000).toISOString();
   const timeMax = new Date(now.getTime() + (input.daysFuture ?? 30) * 86400000).toISOString();
-  const calendar = await input.adapter.getPrimaryCalendar();
   const store = new CalendarStore(input.store);
-  store.upsertAccount({ accountId: input.accountId, calendarId: calendar.id,
-    ...(calendar.timeZone ? { timezone: calendar.timeZone } : {}), now: now.toISOString() });
   const events: CalendarApiEvent[] = [];
   let changed = 0; let unchanged = 0;
   return runIngestion({
     start: () => store.startRun(runId, input.accountId, now.toISOString()),
     execute: async () => {
+      const calendar = await input.adapter.getPrimaryCalendar();
+      store.upsertAccount({ accountId: input.accountId, calendarId: calendar.id,
+        ...(calendar.timeZone ? { timezone: calendar.timeZone } : {}), now: now.toISOString() });
       let pageToken: string | undefined;
       do {
         const page = await input.adapter.listEvents({ calendarId: calendar.id, timeMin, timeMax,

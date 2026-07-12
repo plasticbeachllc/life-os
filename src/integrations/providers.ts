@@ -13,6 +13,7 @@ import { TelegramStore } from "../telegram/store";
 import { NativeTdJsonClient } from "../telegram/tdjson-client";
 import { ingestCalendar } from "../workflows/calendar-ingest";
 import { ingestImportantGmail } from "../workflows/gmail-ingest";
+import type { GmailIngestionReport } from "../workflows/gmail-ingest";
 import { ingestIMessageChanges } from "../workflows/imessage-ingest";
 import { ingestTelegramChanges } from "../workflows/telegram-ingest";
 import type { IntegrationCapabilities, IntegrationCounts } from "./contract";
@@ -34,10 +35,10 @@ export function createIntegrationRegistry(): IntegrationRegistry {
       id: "gmail", capabilities: messageExtractionCapabilities,
       statusDescription: "Return sanitized Gmail integration status and capabilities.",
       ingestDescription: "Incrementally ingest metadata and hashes for IMPORTANT Gmail messages using gmail.readonly. Never sends, labels, archives, or deletes email.",
-      limit: { default: 50, maximum: 5000, description: "Maximum IMPORTANT messages to inspect." },
+      limit: { default: 50, maximum: 100, description: "Maximum IMPORTANT messages to inspect." },
       status: () => {
         const config = loadConfig(); const store = operationalStore(config.databasePath);
-        return status("gmail", config.gmailAccountId, config.gmailEnabled, messageExtractionCapabilities,
+        return status("gmail", "primary", config.gmailEnabled, messageExtractionCapabilities,
           new GmailStore(store).inspectionSummary(config.gmailAccountId, currentEmailExtractionIdentity));
       },
       ingest: async ({ limit }) => {
@@ -45,8 +46,9 @@ export function createIntegrationRegistry(): IntegrationRegistry {
         if (!config.gmailEnabled) throw new Error("Gmail ingestion is disabled");
         const report = await ingestImportantGmail({ adapter: gmailAdapter(config.gmailAccountId),
           store: operationalStore(config.databasePath), accountId: config.gmailAccountId, limit: limit ?? 50 });
-        return result("gmail", config.gmailAccountId, report.runId,
-          counts(report.discovered, report.ingested, report.unchanged, report.failed, 0), report);
+        return result("gmail", "primary", report.runId,
+          counts(report.discovered, report.ingested, report.unchanged, report.failed, 0),
+          gmailIngestionDetails(report));
       },
     })
     .register({
@@ -56,11 +58,13 @@ export function createIntegrationRegistry(): IntegrationRegistry {
       limit: { default: 500, maximum: 5000, description: "Maximum Messages rows to inspect." },
       status: () => {
         const config = loadConfig(); const store = operationalStore(config.databasePath);
-        return status("imessage", config.imessageSourceId, config.imessageEnabled,
+        const { cursor: _cursor, ...summary } = new IMessageStore(store)
+          .inspectionSummary(config.imessageSourceId);
+        return status("imessage", "primary", config.imessageEnabled,
           messageExtractionCapabilities, {
             selectionMode: config.imessageSelectionMode,
             configuredConversationIds: config.imessageConversationIds.length,
-            ...new IMessageStore(store).inspectionSummary(config.imessageSourceId),
+            ...summary,
           });
       },
       ingest: async ({ limit }) => {
@@ -70,8 +74,12 @@ export function createIntegrationRegistry(): IntegrationRegistry {
           store: operationalStore(config.databasePath), sourceId: config.imessageSourceId,
           selection: { mode: config.imessageSelectionMode, conversationIds: config.imessageConversationIds },
           limit: limit ?? 500 });
-        return result("imessage", config.imessageSourceId, report.runId,
-          counts(report.discovered, report.ingested, report.unchanged, 0, report.unavailableText), report);
+        return result("imessage", "primary", report.runId,
+          counts(report.discovered, report.ingested, report.unchanged, 0, report.unavailableText), {
+            selectionMode: report.selectionMode,
+            configuredConversationIds: report.configuredConversationIds,
+            cursorAdvanced: report.cursorAfter > report.cursorBefore,
+          });
       },
     })
     .register({
@@ -80,7 +88,7 @@ export function createIntegrationRegistry(): IntegrationRegistry {
       ingestDescription: "Incrementally ingest the primary Google Calendar using calendar.readonly. Never writes Google Calendar.",
       status: () => {
         const config = loadConfig(); const store = operationalStore(config.databasePath);
-        return status("calendar", config.gmailAccountId, config.calendarEnabled,
+        return status("calendar", "primary", config.calendarEnabled,
           ingestionOnlyCapabilities, new CalendarStore(store).summary(config.gmailAccountId));
       },
       ingest: async () => {
@@ -89,8 +97,9 @@ export function createIntegrationRegistry(): IntegrationRegistry {
         const report = await ingestCalendar({ adapter: new GoogleCalendarRestAdapter(
           loadGmailAuthConfig(refreshToken(config.gmailAccountId))),
         store: operationalStore(config.databasePath), accountId: config.gmailAccountId });
-        return result("calendar", config.gmailAccountId, report.runId,
-          counts(report.discovered, report.changed, report.unchanged, 0, 0), report);
+        return result("calendar", "primary", report.runId,
+          counts(report.discovered, report.changed, report.unchanged, 0, 0),
+          { stateId: report.stateId });
       },
     })
     .register({
@@ -100,7 +109,7 @@ export function createIntegrationRegistry(): IntegrationRegistry {
       limit: { default: 50, maximum: 100, description: "Bounded TDLib history page size per chat." },
       status: () => {
         const config = loadConfig(); const store = operationalStore(config.databasePath);
-        return status("telegram", config.telegramSourceId, config.telegramEnabled,
+        return status("telegram", "primary", config.telegramEnabled,
           ingestionOnlyCapabilities, new TelegramStore(store).status(config.telegramSourceId));
       },
       ingest: async ({ limit }) => {
@@ -113,8 +122,9 @@ export function createIntegrationRegistry(): IntegrationRegistry {
           const report = await ingestTelegramChanges({ adapter: new TdLibTelegramAdapter(client),
             store: operationalStore(config.databasePath), sourceId: config.telegramSourceId,
             chatIds: config.telegramChatIds, limitPerChat: limit ?? 50 });
-          return result("telegram", config.telegramSourceId, report.runId,
-            counts(report.discovered, report.ingested, report.unchanged, 0, report.unavailableText), report);
+          return result("telegram", "primary", report.runId,
+            counts(report.discovered, report.ingested, report.unchanged, 0, report.unavailableText),
+            { configuredChats: report.configuredChats });
         } finally { client.close(); }
       },
     });
@@ -138,6 +148,21 @@ function gmailAdapter(accountId: string): GmailRestAdapter {
 function counts(discovered: number, changed: number, unchanged: number,
   failed: number, unavailableContent: number): IntegrationCounts {
   return { discovered, changed, unchanged, failed, unavailableContent };
+}
+
+export function gmailIngestionDetails(report: Pick<GmailIngestionReport, "selector" | "failures">): {
+  selector: "IMPORTANT"; partialFailures: number; failureCategories: Record<string, number>;
+} {
+  const failureCategories: Record<string, number> = {};
+  for (const failure of report.failures) {
+    const category = /no longer has IMPORTANT label/.test(failure.error)
+      ? "selection_changed"
+      : /API request failed|OAuth|access token/i.test(failure.error)
+        ? "provider_request_failed"
+        : "processing_failed";
+    failureCategories[category] = (failureCategories[category] ?? 0) + 1;
+  }
+  return { selector: report.selector, partialFailures: report.failures.length, failureCategories };
 }
 
 function status(provider: string, sourceId: string,

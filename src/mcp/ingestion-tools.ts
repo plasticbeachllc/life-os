@@ -17,7 +17,7 @@ export function registerIntegrationTools(server: McpServer, registry: Integratio
     server.registerTool(`life_os_ingest_${integration.id}`, {
       description: integration.ingestDescription,
       inputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false },
     }, async (input: Record<string, unknown>) => jsonResult(await integration.ingest({
       ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
     })));
