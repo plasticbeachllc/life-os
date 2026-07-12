@@ -20,6 +20,7 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
       "life_os_gmail_status",
       "life_os_imessage_status",
       "life_os_ingest_calendar",
+      "life_os_ingest_telegram",
       "life_os_list_compact_state",
       "life_os_list_pending_proposals",
       "life_os_prepare_email_extraction",
@@ -36,6 +37,7 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
       "life_os_submit_email_extraction",
       "life_os_submit_imessage_extraction",
       "life_os_submit_morning_reasoning",
+      "life_os_telegram_status",
       "life_os_triage_imessage_service_messages",
       "life_os_undo_action",
     ]);

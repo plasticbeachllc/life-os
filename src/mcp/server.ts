@@ -31,6 +31,11 @@ import { MacOsKeychainGmailCredentialStore } from "../gmail/keychain";
 import { previewGmailExtractionContext } from "../workflows/gmail-extraction-preview";
 import { ingestCalendar } from "../workflows/calendar-ingest";
 import { CalendarStore } from "../calendar/store";
+import { TdLibTelegramAdapter } from "../adapters/telegram";
+import { loadTelegramTdLibConfig } from "../config";
+import { NativeTdJsonClient } from "../telegram/tdjson-client";
+import { TelegramStore } from "../telegram/store";
+import { ingestTelegramChanges } from "../workflows/telegram-ingest";
 import { proposeEmailExtractionTask } from "../workflows/email-task-proposal";
 import {
   prepareSubscriptionEmailExtraction,
@@ -145,6 +150,30 @@ export function createLifeOsMcpServer(): McpServer {
       adapter: new GoogleCalendarRestAdapter(loadGmailAuthConfig(refreshToken)), store,
       accountId: config.gmailAccountId,
     }));
+  });
+
+  server.registerTool("life_os_telegram_status", {
+    description: "Return sanitized TDLib Telegram ingestion counts. Returns no chat IDs, message IDs, sender IDs, hashes, or text.",
+    inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false },
+  }, async () => {
+    const config = loadConfig(); const store = new OperationalStore(config.databasePath); store.migrate();
+    return jsonResult(new TelegramStore(store).status(config.telegramSourceId));
+  });
+
+  server.registerTool("life_os_ingest_telegram", {
+    description: "Incrementally ingest metadata and hashes from explicitly allowlisted TDLib chats. Never sends or modifies Telegram messages.",
+    inputSchema: {}, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async () => {
+    const config = loadConfig();
+    if (!config.telegramEnabled) throw new Error("Telegram ingestion is disabled");
+    if (config.telegramChatIds.length === 0) throw new Error("Telegram ingestion requires a configured chat allowlist");
+    const client = new NativeTdJsonClient({ ...loadTelegramTdLibConfig(),
+      databaseDirectory: config.telegramDatabaseDirectory });
+    try {
+      return jsonResult(await ingestTelegramChanges({ adapter: new TdLibTelegramAdapter(client),
+        store: new OperationalStore(config.databasePath), sourceId: config.telegramSourceId,
+        chatIds: config.telegramChatIds, limitPerChat: 50 }));
+    } finally { client.close(); }
   });
 
   server.registerTool("life_os_review_email_extractions", {

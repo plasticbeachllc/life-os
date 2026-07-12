@@ -269,6 +269,21 @@ Messages extraction sequence:
 
 This workflow is read/extraction-only and cannot draft or send Messages.
 
+Telegram ingestion uses TDLib's JSON interface as a read-only user client. TDLib owns its encrypted
+local message database outside the repository; Life OS retains only normalized metadata, hashes, and
+immutable version records. Raw message text, chat identifiers, sender identifiers, and credentials
+are not retained in operational SQLite. Configure an explicit `LIFE_OS_TELEGRAM_CHAT_IDS` allowlist
+in the external mode-600 environment file, then run:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run src/cli.ts telegram ingest --vault ~/worktable/vault
+bun run src/cli.ts telegram status --vault ~/worktable/vault
+```
+
+The TDLib session must already be authorized. If TDLib reports an interactive authorization state,
+ingestion fails closed; interactive authorization tooling is not yet included.
+
 ## Verification
 
 ```bash
