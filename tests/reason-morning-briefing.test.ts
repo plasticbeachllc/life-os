@@ -25,7 +25,7 @@ test("morning reasoning uses compact context and caches identical synthesis", as
     complete: async (input) => {
       adapterCalls += 1;
       expect(input.context).toHaveLength(3);
-      return { output: { additions: [] }, usage: { inputTokens: 120, outputTokens: 12 } };
+      return { output: { recommendations: [] }, usage: { inputTokens: 120, outputTokens: 12 } };
     },
   });
   const request = () => reasonAboutMorningBriefing({
@@ -33,8 +33,8 @@ test("morning reasoning uses compact context and caches identical synthesis", as
     policyVersion: "policy-v1", schemaVersion: "4",
   });
 
-  expect(await request()).toEqual({ additions: [] });
-  expect(await request()).toEqual({ additions: [] });
+  expect(await request()).toEqual({ recommendations: [] });
+  expect(await request()).toEqual({ recommendations: [] });
   expect(adapterCalls).toBe(1);
   expect(store.countRows("context_manifests")).toBe(2);
   expect(store.efficiencyMetrics().cacheHits).toBe(1);

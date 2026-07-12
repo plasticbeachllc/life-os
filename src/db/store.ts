@@ -561,6 +561,15 @@ export class OperationalStore {
     }
   }
 
+  deleteModelCache(cacheKey: string): void {
+    const db = this.open();
+    try {
+      db.query("DELETE FROM model_cache WHERE cache_key = ?").run(cacheKey);
+    } finally {
+      db.close();
+    }
+  }
+
   recordBriefingFeedback(input: { stateId: string; itemKey: string; useful: boolean; recordedAt: string }): void {
     const db = this.open();
     try {
