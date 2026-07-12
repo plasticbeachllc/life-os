@@ -27,7 +27,7 @@ IMPORTANT Gmail message
   -> bounded subscription-agent extraction
   -> sanitized extraction review
   -> deterministic common finding projection
-  -> user selects active finding (or compatibility extraction ID + item index)
+  -> user selects active finding
   -> yellow task proposal
   -> exact preview and target-hash validation
   -> short-lived approval token
@@ -38,8 +38,6 @@ IMPORTANT Gmail message
 
 `proposeFindingTask` accepts only a finding ID. It rejects missing or inactive findings, non-user
 ownership, and kinds other than `explicit_request`, `open_loop`, or `user_commitment`.
-`proposeEmailExtractionTask` remains a compatibility wrapper that deterministically resolves an email
-extraction ID and item index to the same common finding.
 
 Life OS, not the agent, derives:
 
@@ -133,7 +131,6 @@ The integration adds three tools:
 | --- | --- |
 | `life_os_calendar_status` | Metadata-only configured/event/unprocessed counts. |
 | `life_os_ingest_calendar` | Read-only provider ingestion and compact-state rebuild. |
-| `life_os_propose_email_task` | Creates a pending fixed-inbox proposal; does not write. |
 | `life_os_propose_finding_task` | Creates a pending fixed-inbox proposal from one eligible active finding; does not write. |
 
 Task application continues through the shared tools:
@@ -152,7 +149,7 @@ Schema version 8 adds:
 - `calendar_ingestion_runs`
 - `calendar_events`
 
-Email task proposals reuse the existing runs, proposals, actions, approvals, authorization tokens,
+Finding task proposals reuse the existing runs, proposals, actions, approvals, authorization tokens,
 action results, backups, and undo records.
 
 ## Verification
@@ -160,8 +157,8 @@ action results, backups, and undo records.
 The live primary-calendar check completed with five changed events on the first run and five unchanged
 events on the second run. Calendar status reported zero unprocessed events.
 
-The first email-task proposal was approved as an end-to-end test. It appended a Walmart+ decision task,
-created an external backup, recorded extraction provenance, and rebuilt into compact task state without
+The first finding-task proposal was approved as an end-to-end test. It appended a decision task,
+created an external backup, recorded finding provenance, and rebuilt into compact task state without
 validation errors.
 
 Automated coverage includes incremental Calendar replay, compact-state non-retention, fixed task target,
@@ -172,5 +169,5 @@ provenance parsing, and the MCP tool allowlist.
 
 - Reconcile events that disappear from the active window without returning as canceled records.
 - Record failed Calendar ingestion runs after a run has started.
-- Add explicit review feedback for proposed email tasks before using acceptance-rate metrics.
+- Add explicit review feedback for proposed finding tasks before using acceptance-rate metrics.
 - Add provider sync tokens only if measured API volume justifies them.

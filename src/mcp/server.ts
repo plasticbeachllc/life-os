@@ -31,7 +31,6 @@ import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { MacOsKeychainGmailCredentialStore } from "../gmail/keychain";
 import { previewGmailExtractionContext } from "../workflows/gmail-extraction-preview";
-import { proposeEmailExtractionTask } from "../workflows/email-task-proposal";
 import { proposeFindingTask } from "../workflows/finding-task-proposal";
 import {
   prepareSubscriptionEmailExtraction,
@@ -138,16 +137,6 @@ export function createLifeOsMcpServer(): McpServer {
     return jsonResult(new GmailStore(store).extractionReview(
       config.gmailAccountId, currentEmailExtractionIdentity,
     ));
-  });
-
-  server.registerTool("life_os_propose_email_task", {
-    description: "Compatibility surface that resolves one email extraction item to its active finding and creates an approval-gated fixed-inbox task proposal. This does not write the vault.",
-    inputSchema: { extractionId: z.string().startsWith("extract_"), itemIndex: z.number().int().nonnegative() },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, async ({ extractionId, itemIndex }) => {
-    const { vault, store } = runtimeContext();
-    const proposal = await proposeEmailExtractionTask({ extractionId, itemIndex, vault, store });
-    return jsonResult(sanitizeProposal(proposal));
   });
 
   server.registerTool("life_os_propose_finding_task", {

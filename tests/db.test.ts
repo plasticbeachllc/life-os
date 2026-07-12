@@ -14,11 +14,11 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(14);
+  expect(store.getSchemaVersion()).toBe(15);
   expect(store.countRows("schema_migrations")).toBe(1);
 });
 
-test("additively migrates an existing schema v7 database to combined provider schema v14", () => {
+test("rejects an incompatible prototype database with an explicit reset instruction", () => {
   const dir = mkdtempSync(join(tmpdir(), "life-os-db-v7-"));
   const path = join(dir, "life-os.db");
   const db = new Database(path);
@@ -28,24 +28,10 @@ test("additively migrates an existing schema v7 database to combined provider sc
   db.close();
 
   const store = new OperationalStore(path);
-  store.migrate();
-
-  expect(store.getSchemaVersion()).toBe(14);
-  expect(store.countRows("schema_migrations")).toBe(2);
-  expect(store.countRows("imessage_messages")).toBe(0);
-  const migrated = store.open();
-  expect(migrated.query<{ count: number }, []>("SELECT COUNT(*) count FROM telegram_messages").get()?.count).toBe(0);
-  expect(store.countRows("calendar_events")).toBe(0);
-  expect(store.countRows("calendar_event_versions")).toBe(0);
-  expect(store.countRows("subject_links")).toBe(0);
-  expect(store.countRows("findings")).toBe(0);
-  expect(store.countRows("finding_status_events")).toBe(0);
-  const findingStatusColumns = migrated.query<{ name: string }, []>(
-    "PRAGMA table_info(finding_status_events)",
-  ).all().map((column) => column.name);
-  expect(findingStatusColumns).toContain("related_entity_type");
-  expect(findingStatusColumns).toContain("related_entity_id");
-  migrated.close();
+  expect(() => store.migrate()).toThrow(
+    "prototype database schema 7 is incompatible with 15; delete the operational database and rebuild",
+  );
+  expect(store.getSchemaVersion()).toBe(7);
 });
 
 test("records runs, actions, and action results", () => {

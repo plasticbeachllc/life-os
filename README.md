@@ -274,13 +274,16 @@ Email extraction sequence:
 
 Extraction never creates a proposal automatically. Converting an eligible active finding into a task is
 explicit through `life_os_propose_finding_task`, which accepts only a finding ID, fixes the target to
-`00 Inbox/Inbox.md`, and derives the task text, due date, stable ID, and preview. The original
-`life_os_propose_email_task` remains as a compatibility surface that resolves its extraction ID and
-item index to the corresponding finding before entering the same review/authorization flow.
+`00 Inbox/Inbox.md`, and derives the task text, due date, stable ID, and preview.
 
 Finding task application appends a `converted` lifecycle event in the same SQLite transaction as the
 action, proposal, backup, and undo metadata. Undo reactivates the finding. Dismissal and supersession
 are explicit CLI operations; no generic finding-status MCP mutation is exposed.
+
+During the prototype phase, operational schema versions are intentionally incompatible. If the SQLite
+schema version changes, delete the operational database and rebuild it from canonical Markdown and
+configured providers. Life OS fails with an explicit reset instruction instead of attempting a legacy
+migration. It never deletes the database automatically.
 
 Calendar is primary-calendar-only in version 1. It retains event title, optional location, status,
 start/end, all-day state, and hashes; descriptions, attendees, organizers, conference links, and

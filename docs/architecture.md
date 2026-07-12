@@ -26,9 +26,9 @@ This document has four goals:
 3. Provide reference contracts and implementation patterns.
 4. Give downstream agents an ordered checklist with ownership and acceptance criteria.
 
-The architecture is intentionally evolutionary. Existing provider-specific tables and workflows do
-not need to be replaced all at once. Shared lifecycle semantics should be introduced before storage is
-consolidated.
+The architecture is intentionally evolutionary, but the current implementation is an early prototype.
+Operational schemas and internal APIs may be replaced outright while the model is still forming.
+Shared lifecycle semantics should be introduced before storage is consolidated.
 
 ## 2. How to read this document
 
@@ -794,7 +794,7 @@ not into multiple databases:
 - `AuthorizationRepository`
 - `AuditRepository`
 
-`OperationalStore` MAY remain as the database owner and migration entry point while exposing these
+`OperationalStore` MAY remain as the database owner and schema initialization entry point while exposing these
 narrow interfaces. This reduces the current broad store surface without losing cross-record
 transactions.
 
@@ -813,10 +813,9 @@ The following operations SHOULD be atomic:
 External provider reads cannot participate in SQLite transactions. Fetch first, verify, then commit a
 small deterministic result. Never hold a write transaction open across network or model work.
 
-### 9.3 Reference additive schema
+### 9.3 Reference schema
 
-The following illustrates target concepts. A migration owner must reconcile it with existing tables;
-agents MUST NOT paste this blindly into `schema.ts`.
+The following illustrates target concepts. Agents MUST NOT paste it blindly into `schema.ts`.
 
 ```sql
 CREATE TABLE work_items (
@@ -871,19 +870,19 @@ ON finding_status_events(finding_id, created_at);
 ```
 
 Provider extraction tables can initially remain canonical for their extraction results, with a
-deterministic projection into `findings`. Only consolidate tables after compatibility and retention
-tests prove that provider-specific protections are preserved.
+deterministic projection into `findings`. Consolidation must preserve provider-specific privacy tests.
 
-### 9.4 Migration rules
+### 9.4 Prototype schema rules
 
-- Schema changes are additive.
-- One coordinated owner increments `schemaVersion` exactly once per migration set.
-- Migrations are restart-safe and covered from the oldest supported schema.
-- Stable task, entity, proposal, action, and audit IDs are never replaced.
-- Existing provider extraction records remain readable during transition.
-- Backfills are deterministic, bounded, resumable, and do not invoke a model.
-- New uniqueness constraints are validated against existing data before enforcement.
-- No migration copies forbidden source material into new generic tables.
+- One coordinated owner controls `schemaVersion` and shared DDL.
+- An operational database with a different schema version fails with an explicit reset instruction.
+- Life OS never deletes or resets the database automatically.
+- Developers delete the disposable operational database and rebuild from canonical Markdown and
+  configured providers when the schema changes.
+- Backfills within one schema version remain deterministic, bounded, idempotent, and make no model
+  calls.
+- No rebuild or schema revision copies forbidden source material into generic tables.
+- Stable compatibility migrations become required only after the user declares the data model stable.
 
 ## 10. Policy, authorization, and effects
 
@@ -1181,7 +1180,7 @@ Goal: remove duplicated lifecycle bookkeeping while keeping provider-specific be
 
 Acceptance criteria:
 
-- [ ] Existing MCP and CLI schemas remain compatible.
+- [ ] Deliberate MCP and CLI removals are documented in the prototype changelog.
 - [ ] Gmail and Messages retain their distinct delta/evidence validation.
 - [ ] Persisted manifests contain no transient source text.
 - [ ] All prepare/submit invalidation tests pass across workflows.
@@ -1195,14 +1194,14 @@ definitions but should not concurrently modify the coordinator.
 Goal: let downstream state operate on semantic records rather than provider tables.
 
 - [ ] Finalize finding enums and normalization rules from existing prompt contracts.
-- [ ] Add additive finding and status-event schema in one coordinated migration.
+- [ ] Add the coordinated finding and status-event schema.
 - [ ] Implement deterministic provider-extraction-to-finding projectors.
 - [ ] Backfill existing Gmail and Messages extractions without model calls.
 - [ ] Preserve links to provider extraction and reasoning call internally.
 - [ ] Add sanitized review queries that operate on findings.
 - [ ] Support dismiss, supersede, and convert as explicit lifecycle events.
-- [ ] Generalize fixed-inbox task proposal from eligible email items to eligible findings, while retaining
-  deterministic text/target/ID derivation and backward compatibility.
+- [ ] Generalize fixed-inbox task proposal from eligible extraction items to eligible findings while
+  retaining deterministic text/target/ID derivation.
 
 Acceptance criteria:
 
@@ -1417,7 +1416,7 @@ Every downstream agent reports:
 3. Data retained and explicitly not retained.
 4. Complete cache/invalidation identity.
 5. Tests and live checks run with exact results.
-6. Known gaps, migration/backfill steps, compatibility effects, and required reloads.
+6. Known gaps, reset/backfill steps, breaking effects, and required reloads.
 
 Agents must also state which reference contracts in this document they implemented, refined, or found
 inapplicable. Deviations should be captured in an architecture decision record rather than silently
@@ -1438,7 +1437,7 @@ An architecture phase or integration is complete only when:
 - user-facing output is sanitized;
 - unchanged replay performs zero duplicate work;
 - automated checks pass;
-- required live checks, migrations, OAuth grants, and reloads are truthfully reported.
+- required live checks, schema resets, OAuth grants, and reloads are truthfully reported.
 
 ## 20. Architectural decisions and open questions
 
@@ -1456,7 +1455,7 @@ The following decisions are made by this specification:
 Open questions to resolve through ADRs and measured implementation experience:
 
 - Should common findings become canonical immediately, or remain projections of provider extraction
-  records for one compatibility release?
+  records until the domain model is proven?
 - Which reasoning preparation facts require durable minimal storage, versus reconstruction from source
   identities?
 - Does the existing `change_events` table evolve into a universal source delta log, or should providers
@@ -1478,7 +1477,7 @@ permission surface and preserve explicit provider boundaries.
 The first implemented slice establishes the contract for contextualizing a new Messages development.
 It is intentionally narrower than the complete target architecture:
 
-- Schema version 14 adds `subject_links` for internal Messages-conversation-to-person links only.
+- Schema version 15 includes `subject_links` for internal Messages-conversation-to-person links only.
 - A link is created explicitly with `message link-person`; it is not inferred or exposed as an MCP
   mutation.
 - The command accepts a source conversation only at the CLI boundary, verifies that it is inside the
@@ -1536,7 +1535,7 @@ calls have different operational states.
 The third implemented slice adds immutable common findings while retaining Gmail and Messages
 extraction tables as the canonical provider-specific records.
 
-- Schema version 14 includes `findings` and append-only `finding_status_events` alongside subject links.
+- Schema version 15 includes `findings` and append-only `finding_status_events` alongside subject links.
 - A finding identity is derived deterministically from source type, extraction ID, and item index.
 - Semantic content and evidence are content-hashed; replay with different content under the same source
   identity fails closed.
@@ -1608,10 +1607,8 @@ Finding task behavior:
   state and undo metadata, and is related to the stable task ID.
 - Undo restores the file and appends a new `active` finding event related to that task.
 
-`life_os_propose_email_task` remains backward compatible at its input boundary. It performs a
-deterministic no-model findings backfill if necessary, resolves the extraction ID and item index to a
-finding, and then uses the same finding proposal path. Previously created `append_email_task` proposals
-remain registered and applicable.
+The earlier email-extraction-specific proposal and executor surfaces were removed during prototyping.
+All task proposals now originate from common findings.
 
 ## Appendix A: Example end-to-end flows
 
@@ -1686,5 +1683,5 @@ Recommendations do not alter canonical state or silently reprioritize tasks.
 - [ ] Is authorization exact, short-lived, single-use, and stale-safe?
 - [ ] Can a failure advance a cursor, duplicate a finding, or replay an effect?
 - [ ] Are MCP, CLI, UI, logs, metrics, and audit projections sanitized consistently?
-- [ ] Does the test plan cover migration, replay, concurrency, stale state, and privacy?
+- [ ] Does the test plan cover schema reset behavior, replay, concurrency, stale state, and privacy?
 - [ ] Is ownership of shared files and schema version explicit?

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { loadConfig } from "../config";
 import { CalendarStore } from "../calendar/store";
 import { OperationalStore } from "../db/store";
+import { schemaVersion } from "../db/schema";
 import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { sha256Text } from "../util/hashing";
@@ -39,8 +40,13 @@ export function compileUiNotifications(now = new Date()): UiNotificationSnapshot
     }
 
     const store = new OperationalStore(config.databasePath);
-    if (store.getSchemaVersion() === undefined) {
-      return setupSnapshot(now, "LifeOS needs a database migration before the Inbox can load.");
+    const currentSchemaVersion = store.getSchemaVersion();
+    if (currentSchemaVersion === undefined) {
+      return setupSnapshot(now, "LifeOS needs an initialized operational database before the Inbox can load.");
+    }
+    if (currentSchemaVersion !== schemaVersion) {
+      return setupSnapshot(now,
+        `LifeOS prototype database schema ${currentSchemaVersion} must be reset for schema ${schemaVersion}.`);
     }
 
     const notifications: UiNotification[] = [];
@@ -205,7 +211,7 @@ function setupSnapshot(now: Date, summary: string): UiNotificationSnapshot {
       status: "open",
       title: "Finish LifeOS setup",
       summary,
-      detail: "Run the existing doctor and database migration commands before connecting the UI.",
+      detail: "Run doctor. During prototyping, delete any incompatible operational database and rebuild it from canonical sources.",
       relativeTime: "Setup required",
       primaryAction: { kind: "discuss", label: "Ask LifeOS" },
     }],

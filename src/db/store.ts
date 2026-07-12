@@ -125,16 +125,20 @@ export class OperationalStore {
     const db = this.open();
     try {
       db.transaction(() => {
+        const hasMigrations = Boolean(db.query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+        ).get());
+        if (hasMigrations) {
+          const current = db.query<{ version: number | null }, []>(
+            "SELECT MAX(version) AS version FROM schema_migrations",
+          ).get()?.version;
+          if (current !== null && current !== undefined && current !== schemaVersion) {
+            throw new Error(
+              `prototype database schema ${current} is incompatible with ${schemaVersion}; delete the operational database and rebuild`,
+            );
+          }
+        }
         for (const statement of ddl) db.exec(statement);
-        const findingStatusColumns = new Set(db.query<{ name: string }, []>(
-          "PRAGMA table_info(finding_status_events)",
-        ).all().map((column) => column.name));
-        if (!findingStatusColumns.has("related_entity_type")) {
-          db.exec("ALTER TABLE finding_status_events ADD COLUMN related_entity_type TEXT CHECK(related_entity_type IN ('task'))");
-        }
-        if (!findingStatusColumns.has("related_entity_id")) {
-          db.exec("ALTER TABLE finding_status_events ADD COLUMN related_entity_id TEXT");
-        }
         db.query("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
           .run(schemaVersion, new Date().toISOString());
       })();

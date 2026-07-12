@@ -41,7 +41,6 @@ import { ingestTelegramChanges } from "./workflows/telegram-ingest";
 import { FindingStore } from "./findings/store";
 import { rebuildFindingAttentionState } from "./state/finding-attention";
 import { rebuildChiefOfStaffState } from "./state/chief-of-staff";
-import { applyEmailTaskProposal } from "./tools/append-email-task";
 import { applyFindingTaskProposal } from "./tools/append-finding-task";
 
 const symbols: Record<Severity, string> = {
@@ -262,9 +261,7 @@ async function main(argv: string[]): Promise<number> {
       ? await applyPolicyBootstrapProposal(toolInput)
       : proposal.toolName === "apply_task_id_patch"
         ? await applyTaskIdProposal(toolInput)
-        : proposal.toolName === "append_email_task"
-          ? await applyEmailTaskProposal(toolInput)
-          : proposal.toolName === "append_finding_task"
+        : proposal.toolName === "append_finding_task"
             ? await applyFindingTaskProposal(toolInput)
             : await applyApprovedProposal(toolInput);
     console.log(`Applied ${result.actionId} to ${result.targetPath}\nBackup: ${result.backupPath}`);
