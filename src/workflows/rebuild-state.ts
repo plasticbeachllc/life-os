@@ -5,6 +5,7 @@ import { StateProjector } from "../state/projections";
 import { rebuildChiefOfStaffState } from "../state/chief-of-staff";
 import { markdownTasks, sectionBody, type MarkdownTask } from "../util/markdown";
 import { backfillExtractionFindings } from "../findings/projector";
+import { rebuildFindingAttentionState } from "../state/finding-attention";
 
 export interface StateRebuildIssue {
   path: string;
@@ -23,6 +24,7 @@ export interface StateRebuildReport {
   findingExtractions: number;
   findingsCreated: number;
   findingsUnchanged: number;
+  findingAttentionStateVersion: number;
   chiefOfStaffStateVersion: number;
   issues: StateRebuildIssue[];
 }
@@ -41,6 +43,7 @@ export async function rebuildState(input: {
     scanned: notes.length, changed: 0, unchanged: 0, projected: 0,
     projects: 0, people: 0, tasks: 0, taskCandidates: 0,
     findingExtractions: 0, findingsCreated: 0, findingsUnchanged: 0,
+    findingAttentionStateVersion: 0,
     chiefOfStaffStateVersion: 0, issues: [],
   };
   const recentChanges: string[] = [];
@@ -103,6 +106,8 @@ export async function rebuildState(input: {
     }
   }
 
+  const findingAttention = rebuildFindingAttentionState({ store: input.store });
+  report.findingAttentionStateVersion = findingAttention.stateVersion;
   const chiefState = rebuildChiefOfStaffState({
     store: input.store, recentChanges,
     unresolvedAmbiguities: report.issues.map((issue) => `${issue.path}: ${issue.message}`),

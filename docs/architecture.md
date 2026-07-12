@@ -1554,6 +1554,31 @@ Dismissal, supersession, conversion, and finding-based task proposals remain lat
 states exist so lifecycle changes can be append-only, but no generic status mutation surface is exposed
 by this slice.
 
+## 24. Initial finding attention projection
+
+The fourth implemented slice derives a single current `finding_attention_state` from common findings.
+The aggregate projection contains bounded active open-loop and commitment items, counts, and overdue
+finding IDs. It deliberately excludes decisions and informational findings from the attention queue.
+
+Projection invalidation includes:
+
+- the projection builder version;
+- the current date, because overdue classification is date-sensitive;
+- each included finding ID and immutable content hash;
+- each finding's latest status-event ID and timestamp.
+
+An unchanged rebuild reuses the current derived state. A later status event or date boundary creates a
+new version. Dismissed, superseded, and converted findings are absent from the active projection.
+
+Chief-of-staff state now depends on finding attention state and carries active finding open-loop IDs,
+active finding commitment IDs, and overdue finding IDs alongside canonical task IDs. Morning briefing
+resolves overdue finding IDs back to their structured statements and cites both the finding ID and
+attention-state ID. No provider extraction identifiers or evidence hashes are copied into the
+projection content.
+
+The status-event writer remains an internal narrow repository method used to prove lifecycle
+invalidation. No CLI, MCP, or model-facing generic finding-status mutation is introduced here.
+
 ## Appendix A: Example end-to-end flows
 
 ### A.1 Incoming message to reviewed finding

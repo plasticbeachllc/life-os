@@ -12,6 +12,8 @@ export interface ChiefOfStaffState {
   people_due_for_contact: string[];
   important_recent_changes: string[];
   overdue_commitments: string[];
+  active_finding_open_loops: string[];
+  active_finding_commitments: string[];
   unresolved_ambiguities: string[];
   suggested_focus: string[];
 }
@@ -27,6 +29,7 @@ export function rebuildChiefOfStaffState(input: {
   const projects = input.store.listCurrentDerivedStates("project_state");
   const people = input.store.listCurrentDerivedStates("person_state");
   const tasks = input.store.listCurrentDerivedStates("task_state");
+  const findingAttention = input.store.getCurrentDerivedState("finding_attention_state");
   const openTasks = tasks.filter((state) => state.content.status === "open");
   const stalledProjects = projects.filter((state) =>
     state.content.status === "active" && array(state.content.next_actions).length === 0,
@@ -40,6 +43,9 @@ export function rebuildChiefOfStaffState(input: {
     return next !== null && next <= localDate(now);
   });
   const waiting = openTasks.filter((state) => state.content.waiting === true);
+  const findingOpenLoops = objects(findingAttention?.content.open_loops);
+  const findingCommitments = objects(findingAttention?.content.commitments);
+  const overdueFindingIds = array(findingAttention?.content.overdue_finding_ids).map(String);
   const priorities = projects
     .filter((state) => state.content.status === "active" && array(state.content.next_actions).length > 0)
     .slice(0, 5)
@@ -63,14 +69,23 @@ export function rebuildChiefOfStaffState(input: {
     upcoming_decisions: [],
     people_due_for_contact: peopleDue.flatMap((state) => state.entityId ? [state.entityId] : []),
     important_recent_changes: [...new Set(retainedRecentChanges)].slice(0, 20),
-    overdue_commitments: overdue.flatMap((state) => state.entityId ? [state.entityId] : []),
+    overdue_commitments: [
+      ...overdue.flatMap((state) => state.entityId ? [state.entityId] : []),
+      ...overdueFindingIds,
+    ],
+    active_finding_open_loops: findingOpenLoops.map((finding) => String(finding.finding_id ?? "")).filter(Boolean),
+    active_finding_commitments: findingCommitments.map((finding) => String(finding.finding_id ?? "")).filter(Boolean),
     unresolved_ambiguities: unresolvedAmbiguities,
-    suggested_focus: suggestedFocus(overdue.length, stalledProjects.length, waiting.length, priorities),
+    suggested_focus: suggestedFocus(
+      overdue.length + overdueFindingIds.length, stalledProjects.length, waiting.length, priorities,
+    ),
   };
-  const dependencies = [...projects, ...people, ...tasks];
+  const dependencies = [
+    ...projects, ...people, ...tasks, ...(findingAttention ? [findingAttention] : []),
+  ];
   const sourceHashes = [...new Set(dependencies.flatMap((state) => state.sourceHashes))].sort();
   const dependencyHash = sha256Value({
-    generatorVersion: "deterministic-chief-of-staff-v2",
+    generatorVersion: "deterministic-chief-of-staff-v3",
     states: dependencies.map((state) => [state.stateId, state.stateVersion]),
     recentChanges: content.important_recent_changes,
     unresolvedAmbiguities,
@@ -82,7 +97,7 @@ export function rebuildChiefOfStaffState(input: {
     stateVersion: (prior?.stateVersion ?? 0) + 1,
     content: content as unknown as Record<string, unknown>,
     sourceHashes: [dependencyHash, ...sourceHashes],
-    generationMethod: "deterministic-chief-of-staff-v2", createdAt: now.toISOString(),
+    generationMethod: "deterministic-chief-of-staff-v3", createdAt: now.toISOString(),
   };
   input.store.saveDerivedState(record);
   return record;
@@ -104,6 +119,11 @@ function suggestedFocus(
 
 function array(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function objects(value: unknown): Array<Record<string, unknown>> {
+  return array(value).filter((item): item is Record<string, unknown> =>
+    item !== null && typeof item === "object");
 }
 
 function stringOrNull(value: unknown): string | null {

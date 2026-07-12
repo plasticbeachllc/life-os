@@ -33,7 +33,10 @@ export function generateMorningBriefing(input: {
   const tasks = input.store.listCurrentDerivedStates("task_state");
   const people = input.store.listCurrentDerivedStates("person_state");
   const projects = input.store.listCurrentDerivedStates("project_state");
-  const dependencies = [chief, ...tasks, ...people, ...projects];
+  const findingAttention = input.store.getCurrentDerivedState("finding_attention_state");
+  const dependencies = [
+    chief, ...tasks, ...people, ...projects, ...(findingAttention ? [findingAttention] : []),
+  ];
   const dependencyHash = sha256Value({
     generatorVersion: "deterministic-morning-briefing-v2",
     date,
@@ -53,6 +56,9 @@ export function generateMorningBriefing(input: {
   const chiefContent = chief.content;
   const taskById = new Map(tasks.flatMap((task) => task.entityId ? [[task.entityId, task]] : []));
   const personById = new Map(people.flatMap((person) => person.entityId ? [[person.entityId, person]] : []));
+  const findingById = new Map(objects(findingAttention?.content.open_loops).map((finding) => [
+    String(finding.finding_id ?? ""), finding,
+  ]));
   const briefing: MorningBriefing = {
     date,
     generatedAt: now.toISOString(),
@@ -60,7 +66,10 @@ export function generateMorningBriefing(input: {
       summary: String(item.reason ?? "Current priority"),
       evidenceIds: strings(item.evidence_ids ?? item.entity_id),
     })),
-    overdue: stateItems(strings(chiefContent.overdue_commitments), taskById, "Overdue"),
+    overdue: attentionItems(
+      strings(chiefContent.overdue_commitments), taskById, findingById,
+      findingAttention?.stateId, "Overdue",
+    ),
     dueToday: tasks
       .filter((task) => task.content.status === "open" && task.content.due_date === date)
       .map((task) => taskItem(task, "Due today")),
@@ -129,8 +138,21 @@ function taskItem(task: DerivedStateRecord, prefix: string): BriefingItem {
   };
 }
 
-function stateItems(ids: string[], states: Map<string, DerivedStateRecord>, prefix: string): BriefingItem[] {
-  return ids.map((id) => states.has(id) ? taskItem(states.get(id)!, prefix) : { summary: `${prefix}: ${id}`, evidenceIds: [id] });
+function attentionItems(
+  ids: string[], tasks: Map<string, DerivedStateRecord>,
+  findings: Map<string, Record<string, unknown>>, attentionStateId: string | undefined,
+  prefix: string,
+): BriefingItem[] {
+  return ids.map((id) => {
+    const task = tasks.get(id);
+    if (task) return taskItem(task, prefix);
+    const finding = findings.get(id);
+    if (finding) return {
+      summary: `${prefix}: ${String(finding.statement ?? id)}`,
+      evidenceIds: [id, attentionStateId].filter((value): value is string => Boolean(value)),
+    };
+    return { summary: `${prefix}: ${id}`, evidenceIds: [id] };
+  });
 }
 
 function objects(value: unknown): Array<Record<string, unknown>> {
