@@ -1,0 +1,121 @@
+<script lang="ts">
+	import { Badge } from "$lib/components/ui/badge";
+	import { Button } from "$lib/components/ui/button";
+	import ChatPanel from "$lib/life-os/ChatPanel.svelte";
+	import { initialMessages } from "$lib/life-os/initial-messages";
+	import NotificationInbox from "$lib/life-os/NotificationInbox.svelte";
+	import type { InboxNotification } from "$lib/life-os/types";
+	import { Inbox, MessageCircle, Settings2, Sparkles } from "@lucide/svelte";
+	import { untrack } from "svelte";
+	import type { PageData } from "./$types";
+
+	let { data }: { data: PageData } = $props();
+
+	let activeMobilePanel = $state<"inbox" | "chat">("inbox");
+	let selectedNotification = $state<InboxNotification | null>(null);
+	let notifications = $state<InboxNotification[]>(
+		untrack(() => data.notifications.map((notification: InboxNotification) => ({ ...notification }))),
+	);
+
+	function selectNotification(notification: InboxNotification) {
+		selectedNotification = notification;
+	}
+
+	function discussNotification(notification: InboxNotification) {
+		selectedNotification = notification;
+		activeMobilePanel = "chat";
+	}
+
+	function handleNotificationAction(notification: InboxNotification, position: "primary" | "secondary") {
+		const action = position === "primary" ? notification.primaryAction : notification.secondaryAction;
+		if (!action) return;
+
+		if (action.kind === "resolve" || action.kind === "review" || action.kind === "discuss") {
+			discussNotification(notification);
+			return;
+		}
+
+		notifications = notifications.map((item) => {
+			if (item.id !== notification.id) return item;
+			if (action.kind === "undo") {
+				return {
+					...item,
+					status: "resolved",
+					tone: "update",
+					title: "Task creation undone",
+					summary: "The automatically created task was removed from the prototype activity stream.",
+				};
+			}
+			return { ...item, status: "resolved" };
+		});
+		if (selectedNotification?.id === notification.id) selectedNotification = null;
+	}
+</script>
+
+<svelte:head>
+	<title>LifeOS</title>
+	<meta name="description" content="A local-first inbox and agent workspace." />
+</svelte:head>
+
+<div class="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-background">
+	<header class="flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6">
+		<div class="flex items-center gap-2.5">
+			<div class="flex size-8 items-center justify-center rounded-lg bg-foreground text-background">
+				<Sparkles class="size-4" aria-hidden="true" />
+			</div>
+			<div class="flex items-baseline gap-2">
+				<span class="font-semibold tracking-tight">LifeOS</span>
+				<Badge variant="outline" class="hidden sm:inline-flex">Private beta</Badge>
+			</div>
+		</div>
+		<div class="flex items-center gap-2">
+			<div class="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+				<span class="size-2 rounded-full bg-emerald-500"></span>
+				Prototype · no writes enabled
+			</div>
+			<Button variant="ghost" size="icon" aria-label="Open settings">
+				<Settings2 aria-hidden="true" />
+			</Button>
+		</div>
+	</header>
+
+	<main class="grid min-h-0 flex-1 md:grid-cols-[minmax(320px,42%)_minmax(0,58%)]">
+		<div class:hidden={activeMobilePanel !== "inbox"} class="min-h-0 md:flex md:border-r">
+			<NotificationInbox
+				{notifications}
+				selectedId={selectedNotification?.id ?? null}
+				onSelect={selectNotification}
+				onAction={handleNotificationAction}
+			/>
+		</div>
+
+		<div class:hidden={activeMobilePanel !== "chat"} class="min-h-0 md:flex">
+			<ChatPanel
+				{initialMessages}
+				context={selectedNotification}
+				onClearContext={() => (selectedNotification = null)}
+			/>
+		</div>
+	</main>
+
+	<nav class="grid h-16 shrink-0 grid-cols-2 border-t bg-background md:hidden" aria-label="Primary navigation">
+		<Button
+			variant="ghost"
+			class={`h-full flex-col gap-1 rounded-none ${activeMobilePanel === "inbox" ? "bg-muted" : ""}`}
+			onclick={() => (activeMobilePanel = "inbox")}
+			aria-current={activeMobilePanel === "inbox" ? "page" : undefined}
+		>
+			<Inbox class="size-4" aria-hidden="true" />
+			<span class="text-xs">Inbox</span>
+		</Button>
+		<Button
+			variant="ghost"
+			class={`h-full flex-col gap-1 rounded-none ${activeMobilePanel === "chat" ? "bg-muted" : ""}`}
+			onclick={() => (activeMobilePanel = "chat")}
+			aria-current={activeMobilePanel === "chat" ? "page" : undefined}
+		>
+			<MessageCircle class="size-4" aria-hidden="true" />
+			<span class="text-xs">Chat</span>
+		</Button>
+	</nav>
+</div>

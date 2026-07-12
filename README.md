@@ -295,3 +295,21 @@ printf '%s' '{"texts":["Card: 4111 1111 1111 1111"]}' | \
 
 The expected redaction contains `<CREDIT_CARD>`. Tests exercise source drift, evidence validation,
 context non-retention, proposal authorization, rollback, compact-state caching, and MCP allowlisting.
+
+## UI prototype
+
+The responsive Inbox and Chat application lives in `ui/`. Its Inbox reads sanitized projections from
+the operational database, and its server-side chat bridge streams subscription-authenticated Codex App
+Server turns through a fixed allowlist of read-only LifeOS MCP tools. The browser receives no provider
+credentials, filesystem tools, source hashes, or raw provider content.
+
+This first live slice cannot mutate providers, proposals, operational state, or the vault.
+
+```bash
+cd ui
+bun install
+bun run dev
+```
+
+See [`docs/ui-implementation-plan.md`](docs/ui-implementation-plan.md) for the staged integration and
+safety plan.

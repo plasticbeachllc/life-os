@@ -89,7 +89,7 @@ export class GmailStore {
     }
   }
 
-  inspectionSummary(accountId: string): {
+  inspectionSummary(accountId: string, identity?: { promptVersion: string; schemaVersion: string }): {
     accountConfigured: boolean; selector: string | null; messages: number; versions: number;
     threads: number; unprocessed: number; unextracted: number; ingestionRuns: number;
     lastRunStatus: string | null; lastRunCompletedAt: string | null;
@@ -117,10 +117,21 @@ export class GmailStore {
       const lastRun = db.query<{ status: string; completed_at: string | null }, [string]>(
         "SELECT status, completed_at FROM gmail_ingestion_runs WHERE account_id = ? ORDER BY started_at DESC LIMIT 1",
       ).get(accountId);
+      const currentUnextracted = identity
+        ? db.query<{ count: number }, [string, string, string]>(
+          `SELECT COUNT(*) AS count FROM gmail_messages gm
+           WHERE gm.account_id = ? AND NOT EXISTS (
+             SELECT 1 FROM gmail_extractions ge
+             WHERE ge.account_id = gm.account_id AND ge.message_id = gm.message_id
+               AND ge.source_hash = gm.content_hash
+               AND ge.prompt_version = ? AND ge.schema_version = ?
+           )`,
+        ).get(accountId, identity.promptVersion, identity.schemaVersion)?.count ?? 0
+        : counts?.unextracted ?? 0;
       return {
         accountConfigured: Boolean(account), selector: account?.selection_label_id ?? null,
         messages: counts?.messages ?? 0, versions, threads,
-        unprocessed: counts?.unprocessed ?? 0, unextracted: counts?.unextracted ?? 0,
+        unprocessed: counts?.unprocessed ?? 0, unextracted: currentUnextracted,
         ingestionRuns: runs, lastRunStatus: lastRun?.status ?? null,
         lastRunCompletedAt: lastRun?.completed_at ?? null,
       };
@@ -129,7 +140,7 @@ export class GmailStore {
     }
   }
 
-  extractionReview(accountId: string): {
+  extractionReview(accountId: string, identity?: { promptVersion: string; schemaVersion: string }): {
     total: number; byClassification: Record<string, number>; actionable: number;
     unresolved: number; extractions: Array<{
       extractionId: string; classification: string; summary: string;
@@ -140,10 +151,20 @@ export class GmailStore {
     try {
       const rows = db.query<{
         extraction_id: string; classification: string; output_json: string; created_at: string;
+        prompt_version: string; schema_version: string;
       }, [string]>(
-        `SELECT extraction_id, classification, output_json, created_at
-         FROM gmail_extractions WHERE account_id = ? ORDER BY created_at DESC`,
-      ).all(accountId);
+        `SELECT ge.extraction_id, ge.classification, ge.output_json, ge.created_at,
+                ge.prompt_version, ge.schema_version
+         FROM gmail_extractions ge
+         WHERE ge.account_id = ? AND NOT EXISTS (
+           SELECT 1 FROM gmail_extractions newer
+           WHERE newer.account_id = ge.account_id AND newer.message_id = ge.message_id
+             AND (newer.created_at > ge.created_at
+               OR (newer.created_at = ge.created_at AND newer.extraction_id > ge.extraction_id))
+         )
+         ORDER BY ge.created_at DESC`,
+      ).all(accountId).filter((row) => !identity
+        || (row.prompt_version === identity.promptVersion && row.schema_version === identity.schemaVersion));
       const byClassification: Record<string, number> = {};
       let unresolved = 0;
       const extractions = rows.map((row) => {
@@ -194,6 +215,26 @@ export class GmailStore {
         messageId: row.message_id, threadId: row.thread_id,
         contentHash: row.content_hash, internalDate: row.internal_date,
       }));
+    } finally {
+      db.close();
+    }
+  }
+
+  invalidateExtractionVersion(input: {
+    accountId: string; promptVersion: string; schemaVersion: string; policyVersion: string;
+  }): number {
+    const db = this.store.open();
+    try {
+      return db.query(
+        `UPDATE gmail_messages SET last_extraction_hash = NULL, ingestion_state = 'ingested'
+         WHERE account_id = ? AND last_extraction_hash IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM gmail_extractions ge
+           WHERE ge.account_id = gmail_messages.account_id
+             AND ge.message_id = gmail_messages.message_id
+             AND ge.source_hash = gmail_messages.content_hash
+             AND ge.prompt_version = ? AND ge.schema_version = ? AND ge.policy_version = ?
+         )`,
+      ).run(input.accountId, input.promptVersion, input.schemaVersion, input.policyVersion).changes;
     } finally {
       db.close();
     }
