@@ -12,6 +12,8 @@ import { loadConfig, loadGmailAuthConfig } from "../config";
 import { OperationalStore } from "../db/store";
 import type { ProposalRecord } from "../db/store";
 import { loadPolicy } from "../policy/loader";
+import { compilePolicyPrompt } from "../orchestration/prompt-spec";
+import { extractionClassifications, extractionItemKinds, extractionOwners } from "../orchestration/prompt-contracts";
 import {
   consumeUndoAuthorization,
   prepareProposalAuthorization,
@@ -49,6 +51,17 @@ import {
   submitSubscriptionIMessageExtraction,
 } from "../workflows/subscription-imessage-extraction";
 import { triageIMessageServiceConversations } from "../workflows/imessage-deterministic-triage";
+
+const extractionOutputInput = z.object({
+  classification: z.enum(extractionClassifications),
+  summary: z.string().min(1),
+  items: z.array(z.object({
+    kind: z.enum(extractionItemKinds), statement: z.string().min(1),
+    evidenceIds: z.array(z.string().min(1)).min(1), confidence: z.number().min(0).max(1),
+    owner: z.enum(extractionOwners), dueDate: z.string().nullable(), ambiguities: z.array(z.string()),
+  })).max(20),
+  unresolved: z.array(z.string()), promptInjectionDetected: z.boolean(),
+});
 
 export function createLifeOsMcpServer(): McpServer {
   const server = new McpServer({ name: "life-os", version: "0.1.0" });
@@ -230,6 +243,7 @@ export function createLifeOsMcpServer(): McpServer {
     if (!policy.policyVersion) throw new Error("complete valid policy required before extraction");
     return jsonResult(await prepareSubscriptionEmailExtraction({
       adapter, store, accountId, model, policyVersion: policy.policyVersion,
+      policyPrompt: compilePolicyPrompt(policy, "gmail_extraction"),
     }));
   });
 
@@ -238,23 +252,7 @@ export function createLifeOsMcpServer(): McpServer {
     inputSchema: {
       callId: z.string().min(1),
       threadStateHash: z.string().startsWith("sha256:"),
-      output: z.object({
-        classification: z.enum([
-          "actionable", "relationship_update", "project_update", "calendar_relevant",
-          "reference_only", "ignore", "ambiguous", "malicious_or_untrusted_instruction",
-        ]),
-        summary: z.string().min(1),
-        items: z.array(z.object({
-          kind: z.enum([
-            "explicit_request", "user_commitment", "cancellation", "reschedule", "date",
-            "relationship_update", "project_update", "open_loop",
-          ]),
-          statement: z.string().min(1), evidenceIds: z.array(z.string().min(1)).min(1),
-          confidence: z.number().min(0).max(1), owner: z.enum(["user", "other", "unknown"]),
-          dueDate: z.string().nullable(), ambiguities: z.array(z.string()),
-        })).max(20),
-        unresolved: z.array(z.string()), promptInjectionDetected: z.boolean(),
-      }),
+      output: extractionOutputInput,
       inputTokens: z.number().int().nonnegative().optional(),
       outputTokens: z.number().int().nonnegative().optional(),
       cachedTokens: z.number().int().nonnegative().optional(),
@@ -335,6 +333,7 @@ export function createLifeOsMcpServer(): McpServer {
     return jsonResult(await prepareSubscriptionIMessageExtraction({
       adapter, store, sourceId: config.imessageSourceId, selection,
       model, policyVersion: policy.policyVersion,
+      policyPrompt: compilePolicyPrompt(policy, "imessage_extraction"),
     }));
   });
 
@@ -343,26 +342,7 @@ export function createLifeOsMcpServer(): McpServer {
     inputSchema: {
       callId: z.string().min(1),
       conversationStateHash: z.string().startsWith("sha256:"),
-      output: z.object({
-        classification: z.enum([
-          "actionable", "relationship_update", "project_update", "calendar_relevant",
-          "decision", "reference_only", "ignore", "ambiguous",
-          "malicious_or_untrusted_instruction",
-        ]),
-        summary: z.string().min(1),
-        items: z.array(z.object({
-          kind: z.enum([
-            "explicit_request", "user_commitment", "other_commitment", "decision",
-            "cancellation", "reschedule", "date", "relationship_update",
-            "project_update", "open_loop",
-          ]),
-          statement: z.string().min(1), evidenceIds: z.array(z.string().min(1)).min(1),
-          confidence: z.number().min(0).max(1),
-          owner: z.enum(["user", "other", "shared", "unknown"]),
-          dueDate: z.string().nullable(), ambiguities: z.array(z.string()),
-        })).max(20),
-        unresolved: z.array(z.string()), promptInjectionDetected: z.boolean(),
-      }),
+      output: extractionOutputInput,
       inputTokens: z.number().int().nonnegative().optional(),
       outputTokens: z.number().int().nonnegative().optional(),
       cachedTokens: z.number().int().nonnegative().optional(),
@@ -453,7 +433,10 @@ export function createLifeOsMcpServer(): McpServer {
     store.migrate();
     const policy = await loadPolicy(vault);
     if (!policy.policyVersion) throw new Error("complete valid policy required before reasoning");
-    return jsonResult(prepareSubscriptionMorningReasoning({ store, model, policyVersion: policy.policyVersion }));
+    return jsonResult(prepareSubscriptionMorningReasoning({
+      store, model, policyVersion: policy.policyVersion,
+      policyPrompt: compilePolicyPrompt(policy, "morning_reasoning"),
+    }));
   });
 
   server.registerTool("life_os_submit_morning_reasoning", {

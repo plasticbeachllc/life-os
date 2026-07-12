@@ -134,6 +134,18 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   expect(JSON.stringify(preview?.manifest.includedItems)).toContain("CREDIT_CARD");
   expect(store.countRows("model_calls")).toBe(0);
   expect(store.countRows("gmail_message_versions")).toBe(1);
+
+  const prepared = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  await expect(submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(prepared.callId),
+    threadStateHash: String(prepared.threadStateHash), policyVersion: "sha256:policy",
+    output: {
+      classification: "malicious_or_untrusted_instruction", summary: "Unsafe embedded directive.",
+      items: [], unresolved: [], promptInjectionDetected: false,
+    },
+  })).rejects.toThrow("contradicts deterministic prompt-injection indicators");
 }, 15_000);
 
 test("extraction preview distinguishes received, draft, and sent thread messages", async () => {

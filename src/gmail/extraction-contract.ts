@@ -1,5 +1,7 @@
-export const EMAIL_EXTRACTION_PROMPT_VERSION = "email-extraction-v2-message-type";
-export const EMAIL_EXTRACTION_SCHEMA_VERSION = "email-extraction-schema-v1";
+import { gmailPromptSpec } from "../orchestration/prompt-contracts";
+
+export const EMAIL_EXTRACTION_PROMPT_VERSION = gmailPromptSpec.version;
+export const EMAIL_EXTRACTION_SCHEMA_VERSION = "email-extraction-schema-v2";
 
 export const currentEmailExtractionIdentity = {
   promptVersion: EMAIL_EXTRACTION_PROMPT_VERSION,

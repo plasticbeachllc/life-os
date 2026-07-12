@@ -32,6 +32,7 @@ export interface ModelCallInput {
   instructions: string;
   manifest: ContextManifest;
   outputSchema?: OutputSchema;
+  validateOutput?: (output: unknown) => void;
   cache?: {
     schemaVersion: string;
     policyVersion: string;
@@ -66,6 +67,7 @@ export class ModelGateway {
 
     const cached = cacheKey ? this.store.getModelCache(cacheKey) : undefined;
     if (cached) {
+      input.validateOutput?.(cached.output);
       this.store.recordModelCall({
         callId, ...(input.runId ? { runId: input.runId } : {}), workflow: input.workflow,
         taskType: input.taskType, model: input.model, promptVersion: input.promptVersion,
@@ -84,6 +86,7 @@ export class ModelGateway {
         context: input.manifest.includedItems.map((item) => item.content),
         ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
       });
+      input.validateOutput?.(result.output);
       this.store.recordModelCall({
         callId, ...(input.runId ? { runId: input.runId } : {}), workflow: input.workflow,
         taskType: input.taskType, model: input.model, promptVersion: input.promptVersion,

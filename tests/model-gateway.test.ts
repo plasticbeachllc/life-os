@@ -52,3 +52,23 @@ test("model gateway caches versioned intermediate output and audits cache hits",
   expect(store.countRows("context_manifests")).toBe(2);
   expect(store.efficiencyMetrics().cacheHits).toBe(1);
 });
+
+test("model gateway rejects invalid structured output before caching", async () => {
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-model-invalid-")), "model.db"));
+  store.migrate();
+  const gateway = new ModelGateway(store, {
+    complete: async () => ({ output: { wrong: true }, usage: { inputTokens: 1, outputTokens: 1 } }),
+  });
+  const manifest = buildContext([], {
+    maxInputTokens: 10, reservedOutputTokens: 0, sourceTokens: 0, entityStateTokens: 0,
+    recentChangeTokens: 0, policyTokens: 0, contingencyTokens: 0,
+  });
+  await expect(gateway.complete({
+    workflow: "test", taskType: "test", model: "test", promptVersion: "v1",
+    instructions: "Return valid output.", manifest,
+    validateOutput: (output) => {
+      if (!output || typeof output !== "object" || !("ok" in output)) throw new Error("invalid output");
+    },
+  })).rejects.toThrow("invalid output");
+  expect(store.countRows("model_cache")).toBe(0);
+});

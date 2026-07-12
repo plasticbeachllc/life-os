@@ -368,6 +368,11 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
   };
   await expect(submitSubscriptionIMessageExtraction({
     adapter, store, sourceId: "local-messages", selection, callId,
+    conversationStateHash, policyVersion: "sha256:policy",
+    output: { ...baseOutput, items: [], promptInjectionDetected: false },
+  })).rejects.toThrow("contradicts deterministic prompt-injection indicators");
+  await expect(submitSubscriptionIMessageExtraction({
+    adapter, store, sourceId: "local-messages", selection, callId,
     conversationStateHash, policyVersion: "sha256:changed-policy",
     output: { ...baseOutput, items: [] },
   })).rejects.toThrow("identity mismatch");
