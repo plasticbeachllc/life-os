@@ -67,8 +67,9 @@ export function markdownTasks(markdown: string): MarkdownTask[] {
       supporting.push(candidate);
     }
     const supportText = supporting.join("\n");
-    const taskId = supportText.match(/<!--\s*life-os:task_id=(task_[A-Za-z0-9]+)\s*-->/)?.[1];
-    const source = supportText.match(/^\s*-\s*Source:\s*(.+?)\s*$/m)?.[1];
+    const annotation = supportText.match(/<!--\s*life-os:task_id=(task_[A-Za-z0-9]+)(?:\s+source=([^\s]+))?\s*-->/);
+    const taskId = annotation?.[1];
+    const source = annotation?.[2] ?? supportText.match(/^\s*-\s*Source:\s*(.+?)\s*$/m)?.[1];
     tasks.push({
       state: match[1]!, text: match[2]!.trim(), line: index + 1,
       ...(taskId ? { taskId } : {}), ...(source ? { source } : {}),

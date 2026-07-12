@@ -774,6 +774,9 @@ export class OperationalStore {
       "imessage_message_versions",
       "imessage_extractions",
       "imessage_deterministic_triage",
+      "calendar_accounts",
+      "calendar_ingestion_runs",
+      "calendar_events",
     ]);
     if (!allowed.has(table)) throw new Error(`unsupported table: ${table}`);
     const db = this.open();

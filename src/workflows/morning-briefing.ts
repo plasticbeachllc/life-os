@@ -35,6 +35,7 @@ export function generateMorningBriefing(input: {
   const projects = input.store.listCurrentDerivedStates("project_state");
   const dependencies = [chief, ...tasks, ...people, ...projects];
   const dependencyHash = sha256Value({
+    generatorVersion: "deterministic-morning-briefing-v2",
     date,
     states: dependencies.map((state) => [state.stateId, state.stateVersion]),
   });
@@ -90,7 +91,7 @@ export function generateMorningBriefing(input: {
     stateVersion: (prior?.stateVersion ?? 0) + 1,
     content: briefing as unknown as Record<string, unknown>,
     sourceHashes: [dependencyHash, ...new Set(dependencies.flatMap((state) => state.sourceHashes))],
-    generationMethod: "deterministic-morning-briefing-v1", createdAt: now.toISOString(),
+    generationMethod: "deterministic-morning-briefing-v2", createdAt: now.toISOString(),
   };
   input.store.saveDerivedState(state);
   input.store.recordRun({

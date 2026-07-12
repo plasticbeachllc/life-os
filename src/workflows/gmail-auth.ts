@@ -5,6 +5,7 @@ import { GmailRestAdapter } from "../adapters/gmail";
 import type { GmailCredentialStore } from "../gmail/keychain";
 
 const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly";
+const calendarReadonlyScope = "https://www.googleapis.com/auth/calendar.readonly";
 
 export async function authorizeGmailDesktop(input: {
   clientId: string;
@@ -39,7 +40,7 @@ export async function authorizeGmailDesktop(input: {
         return htmlResponse("Authorization response was incomplete. Return to the terminal.", 400);
       }
       resolveCallback({ code, state: returnedState });
-      return htmlResponse("Life OS Gmail read-only authorization succeeded. You can close this tab.");
+      return htmlResponse("Life OS Google read-only authorization succeeded. You can close this tab.");
     },
   });
   const redirectUri = `http://127.0.0.1:${server.port}/oauth2/callback`;
@@ -47,7 +48,7 @@ export async function authorizeGmailDesktop(input: {
   const verifier = await client.generateCodeVerifierAsync();
   if (!verifier.codeChallenge) throw new Error("Google OAuth PKCE challenge generation failed");
   const authorizationUrl = client.generateAuthUrl({
-    access_type: "offline", prompt: "consent", scope: [gmailReadonlyScope], state,
+    access_type: "offline", prompt: "consent", scope: [gmailReadonlyScope, calendarReadonlyScope], state,
     code_challenge: verifier.codeChallenge,
     code_challenge_method: CodeChallengeMethod.S256,
   });
@@ -67,7 +68,7 @@ export async function authorizeGmailDesktop(input: {
     });
     const profile = await adapter.getProfile();
     input.credentialStore.setRefreshToken(input.accountId, refreshToken);
-    return { emailAddress: profile.emailAddress, scope: gmailReadonlyScope, storedIn: "macOS Keychain" };
+    return { emailAddress: profile.emailAddress, scope: `${gmailReadonlyScope} ${calendarReadonlyScope}`, storedIn: "macOS Keychain" };
   } finally {
     clearTimeout(timeout);
     server.stop(true);

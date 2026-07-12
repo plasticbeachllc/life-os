@@ -169,6 +169,16 @@ export class GmailStore {
     }
   }
 
+  getExtraction(extractionId: string): { sourceHash: string; output: Record<string, unknown> } | undefined {
+    const db = this.store.open();
+    try {
+      const row = db.query<{ source_hash: string; output_json: string }, [string]>(
+        "SELECT source_hash, output_json FROM gmail_extractions WHERE extraction_id=?",
+      ).get(extractionId);
+      return row ? { sourceHash: row.source_hash, output: JSON.parse(row.output_json) } : undefined;
+    } finally { db.close(); }
+  }
+
   extractionCandidates(accountId: string, limit: number): Array<{
     messageId: string; threadId: string; contentHash: string; internalDate: string;
   }> {

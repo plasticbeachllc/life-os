@@ -4,6 +4,7 @@ import { consumeProposalAuthorization } from "../policy/authorization";
 import { applyApprovedProposal } from "./apply-frontmatter-patch";
 import { applyPolicyBootstrapProposal } from "./bootstrap-policy-file";
 import { applyTaskIdProposal } from "./apply-task-id-patch";
+import { applyEmailTaskProposal } from "./append-email-task";
 
 export async function applyProposalWithAuthorization(input: {
   token: string; proposalId: string; actionId: string;
@@ -17,5 +18,6 @@ export async function applyProposalWithAuthorization(input: {
   if (proposal.toolName === "bootstrap_policy_file") return applyPolicyBootstrapProposal(toolInput);
   if (proposal.toolName === "apply_task_id_patch") return applyTaskIdProposal(toolInput);
   if (proposal.toolName === "apply_frontmatter_patch") return applyApprovedProposal(toolInput);
+  if (proposal.toolName === "append_email_task") return applyEmailTaskProposal(toolInput);
   throw new Error(`proposal tool is not registered: ${proposal.toolName}`);
 }

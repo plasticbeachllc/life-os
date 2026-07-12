@@ -16,6 +16,7 @@ export interface Config {
   imessageDatabasePath: string;
   imessageSelectionMode: "allowlist" | "all_except";
   imessageConversationIds: string[];
+  calendarEnabled: boolean;
   envFilePath: string;
 }
 
@@ -58,6 +59,7 @@ export function loadConfig(options: { vaultPath?: string } = {}): Config {
         ? Bun.env.LIFE_OS_IMESSAGE_BLACKLIST_CONVERSATION_IDS ?? ""
         : Bun.env.LIFE_OS_IMESSAGE_CONVERSATION_IDS ?? "",
     ),
+    calendarEnabled: Bun.env.LIFE_OS_CALENDAR_ENABLED === "true",
     envFilePath,
   };
 }

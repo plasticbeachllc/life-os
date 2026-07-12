@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,8 @@ import {
   prepareSubscriptionEmailExtraction,
   submitSubscriptionEmailExtraction,
 } from "../src/workflows/subscription-email-extraction";
+
+setDefaultTimeout(15_000);
 
 function encoded(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");

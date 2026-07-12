@@ -14,11 +14,11 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(10);
+  expect(store.getSchemaVersion()).toBe(11);
   expect(store.countRows("schema_migrations")).toBe(1);
 });
 
-test("additively migrates an existing schema v7 database to Messages schema v10", () => {
+test("additively migrates an existing schema v7 database to combined provider schema v11", () => {
   const dir = mkdtempSync(join(tmpdir(), "life-os-db-v7-"));
   const path = join(dir, "life-os.db");
   const db = new Database(path);
@@ -30,9 +30,10 @@ test("additively migrates an existing schema v7 database to Messages schema v10"
   const store = new OperationalStore(path);
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(10);
+  expect(store.getSchemaVersion()).toBe(11);
   expect(store.countRows("schema_migrations")).toBe(2);
   expect(store.countRows("imessage_messages")).toBe(0);
+  expect(store.countRows("calendar_events")).toBe(0);
 });
 
 test("records runs, actions, and action results", () => {

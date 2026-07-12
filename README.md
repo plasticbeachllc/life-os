@@ -22,6 +22,8 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Bounded, high-risk-redacted Messages extraction with hash-verified refetch and sanitized review.
 - Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
   and order-pickup alerts.
+- Primary Google Calendar read-only ingestion and deterministic compact calendar state.
+- User-selected email extraction items can become fixed-inbox, approval-gated task proposals.
 
 No version 1 workflow can send or delete email, mutate Gmail labels, merge entities autonomously,
 rewrite journal prose, expose arbitrary shell access, or give a model unrestricted filesystem writes.
@@ -55,7 +57,8 @@ protocols bind reasoning to immutable source and context hashes. Model output ca
 the vault or Gmail.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
-assessment. Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
+assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
+current provider architecture. Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
@@ -87,6 +90,7 @@ The supported 1Password pattern keeps only references in that file:
 LIFE_OS_VAULT_PATH=/Users/you/worktable/vault
 LIFE_OS_GMAIL_ENABLED=true
 LIFE_OS_GMAIL_ACCOUNT_ID=me
+LIFE_OS_CALENDAR_ENABLED=true
 GMAIL_CLIENT_ID=op://Personal/LifeOS Google Client Secrets/client id
 GMAIL_CLIENT_SECRET=op://Personal/LifeOS Google Client Secrets/client secret
 ```
@@ -126,6 +130,7 @@ Create a Google OAuth client of type **Desktop app**, enable the Gmail API, and 
 
 ```text
 https://www.googleapis.com/auth/gmail.readonly
+https://www.googleapis.com/auth/calendar.readonly
 ```
 
 Authenticate, ingest, inspect, and review:
@@ -150,7 +155,7 @@ SQLite stores structured extraction output and sanitized audit metadata. It does
 excerpts, subjects, address headers, or Gmail evidence IDs in the review projection. OTPs and ordinary
 business identifiers are not custom-redacted; only stock Presidio entities are enabled.
 
-The OAuth refresh token is stored by the current desktop authorization adapter in macOS Keychain
+The Google refresh token is stored by the current desktop authorization adapter in macOS Keychain
 under service `life-os.gmail.refresh-token`. Google client credentials remain 1Password references
 resolved only into the MCP/CLI subprocess environment.
 
@@ -219,8 +224,9 @@ args = ["run", "--env-file", "/Users/you/.config/life-os/.env", "--",
         "/opt/homebrew/bin/bun", "run", "/path/to/life-os/src/mcp/server.ts"]
 ```
 
-Life OS currently exposes 23 narrow tools covering health, compact state, briefings, Gmail and Messages
-status/review/extraction, subscription prepare/submit workflows, and exact proposal authorization/apply/undo. It exposes
+Life OS currently exposes 26 narrow tools covering health, compact state, briefings, Gmail, Calendar,
+and Messages status/review/extraction, subscription prepare/submit workflows, and exact proposal
+authorization/apply/undo. It exposes
 no arbitrary path, patch, command, or generic write tool.
 
 Morning reasoning sequence:
@@ -240,7 +246,18 @@ Email extraction sequence:
 5. `life_os_review_email_extractions`
 
 Extraction never creates a proposal automatically. Converting selected extraction items into tasks is
-a separate, future approval-gated workflow.
+explicit through `life_os_propose_email_task`, which accepts only an extraction ID and item index,
+fixes the target to `00 Inbox/Inbox.md`, and enters the standard review/authorization flow.
+
+Calendar is primary-calendar-only in version 1. It retains event title, optional location, status,
+start/end, all-day state, and hashes; descriptions, attendees, organizers, conference links, and
+attachments are not retained. Ingest a one-day lookback and 30-day horizon with:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run src/cli.ts calendar ingest --vault ~/worktable/vault
+bun run src/cli.ts calendar status --vault ~/worktable/vault
+```
 
 Messages extraction sequence:
 
