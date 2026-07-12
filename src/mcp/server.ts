@@ -49,6 +49,8 @@ import {
   submitSubscriptionIMessageExtraction,
 } from "../workflows/subscription-imessage-extraction";
 import { triageIMessageServiceConversations } from "../workflows/imessage-deterministic-triage";
+import { ingestImportantGmail } from "../workflows/gmail-ingest";
+import { ingestIMessageChanges } from "../workflows/imessage-ingest";
 
 export function createLifeOsMcpServer(): McpServer {
   const server = new McpServer({ name: "life-os", version: "0.1.0" });
@@ -129,6 +131,15 @@ export function createLifeOsMcpServer(): McpServer {
     return jsonResult(new GmailStore(store).inspectionSummary(
       config.gmailAccountId, currentEmailExtractionIdentity,
     ));
+  });
+
+  server.registerTool("life_os_ingest_gmail", {
+    description: "Incrementally ingest metadata and hashes for IMPORTANT Gmail messages using gmail.readonly. Never sends, labels, archives, or deletes email.",
+    inputSchema: { limit: z.number().int().min(1).max(5000).default(50) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async ({ limit }) => {
+    const { adapter, store, accountId } = gmailRuntimeContext();
+    return jsonResult(await ingestImportantGmail({ adapter, store, accountId, limit }));
   });
 
   server.registerTool("life_os_calendar_status", {
@@ -286,6 +297,17 @@ export function createLifeOsMcpServer(): McpServer {
       configuredConversationIds: config.imessageConversationIds.length,
       ...new IMessageStore(store).inspectionSummary(config.imessageSourceId),
     });
+  });
+
+  server.registerTool("life_os_ingest_imessage", {
+    description: "Incrementally ingest metadata and hashes from the configured Messages conversation selection. Never sends or modifies messages.",
+    inputSchema: { limit: z.number().int().min(1).max(5000).default(500) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async ({ limit }) => {
+    const { config, adapter, store, selection } = imessageRuntimeContext();
+    return jsonResult(await ingestIMessageChanges({
+      adapter, store, sourceId: config.imessageSourceId, selection, limit,
+    }));
   });
 
   server.registerTool("life_os_review_imessage_extractions", {

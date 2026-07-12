@@ -4,6 +4,7 @@ import { GmailStore } from "../gmail/store";
 import { gmailThreadStateHash } from "../gmail/store";
 import { normalizeGmailMessage, type NormalizedGmailMessage } from "../gmail/normalizer";
 import { newId } from "../util/ids";
+import { runIngestion } from "../integrations/ingestion-run";
 
 export interface GmailIngestionReport {
   runId: string;
@@ -30,61 +31,56 @@ export async function ingestImportantGmail(input: {
     selectionLabelId: "IMPORTANT", ...(profile.historyId ? { historyId: profile.historyId } : {}),
     now: startedAt,
   });
-  gmailStore.startRun({ runId, accountId: input.accountId, startedAt });
   const report: GmailIngestionReport = {
     runId, accountId: input.accountId, selector: "IMPORTANT",
     discovered: 0, ingested: 0, unchanged: 0, failed: 0, failures: [], modelCalls: 0,
   };
-  try {
-    const messageIds = await listMessageIds(input.adapter, input.limit);
-    report.discovered = messageIds.length;
-    const threadCache = new Map<string, { thread: GmailApiThread; normalized: NormalizedGmailMessage[] }>();
-    for (const messageId of messageIds) {
-      try {
-        const message = await input.adapter.getMessage(messageId);
-        if (!(message.labelIds ?? []).includes("IMPORTANT")) throw new Error("selected message no longer has IMPORTANT label");
-        const normalized = normalizeGmailMessage(message);
-        let threadContext = threadCache.get(message.threadId);
-        if (!threadContext) {
-          const thread = await input.adapter.getThread(message.threadId);
-          threadContext = {
-            thread,
-            normalized: (thread.messages ?? []).map(normalizeGmailMessage),
-          };
-          threadCache.set(message.threadId, threadContext);
+  return runIngestion({
+    start: () => gmailStore.startRun({ runId, accountId: input.accountId, startedAt }),
+    execute: async () => {
+      const messageIds = await listMessageIds(input.adapter, input.limit);
+      report.discovered = messageIds.length;
+      const threadCache = new Map<string, { thread: GmailApiThread; normalized: NormalizedGmailMessage[] }>();
+      for (const messageId of messageIds) {
+        try {
+          const message = await input.adapter.getMessage(messageId);
+          if (!(message.labelIds ?? []).includes("IMPORTANT")) throw new Error("selected message no longer has IMPORTANT label");
+          const normalized = normalizeGmailMessage(message);
+          let threadContext = threadCache.get(message.threadId);
+          if (!threadContext) {
+            const thread = await input.adapter.getThread(message.threadId);
+            threadContext = { thread, normalized: (thread.messages ?? []).map(normalizeGmailMessage) };
+            threadCache.set(message.threadId, threadContext);
+          }
+          const messageUnchanged = gmailStore.currentMessageHash(input.accountId, messageId) === normalized.contentHash;
+          const threadUnchanged = gmailStore.currentThreadHash(input.accountId, message.threadId)
+            === gmailThreadStateHash(threadContext.normalized);
+          if (messageUnchanged && threadUnchanged) {
+            report.unchanged += 1;
+            continue;
+          }
+          gmailStore.saveMessageAndThread({ accountId: input.accountId, message: normalized,
+            threadMessages: threadContext.normalized, now: new Date().toISOString() });
+          report.ingested += 1;
+        } catch (error) {
+          report.failed += 1;
+          report.failures.push({ messageId, error: error instanceof Error ? error.message : String(error) });
         }
-        const messageUnchanged = gmailStore.currentMessageHash(input.accountId, messageId) === normalized.contentHash;
-        const threadUnchanged = gmailStore.currentThreadHash(input.accountId, message.threadId)
-          === gmailThreadStateHash(threadContext.normalized);
-        if (messageUnchanged && threadUnchanged) {
-          report.unchanged += 1;
-          continue;
-        }
-        gmailStore.saveMessageAndThread({
-          accountId: input.accountId, message: normalized,
-          threadMessages: threadContext.normalized, now: new Date().toISOString(),
-        });
-        report.ingested += 1;
-      } catch (error) {
-        report.failed += 1;
-        report.failures.push({ messageId, error: error instanceof Error ? error.message : String(error) });
       }
-    }
-    gmailStore.finishRun({
+      return report;
+    },
+    complete: (result) => gmailStore.finishRun({
       runId, completedAt: new Date().toISOString(), status: "completed",
-      discovered: report.discovered, ingested: report.ingested,
-      unchanged: report.unchanged, failed: report.failed,
-    });
-    return report;
-  } catch (error) {
-    gmailStore.finishRun({
+      discovered: result.discovered, ingested: result.ingested,
+      unchanged: result.unchanged, failed: result.failed,
+    }),
+    fail: (error) => gmailStore.finishRun({
       runId, completedAt: new Date().toISOString(), status: "failed",
       discovered: report.discovered, ingested: report.ingested,
       unchanged: report.unchanged, failed: report.failed,
       error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
+    }),
+  });
 }
 
 async function listMessageIds(adapter: GmailSourceAdapter, limit: number): Promise<string[]> {

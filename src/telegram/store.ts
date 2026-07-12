@@ -102,16 +102,16 @@ export class TelegramStore {
   }
 
   status(sourceId: string): { configured: boolean; chats: number; messages: number; versions: number;
-    unextracted: number; ingestionRuns: number; lastRunStatus: string | null; unavailableText: number } {
+    extractionSupported: false; ingestionRuns: number; lastRunStatus: string | null; unavailableText: number } {
     const db = this.store.open();
     try {
       const configured = Boolean(db.query("SELECT 1 FROM telegram_sources WHERE source_id=?").get(sourceId));
       const chats = db.query<{ count: number }, [string]>(
         "SELECT COUNT(*) count FROM telegram_chat_cursors WHERE source_id=?",
       ).get(sourceId)?.count ?? 0;
-      const messages = db.query<{ count: number; unextracted: number }, [string]>(`SELECT COUNT(*) count,
-        COALESCE(SUM(CASE WHEN last_extraction_hash IS NULL THEN 1 ELSE 0 END),0) unextracted
-        FROM telegram_messages WHERE source_id=?`).get(sourceId);
+      const messages = db.query<{ count: number }, [string]>(
+        "SELECT COUNT(*) count FROM telegram_messages WHERE source_id=?",
+      ).get(sourceId);
       const versions = db.query<{ count: number; unavailable: number }, [string]>(`SELECT COUNT(*) count,
         COALESCE(SUM(CASE WHEN text_available=0 THEN 1 ELSE 0 END),0) unavailable
         FROM telegram_message_versions WHERE source_id=?`).get(sourceId);
@@ -122,7 +122,7 @@ export class TelegramStore {
         "SELECT status FROM telegram_ingestion_runs WHERE source_id=? ORDER BY started_at DESC LIMIT 1",
       ).get(sourceId);
       return { configured, chats, messages: messages?.count ?? 0, versions: versions?.count ?? 0,
-        unextracted: messages?.unextracted ?? 0, ingestionRuns: runs,
+        extractionSupported: false, ingestionRuns: runs,
         lastRunStatus: last?.status ?? null, unavailableText: versions?.unavailable ?? 0 };
     } finally { db.close(); }
   }

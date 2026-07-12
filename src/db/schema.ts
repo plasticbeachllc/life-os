@@ -1,4 +1,4 @@
-export const schemaVersion = 12;
+export const schemaVersion = 13;
 
 export const ddl = [
   `
@@ -506,6 +506,35 @@ export const ddl = [
     last_ingested_at TEXT NOT NULL,
     PRIMARY KEY(account_id, calendar_id, event_id)
   )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS calendar_event_versions (
+    account_id TEXT NOT NULL,
+    calendar_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    location TEXT,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    all_day INTEGER NOT NULL,
+    source_updated_at TEXT,
+    normalizer_version TEXT NOT NULL,
+    discovered_at TEXT NOT NULL,
+    PRIMARY KEY(account_id, calendar_id, event_id, content_hash),
+    FOREIGN KEY(account_id, calendar_id, event_id)
+      REFERENCES calendar_events(account_id, calendar_id, event_id)
+  )
+  `,
+  `
+  INSERT OR IGNORE INTO calendar_event_versions (
+    account_id, calendar_id, event_id, content_hash, status, summary, location,
+    start_at, end_at, all_day, source_updated_at, normalizer_version, discovered_at
+  )
+  SELECT account_id, calendar_id, event_id, content_hash, status, summary, location,
+    start_at, end_at, all_day, updated_at, 'calendar-normalizer-v1', last_ingested_at
+  FROM calendar_events
   `,
   `
   CREATE INDEX IF NOT EXISTS idx_calendar_events_window

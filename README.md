@@ -239,7 +239,7 @@ Morning reasoning sequence:
 
 Email extraction sequence:
 
-1. Deterministic Gmail ingestion.
+1. Deterministic Gmail ingestion with `life_os_ingest_gmail`.
 2. `life_os_prepare_email_extraction`
 3. Host returns schema-constrained, evidence-grounded extraction.
 4. `life_os_submit_email_extraction`
@@ -261,7 +261,7 @@ bun run src/cli.ts calendar status --vault ~/worktable/vault
 
 Messages extraction sequence:
 
-1. Deterministic Messages ingestion.
+1. Deterministic Messages ingestion with `life_os_ingest_imessage`.
 2. `life_os_prepare_imessage_extraction`
 3. Host returns schema-constrained, evidence-grounded extraction.
 4. `life_os_submit_imessage_extraction`
@@ -283,6 +283,8 @@ bun run src/cli.ts telegram status --vault ~/worktable/vault
 
 The TDLib session must already be authorized. If TDLib reports an interactive authorization state,
 ingestion fails closed; interactive authorization tooling is not yet included.
+Telegram extraction is not currently supported; status output reports this capability explicitly
+and does not present ingested messages as a pending extraction backlog.
 
 ## Verification
 
