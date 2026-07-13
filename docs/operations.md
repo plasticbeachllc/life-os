@@ -1,0 +1,170 @@
+# Operating Life OS locally
+
+This guide is the practical companion to the [architecture](architecture.md). It covers the supported
+local workflow without weakening the system's read-only provider and approval-gated vault boundaries.
+
+## Prerequisites
+
+- macOS for the local Messages adapter, macOS Keychain Gmail token storage, and the iPhone prototype.
+- [Bun](https://bun.sh/) for the TypeScript runtime and tests.
+- [uv](https://docs.astral.sh/uv/) for the Python privacy harness.
+- An Obsidian vault. Markdown in the vault is canonical; the SQLite database is disposable operational
+  state.
+
+Install the repository dependencies and run the baseline checks:
+
+```bash
+bun install
+uv sync
+bun run typecheck
+bun test
+```
+
+## First local run
+
+No provider needs to be enabled for these commands. Replace `/path/to/vault` with an existing vault.
+
+```bash
+bun run src/cli.ts doctor --vault /path/to/vault
+bun run src/cli.ts state rebuild --vault /path/to/vault
+bun run src/cli.ts state show chief-of-staff --vault /path/to/vault
+bun run src/cli.ts briefing morning --vault /path/to/vault
+```
+
+`doctor` reports configuration and vault health. `state rebuild` derives compact state from canonical
+Markdown and existing validated extractions. It does not invoke a model and does not rewrite journal
+prose. `briefing morning` produces the deterministic briefing; optional host reasoning is a separate
+MCP prepare/submit workflow.
+
+## Local configuration
+
+Life OS reads machine-specific settings from `~/.config/life-os/.env` by default. The file must be a
+regular file owned by the current user with mode `600`; provider secrets must not be kept in a workspace
+`.env` file. Use the repository template as a starting point:
+
+```bash
+mkdir -p ~/.config/life-os
+chmod 700 ~/.config/life-os
+cp .env.example ~/.config/life-os/.env
+chmod 600 ~/.config/life-os/.env
+```
+
+Set `LIFE_OS_VAULT_PATH`, or pass `--vault` to every CLI command. Database and backup locations default
+under `~/.local/share/life-os` when not explicitly configured. `config.example.toml` is a reference for
+the intended configuration shape; the current runtime loads environment variables.
+
+When credentials are held in 1Password, put only `op://` references in the external environment file
+and run credential-dependent commands through `op run`:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run src/cli.ts email ingest --vault /path/to/vault --limit 50
+```
+
+## Provider workflows
+
+All provider adapters are read-only. Ingestion is deterministic and separate from model-backed
+extraction. It records normalized metadata, hashes, and immutable versions; it does not create tasks,
+send messages, or modify provider data.
+
+| Provider | Enable/configure | Inspect and ingest | Important boundary |
+| --- | --- | --- | --- |
+| Gmail | Set `LIFE_OS_GMAIL_ENABLED=true`; create a Desktop OAuth client and grant only `gmail.readonly`. | `email auth`, `email status`, `email ingest --limit 50` | Only messages with `IMPORTANT` or `SENT` are selected. Bodies are refetched transiently for extraction and are not retained. |
+| Google Calendar | Set `LIFE_OS_CALENDAR_ENABLED=true`; the Gmail OAuth client must also have `calendar.readonly`. | `calendar status`, `calendar ingest --limit 500` | Primary calendar only. No events are created or changed. |
+| Messages | Set `LIFE_OS_IMESSAGE_ENABLED=true` and an explicit allowlist (or `all_except` blacklist); grant the host Full Disk Access. | `message conversations`, `message status`, `message ingest --limit 500` | Opens only `~/Library/Messages/chat.db` read-only. No send capability exists. |
+| Telegram | Set `LIFE_OS_TELEGRAM_ENABLED=true`, TDLib credentials, and `LIFE_OS_TELEGRAM_CHAT_IDS`. | `telegram status`, `telegram ingest --limit 50` | An already authorized TDLib session and an explicit chat allowlist are required. Extraction is not supported. |
+
+For Gmail, first authorize the desktop client:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run src/cli.ts email auth --vault /path/to/vault
+```
+
+The refresh token is stored in macOS Keychain. Google client credentials stay in the external
+environment and are resolved only in the command subprocess.
+
+After ingestion, inspect the sanitized work backlog with:
+
+```bash
+bun run src/cli.ts work status --vault /path/to/vault
+```
+
+## Review, reasoning, and changes
+
+The normal state and review commands are read-only except for explicit finding lifecycle updates:
+
+```bash
+bun run src/cli.ts findings review --vault /path/to/vault
+bun run src/cli.ts email review-extractions --vault /path/to/vault
+bun run src/cli.ts message review-extractions --vault /path/to/vault
+bun run src/cli.ts metrics efficiency --vault /path/to/vault
+```
+
+Gmail and Messages reasoning must use the corresponding MCP prepare/submit pair. Preparation returns
+bounded, redacted, untrusted transient context and records a manifest. Submission validates evidence
+and rejects stale source, context, and policy state. Review projections omit raw provider text,
+identifiers, headers, addresses, and hashes.
+
+Vault writes are always proposal-based. Review the proposal, obtain exact authorization, apply it, and
+use the action ID for undo if the target has not changed:
+
+```bash
+bun run src/cli.ts review --vault /path/to/vault
+bun run src/cli.ts approve <proposal-id> --action <action-id> --vault /path/to/vault
+bun run src/cli.ts apply <proposal-id> --vault /path/to/vault
+bun run src/cli.ts undo <action-id> --vault /path/to/vault
+```
+
+Available proposal sources include metadata normalization, task-ID normalization, policy bootstrap, and
+an eligible active finding converted into the fixed inbox. There is no generic filesystem-write command.
+
+## MCP and local interfaces
+
+Run the stdio MCP server with:
+
+```bash
+bun run mcp
+```
+
+When provider credentials are needed, wrap it in `op run` as shown above. The server provides narrow
+status, ingestion, compact-state, review, prepare/submit, and exact proposal tools. Its exact public
+allowlist is asserted in `tests/mcp-server.test.ts`; it has no arbitrary path, shell, SQL, patch, or
+generic write tool.
+
+The SvelteKit UI is a separate local development server:
+
+```bash
+cd ui
+bun install
+bun run dev
+```
+
+It receives sanitized workspace data only. Its chat bridge is limited to read-only Life OS MCP tools.
+The SwiftUI prototype in `iphone/` is fabricated, read-only preview data and has no runtime connection
+to Life OS.
+
+## Database reset and recovery
+
+The current operational SQLite schema is **25**. Prototype schema changes are deliberately
+incompatible. If a command reports an incompatible database schema:
+
+1. Preserve the database if you need it for inspection.
+2. Delete or move only the operational SQLite database yourself; never delete vault Markdown.
+3. Run `state rebuild` and re-ingest configured providers.
+
+Life OS never resets the database automatically. SQLite contents, caches, manifests, and projections
+are regenerable; canonical knowledge remains in the Obsidian vault and configured read-only providers.
+
+## Handoff checks
+
+Before sharing a change, run:
+
+```bash
+bun run typecheck
+bun test
+git diff --check
+```
+
+For changes to the privacy harness, also run a focused `uv run` check. For UI changes, run `bun run
+check` and `bun run build` from `ui/`.

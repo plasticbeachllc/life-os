@@ -69,13 +69,23 @@ across unrelated containers. Cross-provider traversal is available only when bot
 current explicit or reviewed link to the same canonical person, project, or task; content and timing
 never create a link.
 
-See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
-assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
-current provider architecture. The comprehensive target architecture, normative contracts, reference
-code, and phased implementation checklist are in [`docs/architecture.md`](docs/architecture.md). The
-proposed attention-signal taxonomy and intervention lifecycle are in
-[`docs/findings-and-actions.md`](docs/findings-and-actions.md). Parallel contributors must also follow
-[`AGENTS.md`](AGENTS.md).
+## Documentation
+
+Start with [`docs/operations.md`](docs/operations.md) for a safe local setup, the command sequences
+for each provider, database-reset behavior, and verification checks. The other documents serve
+different purposes:
+
+- [`docs/architecture.md`](docs/architecture.md) is the normative architecture and safety contract.
+- [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) describes Gmail and
+  Calendar retention, extraction, and proposal boundaries.
+- [`docs/findings-and-actions.md`](docs/findings-and-actions.md) defines the finding and attention
+  model.
+- [`docs/conformance-matrix.md`](docs/conformance-matrix.md) maps the implemented contracts to tests.
+- [`docs/prototype-changelog.md`](docs/prototype-changelog.md) records intentional breaking changes.
+- [`docs/roadmap-completion.md`](docs/roadmap-completion.md) is a historical architecture-roadmap
+  attestation, not a current operational-status report.
+
+Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
@@ -88,6 +98,17 @@ bun test
 
 uv uses the interpreter pinned in `.python-version`. Presidio and its spaCy model are pinned in
 `pyproject.toml` and `uv.lock`.
+
+For a first local, provider-free check, create or point at an Obsidian vault and run:
+
+```bash
+bun run src/cli.ts doctor --vault /path/to/vault
+bun run src/cli.ts state rebuild --vault /path/to/vault
+bun run src/cli.ts briefing morning --vault /path/to/vault
+```
+
+These commands create or read only operational SQLite state; they do not modify the vault. See the
+operations guide before enabling a provider or applying a proposal.
 
 ## iPhone prototype
 
@@ -305,10 +326,11 @@ Finding task application appends a `converted` lifecycle event in the same SQLit
 action, proposal, backup, and undo metadata. Undo reactivates the finding. Dismissal and supersession
 are explicit CLI operations; no generic finding-status MCP mutation is exposed.
 
-During the prototype phase, operational schema versions are intentionally incompatible. If the SQLite
-schema version changes, delete the operational database and rebuild it from canonical Markdown and
-configured providers. Life OS fails with an explicit reset instruction instead of attempting a legacy
-migration. It never deletes the database automatically.
+During the prototype phase, operational schema versions are intentionally incompatible. The current
+schema is **v25**. If Life OS reports a different existing schema version, back up or delete that
+*operational* SQLite database yourself, then rebuild from canonical Markdown and configured providers.
+Life OS fails with an explicit reset instruction instead of attempting a legacy migration, and it never
+deletes the database automatically.
 
 Schema v17 records explicit builder name, builder version, typed input provenance, and dependency hash
 for derived state. Full rebuild retires project, person, and task projections whose canonical Markdown
