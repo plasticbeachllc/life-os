@@ -1,6 +1,6 @@
 import type { DerivedStateRecord, OperationalStore } from "../db/store";
 import { sha256Value } from "../util/hashing";
-import { newId } from "../util/ids";
+import { materializeProjection, type ProjectionBuilder } from "./projection-contract";
 
 export interface ChiefOfStaffState {
   as_of: string;
@@ -18,6 +18,32 @@ export interface ChiefOfStaffState {
   suggested_focus: string[];
 }
 
+interface ChiefProjectionInput {
+  now: Date;
+  prior?: DerivedStateRecord;
+  projects: DerivedStateRecord[];
+  people: DerivedStateRecord[];
+  tasks: DerivedStateRecord[];
+  findingAttention?: DerivedStateRecord;
+  recentChanges: string[];
+  unresolvedAmbiguities: string[];
+}
+
+export const chiefOfStaffBuilder: ProjectionBuilder<ChiefProjectionInput, ChiefOfStaffState> = {
+  name: "chief-of-staff", version: "v4", stateType: "chief_of_staff_state",
+  entityId: () => undefined,
+  inputs: (input) => [
+    { type: "calendar_date", id: "current", hash: localDate(input.now) },
+    ...chiefDependencies(input).map((state) => ({
+      type: state.stateType, id: state.entityId ?? state.stateId,
+      hash: state.dependencyHash ?? sha256Value([state.stateId, state.stateVersion]),
+    })),
+    { type: "recent_changes", id: "current", hash: sha256Value(retainedRecentChanges(input)) },
+    { type: "unresolved_ambiguities", id: "current", hash: sha256Value(input.unresolvedAmbiguities) },
+  ],
+  build: buildChiefContent,
+};
+
 export function rebuildChiefOfStaffState(input: {
   store: OperationalStore;
   now?: Date;
@@ -30,35 +56,43 @@ export function rebuildChiefOfStaffState(input: {
   const people = input.store.listCurrentDerivedStates("person_state");
   const tasks = input.store.listCurrentDerivedStates("task_state");
   const findingAttention = input.store.getCurrentDerivedState("finding_attention_state");
-  const openTasks = tasks.filter((state) => state.content.status === "open");
-  const stalledProjects = projects.filter((state) =>
+  const value: ChiefProjectionInput = {
+    now, ...(prior ? { prior } : {}), projects, people, tasks,
+    ...(findingAttention ? { findingAttention } : {}),
+    recentChanges: input.recentChanges ?? [],
+    unresolvedAmbiguities: [...new Set(input.unresolvedAmbiguities ?? [])].slice(0, 20),
+  };
+  return materializeProjection({
+    store: input.store, builder: chiefOfStaffBuilder, value, now,
+  }).state;
+}
+
+function buildChiefContent(input: ChiefProjectionInput): ChiefOfStaffState {
+  const openTasks = input.tasks.filter((state) => state.content.status === "open");
+  const stalledProjects = input.projects.filter((state) =>
     state.content.status === "active" && array(state.content.next_actions).length === 0,
   );
   const overdue = openTasks.filter((state) => {
     const due = stringOrNull(state.content.due_date);
-    return due !== null && due < localDate(now);
+    return due !== null && due < localDate(input.now);
   });
-  const peopleDue = people.filter((state) => {
+  const peopleDue = input.people.filter((state) => {
     const next = stringOrNull(state.content.next_contact);
-    return next !== null && next <= localDate(now);
+    return next !== null && next <= localDate(input.now);
   });
   const waiting = openTasks.filter((state) => state.content.waiting === true);
-  const findingOpenLoops = objects(findingAttention?.content.open_loops);
-  const findingCommitments = objects(findingAttention?.content.commitments);
-  const overdueFindingIds = array(findingAttention?.content.overdue_finding_ids).map(String);
-  const priorities = projects
+  const findingOpenLoops = objects(input.findingAttention?.content.open_loops);
+  const findingCommitments = objects(input.findingAttention?.content.commitments);
+  const overdueFindingIds = array(input.findingAttention?.content.overdue_finding_ids).map(String);
+  const priorities = input.projects
     .filter((state) => state.content.status === "active" && array(state.content.next_actions).length > 0)
     .slice(0, 5)
     .map((state) => ({
       entity_id: state.entityId!, reason: "Active project with an explicit next action.",
       evidence_ids: [state.stateId],
     }));
-  const unresolvedAmbiguities = [...new Set(input.unresolvedAmbiguities ?? [])].slice(0, 20);
-  const retainedRecentChanges = input.recentChanges && input.recentChanges.length > 0
-    ? input.recentChanges
-    : array(prior?.content.important_recent_changes).map(String);
-  const content: ChiefOfStaffState = {
-    as_of: now.toISOString(),
+  return {
+    as_of: input.now.toISOString(),
     current_priorities: priorities,
     active_risks: stalledProjects.length > 0 ? [{
       summary: `${stalledProjects.length} active project(s) have no explicit next action.`,
@@ -68,39 +102,32 @@ export function rebuildChiefOfStaffState(input: {
     waiting_items: waiting.map((state) => ({ task_id: state.entityId!, waiting_on: stringOrNull(state.content.waiting_on) })),
     upcoming_decisions: [],
     people_due_for_contact: peopleDue.flatMap((state) => state.entityId ? [state.entityId] : []),
-    important_recent_changes: [...new Set(retainedRecentChanges)].slice(0, 20),
+    important_recent_changes: retainedRecentChanges(input),
     overdue_commitments: [
       ...overdue.flatMap((state) => state.entityId ? [state.entityId] : []),
       ...overdueFindingIds,
     ],
     active_finding_open_loops: findingOpenLoops.map((finding) => String(finding.finding_id ?? "")).filter(Boolean),
     active_finding_commitments: findingCommitments.map((finding) => String(finding.finding_id ?? "")).filter(Boolean),
-    unresolved_ambiguities: unresolvedAmbiguities,
+    unresolved_ambiguities: input.unresolvedAmbiguities,
     suggested_focus: suggestedFocus(
       overdue.length + overdueFindingIds.length, stalledProjects.length, waiting.length, priorities,
     ),
   };
-  const dependencies = [
-    ...projects, ...people, ...tasks, ...(findingAttention ? [findingAttention] : []),
+}
+
+function chiefDependencies(input: ChiefProjectionInput): DerivedStateRecord[] {
+  return [
+    ...input.projects, ...input.people, ...input.tasks,
+    ...(input.findingAttention ? [input.findingAttention] : []),
   ];
-  const sourceHashes = [...new Set(dependencies.flatMap((state) => state.sourceHashes))].sort();
-  const dependencyHash = sha256Value({
-    generatorVersion: "deterministic-chief-of-staff-v3",
-    states: dependencies.map((state) => [state.stateId, state.stateVersion]),
-    recentChanges: content.important_recent_changes,
-    unresolvedAmbiguities,
-    date: localDate(now),
-  });
-  if (prior?.sourceHashes.includes(dependencyHash)) return prior;
-  const record: DerivedStateRecord = {
-    stateId: newId("state"), stateType: "chief_of_staff_state",
-    stateVersion: (prior?.stateVersion ?? 0) + 1,
-    content: content as unknown as Record<string, unknown>,
-    sourceHashes: [dependencyHash, ...sourceHashes],
-    generationMethod: "deterministic-chief-of-staff-v3", createdAt: now.toISOString(),
-  };
-  input.store.saveDerivedState(record);
-  return record;
+}
+
+function retainedRecentChanges(input: ChiefProjectionInput): string[] {
+  const values = input.recentChanges.length > 0
+    ? input.recentChanges
+    : array(input.prior?.content.important_recent_changes).map(String);
+  return [...new Set(values)].slice(0, 20);
 }
 
 function suggestedFocus(

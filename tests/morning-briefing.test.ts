@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { OperationalStore, type DerivedStateRecord } from "../src/db/store";
-import { formatMorningBriefing, generateMorningBriefing, type MorningBriefing } from "../src/workflows/morning-briefing";
+import { formatMorningBriefing, generateMorningBriefing, getMorningRecommendationOverlay, type MorningBriefing } from "../src/workflows/morning-briefing";
 import { efficiencyReport } from "../src/workflows/efficiency-metrics";
 
 function fixture(): OperationalStore {
@@ -61,6 +61,21 @@ test("changed compact dependency invalidates daily briefing cache", () => {
   const changed = generateMorningBriefing({ store, now });
   expect(changed.cached).toBe(false);
   expect(changed.state.stateVersion).toBe(2);
+});
+
+test("model recommendations remain a separate optional overlay", () => {
+  const store = fixture();
+  const date = "2026-07-12";
+  const daily = generateMorningBriefing({ store, now: new Date(`${date}T09:00:00Z`) }).state;
+  save(store, "briefing_reasoning_state", date, 1, {
+    recommendations: [{ summary: "Consider the plan", evidenceIds: [daily.stateId] }],
+  }, [daily.dependencyHash!]);
+
+  expect(daily.content).not.toHaveProperty("recommendations");
+  expect(getMorningRecommendationOverlay(store, date)).toMatchObject({
+    date, recommendations: [{ summary: "Consider the plan" }],
+  });
+  expect(getMorningRecommendationOverlay(store, "2026-07-13")).toBeUndefined();
 });
 
 function save(

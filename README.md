@@ -285,6 +285,12 @@ schema version changes, delete the operational database and rebuild it from cano
 configured providers. Life OS fails with an explicit reset instruction instead of attempting a legacy
 migration. It never deletes the database automatically.
 
+Schema v16 records explicit builder name, builder version, typed input provenance, and dependency hash
+for derived state. Full rebuild retires project, person, and task projections whose canonical Markdown
+inputs disappeared; targeted rebuilds can update or retire an exact state/entity pair. Identical inputs
+reuse the current projection with no model call or database write. Morning recommendations remain a
+separate optional reasoning overlay and never replace deterministic daily state.
+
 Calendar is primary-calendar-only in version 1. It retains event title, optional location, status,
 start/end, all-day state, and hashes; descriptions, attendees, organizers, conference links, and
 attachments are not retained. Ingest a one-day lookback and 30-day horizon with:

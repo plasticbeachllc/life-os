@@ -1218,21 +1218,21 @@ Ownership: one schema owner; coordinate proposal changes with the policy/effect 
 
 Goal: make compact state explicitly regenerable from canonical sources and findings.
 
-- [ ] Define projection builder interface and builder-version identity.
-- [ ] Represent projection input provenance uniformly.
-- [ ] Build open-loop/commitment state from active findings.
-- [ ] Update chief-of-staff state to consume projections rather than provider extraction tables.
-- [ ] Make morning briefing a deterministic presentation over current projections.
-- [ ] Add bounded model recommendations as a separate overlay, never a replacement for state.
-- [ ] Add deterministic full rebuild and targeted invalidation paths.
+- [x] Define projection builder interface and builder-version identity.
+- [x] Represent projection input provenance uniformly.
+- [x] Build open-loop/commitment state from active findings.
+- [x] Update chief-of-staff state to consume projections rather than provider extraction tables.
+- [x] Make morning briefing a deterministic presentation over current projections.
+- [x] Add bounded model recommendations as a separate overlay, never a replacement for state.
+- [x] Add deterministic full rebuild and targeted invalidation paths.
 
 Acceptance criteria:
 
-- [ ] Full rebuild from canonical sources and findings reproduces semantic state.
-- [ ] Unchanged rebuild produces stable content hashes and zero model calls.
-- [ ] Superseded/dismissed findings leave current projections correctly.
-- [ ] Every projection reports its input identities and builder version.
-- [ ] Human-authored journal prose remains unchanged.
+- [x] Full rebuild from canonical sources and findings reproduces semantic state.
+- [x] Unchanged rebuild produces stable content hashes and zero model calls.
+- [x] Superseded/dismissed findings leave current projections correctly.
+- [x] Every registered projection reports its input identities and builder version.
+- [x] Human-authored journal prose remains unchanged.
 
 Ownership: state/projection owner; coordinate context contract changes with orchestration owner.
 
@@ -1460,8 +1460,6 @@ Open questions to resolve through ADRs and measured implementation experience:
   identities?
 - Does the existing `change_events` table evolve into a universal source delta log, or should providers
   project into a new normalized delta table?
-- Which current `derived_states` fields are sufficient for the projection contract, and which need
-  explicit builder/input identity?
 - Is a durable work queue justified by backlog and recovery needs, or is a deterministic query-backed
   queue sufficient initially?
 - Which task proposal types can safely share a finding-based planner without erasing provider-specific
@@ -1477,7 +1475,7 @@ permission surface and preserve explicit provider boundaries.
 The first implemented slice establishes the contract for contextualizing a new Messages development.
 It is intentionally narrower than the complete target architecture:
 
-- Schema version 15 includes `subject_links` for internal Messages-conversation-to-person links only.
+- Schema version 16 includes `subject_links` for internal Messages-conversation-to-person links only.
 - A link is created explicitly with `message link-person`; it is not inferred or exposed as an MCP
   mutation.
 - The command accepts a source conversation only at the CLI boundary, verifies that it is inside the
@@ -1535,7 +1533,7 @@ calls have different operational states.
 The third implemented slice adds immutable common findings while retaining Gmail and Messages
 extraction tables as the canonical provider-specific records.
 
-- Schema version 15 includes `findings` and append-only `finding_status_events` alongside subject links.
+- Schema version 16 includes `findings` and append-only `finding_status_events` alongside subject links.
 - A finding identity is derived deterministically from source type, extraction ID, and item index.
 - Semantic content and evidence are content-hashed; replay with different content under the same source
   identity fails closed.
@@ -1609,6 +1607,34 @@ Finding task behavior:
 
 The earlier email-extraction-specific proposal and executor surfaces were removed during prototyping.
 All task proposals now originate from common findings.
+
+## 26. Registered projection contract and reconciliation
+
+The sixth implemented slice replaces ad hoc projection invalidation with one typed contract. Schema
+version 16 adds explicit builder name, builder version, normalized input provenance, and dependency
+hash columns to every derived-state record. Non-projection derived states receive conservative legacy
+metadata at the storage boundary, while registered deterministic builders provide complete identities.
+
+The coordinated registry contains project, person, task, finding-attention, and chief-of-staff builders.
+Each builder declares its output state type and derives its dependency hash from its name, version, and
+sorted typed input identities. Replaying an identical build returns the existing state row without
+storage churn. A builder-version change invalidates its output even when source content is unchanged.
+
+Full state rebuild now scans and validates all canonical state candidates before reconciling current
+projections. Project, person, and task projections whose canonical inputs disappeared are explicitly
+retired by setting their current row's `superseded_at`; history remains available for audit. Targeted
+rebuild accepts only typed state/entity targets, projects matching live inputs, and retires an explicitly
+targeted entity when its source no longer exists. Downstream attention and chief-of-staff builders run
+through their dependency checks, so targeted and full rebuilds converge without duplicate versions.
+
+Date is a declared input to time-sensitive projections. Clock movement within a date produces no new
+state, while a date boundary invalidates overdue classifications. The deterministic morning briefing is
+also materialized through the projection contract. Subscription-agent recommendations remain in the
+separate `briefing_reasoning_state` overlay and are never copied into deterministic daily state.
+
+Reconciliation reads Markdown but does not write it. Tests cover stable replay, complete provenance,
+source and task removal, full/targeted convergence, finding lifecycle invalidation, date rollover, the
+separate recommendation overlay, and byte-for-byte preservation of human-authored journal prose.
 
 ## Appendix A: Example end-to-end flows
 

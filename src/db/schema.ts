@@ -1,4 +1,4 @@
-export const schemaVersion = 15;
+export const schemaVersion = 16;
 
 export const ddl = [
   `
@@ -86,6 +86,10 @@ export const ddl = [
     content_json TEXT NOT NULL,
     source_hashes_json TEXT NOT NULL,
     generation_method TEXT NOT NULL,
+    builder_name TEXT NOT NULL,
+    builder_version TEXT NOT NULL,
+    input_provenance_json TEXT NOT NULL,
+    dependency_hash TEXT NOT NULL,
     prompt_version TEXT,
     model TEXT,
     created_at TEXT NOT NULL,

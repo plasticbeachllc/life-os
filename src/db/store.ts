@@ -37,6 +37,10 @@ export interface DerivedStateRecord {
   content: Record<string, unknown>;
   sourceHashes: string[];
   generationMethod: string;
+  builderName?: string;
+  builderVersion?: string;
+  inputProvenance?: Array<{ type: string; id: string; hash: string }>;
+  dependencyHash?: string;
   promptVersion?: string;
   model?: string;
   createdAt: string;
@@ -443,8 +447,9 @@ export class OperationalStore {
         db.query(
           `INSERT INTO derived_states (
              state_id, state_type, entity_id, state_version, content_json,
-             source_hashes_json, generation_method, prompt_version, model, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             source_hashes_json, generation_method, builder_name, builder_version,
+             input_provenance_json, dependency_hash, prompt_version, model, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           record.stateId,
           record.stateType,
@@ -453,6 +458,10 @@ export class OperationalStore {
           JSON.stringify(record.content),
           JSON.stringify(record.sourceHashes),
           record.generationMethod,
+          record.builderName ?? record.generationMethod,
+          record.builderVersion ?? "legacy",
+          JSON.stringify(record.inputProvenance ?? []),
+          record.dependencyHash ?? record.sourceHashes[0] ?? record.stateId,
           record.promptVersion ?? null,
           record.model ?? null,
           record.createdAt,
@@ -469,6 +478,7 @@ export class OperationalStore {
       const row = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string, string | null]>(
         `SELECT * FROM derived_states
@@ -484,6 +494,9 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}),
         createdAt: row.created_at,
@@ -499,6 +512,7 @@ export class OperationalStore {
       const rows = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string]>(
         "SELECT * FROM derived_states WHERE state_type = ? AND superseded_at IS NULL ORDER BY entity_id",
@@ -509,6 +523,9 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}), createdAt: row.created_at,
       }));
@@ -523,6 +540,7 @@ export class OperationalStore {
       const row = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string]>("SELECT * FROM derived_states WHERE state_id = ?").get(stateId);
       if (!row) return undefined;
@@ -532,9 +550,48 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}), createdAt: row.created_at,
       };
+    } finally {
+      db.close();
+    }
+  }
+
+  retireDerivedStates(input: {
+    stateType: string; keepEntityIds: string[]; retiredAt: string;
+  }): number {
+    const db = this.open();
+    try {
+      const current = db.query<{ entity_id: string | null }, [string]>(
+        "SELECT entity_id FROM derived_states WHERE state_type = ? AND superseded_at IS NULL",
+      ).all(input.stateType);
+      const keep = new Set(input.keepEntityIds);
+      const retired = current.filter((row) => row.entity_id !== null && !keep.has(row.entity_id));
+      const update = db.query(
+        "UPDATE derived_states SET superseded_at = ? WHERE state_type = ? AND entity_id = ? AND superseded_at IS NULL",
+      );
+      db.transaction(() => {
+        for (const row of retired) update.run(input.retiredAt, input.stateType, row.entity_id!);
+      })();
+      return retired.length;
+    } finally {
+      db.close();
+    }
+  }
+
+  retireDerivedState(input: {
+    stateType: string; entityId: string; retiredAt: string;
+  }): boolean {
+    const db = this.open();
+    try {
+      const result = db.query(
+        "UPDATE derived_states SET superseded_at = ? WHERE state_type = ? AND entity_id = ? AND superseded_at IS NULL",
+      ).run(input.retiredAt, input.stateType, input.entityId);
+      return result.changes > 0;
     } finally {
       db.close();
     }
