@@ -97,6 +97,26 @@ export function requireCurrentSourceEventIdInTransaction(db: DatabaseConnection,
   return event.eventId;
 }
 
+export function currentSourceEventForContainerInTransaction(db: DatabaseConnection, input: {
+  provider: SourceEventProvider; sourceScopeId: string; containerId: string;
+}): SourceEvent | undefined {
+  const scopeHash = opaqueHash(input.provider, "scope", input.sourceScopeId);
+  const containerHash = opaqueHash(input.provider, "container", input.containerId);
+  const row = db.query<SourceEventRow, [SourceEventProvider, string, string]>(`
+    SELECT event.* FROM source_events event
+    WHERE event.provider = ? AND event.source_scope_hash = ? AND event.container_hash = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM source_events newer
+        WHERE newer.provider = event.provider
+          AND newer.source_scope_hash = event.source_scope_hash
+          AND newer.source_record_hash = event.source_record_hash
+          AND newer.stream_sequence > event.stream_sequence
+      )
+    ORDER BY event.occurred_at DESC, event.source_record_hash DESC, event.event_id DESC LIMIT 1
+  `).get(input.provider, scopeHash, containerHash);
+  return row ? sourceEvent(row) : undefined;
+}
+
 export class SourceEventRepository {
   constructor(private readonly store: OperationalStore) {}
 

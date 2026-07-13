@@ -2,6 +2,8 @@
 
 Breaking changes are intentional before the first stable release.
 
+- Schema 24: reviewed canonical subject links connect source-event containers without content- or
+  timing-based inference.
 - Schema 19: sanitized operational workspace feedback and opaque UI subjects.
 - Schema 18: typed effect plans replace string tool names and generic argument blobs.
 - Schema 17: durable extraction work, projection provenance, subject links, and common findings converged.

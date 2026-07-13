@@ -20,4 +20,5 @@ unrelated containers to proceed concurrently.
 Consequences: `change_events` remains the canonical-Markdown delta log and is projected into the stream
 rather than overloaded. Cross-provider aggregation is available immediately; cross-provider causal
 linking requires a separately validated canonical subject link and is not inferred from timing or content.
-Schema 23 is a prototype reset boundary.
+Schema 23 is a prototype reset boundary. ADR 0008 defines the validated link and traversal layer added at
+the next reset boundary.

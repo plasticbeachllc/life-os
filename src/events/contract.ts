@@ -44,3 +44,24 @@ export interface SourceEventSummary {
   earliestOccurredAt: string | null;
   latestOccurredAt: string | null;
 }
+
+export type CanonicalSubjectType = "person" | "project" | "task";
+
+export interface CanonicalSubjectRef {
+  type: CanonicalSubjectType;
+  id: string;
+}
+
+export interface SourceSubjectLink {
+  linkId: string;
+  provider: SourceEventProvider;
+  sourceScopeHash: string;
+  containerHash: string;
+  relationship: "concerns";
+  subject: CanonicalSubjectRef;
+  basis: "explicit_config" | "reviewed";
+  confidence: number;
+  validatedEventId: string;
+  validationHash: string;
+  createdAt: string;
+}

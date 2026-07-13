@@ -1013,6 +1013,7 @@ export class OperationalStore {
       "derived_states",
       "work_items",
       "subject_links",
+      "source_subject_links",
       "findings",
       "finding_status_events",
       "finding_communication_contexts",

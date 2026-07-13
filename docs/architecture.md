@@ -1134,6 +1134,7 @@ them rather than replacing them wholesale.
 | `src/integrations/` | Provider registration | Extend safe status/ingest metadata; do not generalize mutation |
 | `change_events` | Canonical Markdown deltas | Project atomically into the unified `source_events` stream |
 | `source_events` | Provider-neutral immutable event stream | Preserve hashed identity, version lineage, global order, and causal container order without source text |
+| `source_subject_links` | Validated cross-provider traversal | Join opaque provider containers only through reviewed canonical subjects; never infer associations |
 | Gmail/Messages extraction workflows | Prepared reasoning | Extract common coordinator, retain provider hooks |
 | `src/context/` | Context builder | Add explicit live-versus-audit manifest types and builder identity |
 | `src/orchestration/` | Reasoning lifecycle | Center prepare/submit state; make direct adapter a transport option |
@@ -1499,6 +1500,8 @@ The following decisions are made by this specification:
 8. Read-only application registration may be generated; mutation registration remains explicit.
 9. Provider stores and canonical Markdown deltas atomically project into a distinct unified source event
    stream; `change_events` remains the Markdown-specific delta log.
+10. Cross-provider stream traversal requires current explicit or reviewed links from provider containers
+    to the same canonical person, project, or task. Timing and source content never establish a link.
 
 Open questions to resolve through ADRs and measured implementation experience:
 
@@ -1543,13 +1546,35 @@ Current limitations are deliberate:
 
 - There is no automatic person association, entity merge, or model-created link.
 - There is no MCP tool for association mutation.
-- Only Messages extraction consumes subject links.
+- Only Messages currently has a public reviewed-link workflow. Its participant-bound association is also
+  projected into the shared stream subject index.
 - Calendar matching is conservative lexical retrieval and does not create a durable event-person link.
 - Common findings and the internal work queue remain future phases.
 
 Downstream implementations should extend the subject-link enum and public workflows only through a
 coordinated schema and policy review. They should not turn the initial table into a generic graph-write
 surface.
+
+### Unified stream subject links
+
+Schema version 24 adds a privacy-minimized `source_subject_links` index alongside the original narrow
+Messages association. Each assertion relates one hashed provider scope/container to one current canonical
+person, project, or task. It must be created by explicit configuration or review against an exact current
+source event and current canonical state. The stored validation identity binds the reviewed source version,
+canonical state version and dependency, builder version, and any provider-specific validation hash.
+
+Traversal is deterministic and read-only. A subject causal window includes current events at or before the
+selected event only from containers sharing at least one current canonical subject assertion. It does not
+infer associations from participants, addresses, names, message text, calendar text, or temporal proximity.
+The reviewed source record becoming stale, canonical subject removal, explicit revocation, or a
+provider-specific validity failure makes the assertion ineligible. Existing Messages links additionally
+require the current participant-set hash to match their reviewed value.
+
+The shared table retains only provider, opaque scope/container hashes, canonical IDs, fixed relationship,
+basis, confidence, exact validation identity, timestamps, and optional pointer to the narrow Messages
+assertion. It does not retain source record IDs, provider account/container IDs, participants, addresses,
+headers, subjects, locations, source excerpts, or prompts. There is no generic CLI or MCP graph-write
+surface; new provider-specific review workflows remain separately designed policy boundaries.
 
 ## 22. Initial prepared-reasoning lifecycle
 

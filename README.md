@@ -11,6 +11,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 
 - Deterministic vault health checks, Markdown parsing, source hashing, and delta tracking.
 - Immutable, privacy-minimized source events ordered across Gmail, Messages, Telegram, Calendar, and Obsidian.
+- Reviewed canonical subject links and causal windows spanning explicitly related provider containers.
 - Versioned project, person, task, daily, and chief-of-staff state projections.
 - Token-budgeted context manifests, model routing, caching, and usage instrumentation.
 - Deterministic morning briefings with optional subscription-agent synthesis.
@@ -64,7 +65,9 @@ Every model-backed workflow uses a recorded `ContextManifest`. Workflows process
 prefer compact state over raw text, and escalate retrieval only when necessary. Prepare/submit
 protocols bind reasoning to immutable source and context hashes. Model output cannot directly write
 the vault or providers. Stream-backed work is causal within a provider container and remains concurrent
-across unrelated containers.
+across unrelated containers. Cross-provider traversal is available only when both containers have a
+current explicit or reviewed link to the same canonical person, project, or task; content and timing
+never create a link.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
 assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the

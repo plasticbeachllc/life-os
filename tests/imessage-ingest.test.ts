@@ -11,6 +11,8 @@ import { MacOsMessagesAdapter } from "../src/adapters/imessage";
 import { OperationalStore } from "../src/db/store";
 import { imessageDevelopmentContextCandidates } from "../src/context/imessage-development";
 import { SubjectLinkStore } from "../src/context/subject-links";
+import { SourceEventRepository } from "../src/events/repository";
+import { SourceSubjectLinkRepository } from "../src/events/subject-links";
 import { normalizeIMessage } from "../src/imessage/normalizer";
 import { IMessageStore } from "../src/imessage/store";
 import { FindingStore } from "../src/findings/store";
@@ -299,6 +301,11 @@ test("Messages person links are invalidated when the participant set changes", a
   expect(imessageDevelopmentContextCandidates({
     store, sourceId: "local-messages", conversationId,
   })).toHaveLength(1);
+  expect(store.countRows("source_subject_links")).toBe(1);
+  const streamLinks = new SourceSubjectLinkRepository(store);
+  const linkedEvent = new SourceEventRepository(store).listCurrent({ provider: "imessage", limit: 10 }).at(-1)!;
+  expect(streamLinks.linkedSubjects(linkedEvent.eventId))
+    .toEqual([{ type: "person", id: "person_linked" }]);
 
   adapter.messages.push(sourceMessage({
     rowId: 2, participants: ["+15555550100", "+15555550101"],
@@ -308,6 +315,9 @@ test("Messages person links are invalidated when the participant set changes", a
     store, sourceId: "local-messages", conversationId,
   })).toHaveLength(0);
   expect(store.countRows("subject_links")).toBe(1);
+  expect(store.countRows("source_subject_links")).toBe(1);
+  const changedEvent = new SourceEventRepository(store).listCurrent({ provider: "imessage", limit: 10 }).at(-1)!;
+  expect(streamLinks.linkedSubjects(changedEvent.eventId)).toEqual([]);
 });
 
 test("Messages person linking requires a current person and participant-bound link basis", async () => {
