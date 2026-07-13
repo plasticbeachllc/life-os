@@ -12,9 +12,15 @@ export function projectExtractionFindings(input: {
   store: OperationalStore;
   extraction: ExtractionRecordForProjection;
 }): { created: number; unchanged: number } {
-  const items = Array.isArray(input.extraction.output.items) ? input.extraction.output.items : [];
-  const findings = items.map((item, index) => toFinding(input.extraction, item, index));
+  const findings = semanticFindingsForExtraction(input.extraction);
   return new FindingStore(input.store).saveProjection(findings);
+}
+
+export function semanticFindingsForExtraction(
+  extraction: ExtractionRecordForProjection,
+): SemanticFinding[] {
+  const items = Array.isArray(extraction.output.items) ? extraction.output.items : [];
+  return items.map((item, index) => toFinding(extraction, item, index));
 }
 
 export function backfillExtractionFindings(store: OperationalStore): {

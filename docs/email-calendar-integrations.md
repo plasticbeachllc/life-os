@@ -24,6 +24,8 @@ Gmail ingestion and structured extraction remain separate from task creation:
 ```text
 IMPORTANT Gmail message
   -> deterministic ingestion and hashes
+  -> metadata-only extraction work item
+  -> exclusive bounded lease + exact refetch
   -> bounded subscription-agent extraction
   -> sanitized extraction review
   -> deterministic common finding projection
@@ -49,6 +51,14 @@ Life OS, not the agent, derives:
 - the exact review preview.
 
 The agent cannot supply a path, patch, task body, due date, or task ID.
+
+### Extraction work
+
+Changed Gmail messages enqueue extraction work in the same SQLite transaction as message, thread, and
+immutable-version metadata. Unchanged replay emits nothing. Preparation atomically leases one work
+item and binds its source/container identity into the context manifest. Extraction, common findings,
+model-call completion, and work completion commit together. Work items retain internal identities and
+hashes but never Gmail bodies, excerpts, prompt blobs, or raw errors.
 
 ### Application
 
@@ -125,13 +135,14 @@ queryable through `life_os_list_compact_state` with `stateType: "calendar"`.
 
 ## MCP Surface
 
-The integration adds three tools:
+Relevant integration and shared tools include:
 
 | Tool | Effect |
 | --- | --- |
 | `life_os_calendar_status` | Metadata-only configured/event/unprocessed counts. |
 | `life_os_ingest_calendar` | Read-only provider ingestion and compact-state rebuild. |
 | `life_os_propose_finding_task` | Creates a pending fixed-inbox proposal from one eligible active finding; does not write. |
+| `life_os_work_status` | Sanitized aggregate extraction backlog and oldest pending age. |
 
 Task application continues through the shared tools:
 
@@ -143,7 +154,7 @@ Task application continues through the shared tools:
 
 ## Schema
 
-Schema version 8 adds:
+Schema version 8 originally added:
 
 - `calendar_accounts`
 - `calendar_ingestion_runs`
@@ -151,6 +162,9 @@ Schema version 8 adds:
 
 Finding task proposals reuse the existing runs, proposals, actions, approvals, authorization tokens,
 action results, backups, and undo records.
+
+Schema version 17 adds the shared Gmail/Messages `work_items` queue. Older prototype databases require
+an explicit reset and rebuild; Life OS never deletes them automatically.
 
 ## Verification
 

@@ -866,6 +866,7 @@ export class OperationalStore {
       "workflow_state",
       "change_events",
       "derived_states",
+      "work_items",
       "subject_links",
       "findings",
       "finding_status_events",

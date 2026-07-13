@@ -42,6 +42,7 @@ import { FindingStore } from "./findings/store";
 import { rebuildFindingAttentionState } from "./state/finding-attention";
 import { rebuildChiefOfStaffState } from "./state/chief-of-staff";
 import { applyFindingTaskProposal } from "./tools/append-finding-task";
+import { WorkRepository } from "./work/repository";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -76,6 +77,18 @@ async function main(argv: string[]): Promise<number> {
       const store = new OperationalStore(config.databasePath);
       store.migrate();
       console.log(`Migrated operational database: ${config.databasePath}`);
+      return 0;
+    }
+  }
+
+  if (command === "work") {
+    const [subcommand, ...workRest] = rest;
+    if (subcommand === "status") {
+      const args = parseFlags(workRest);
+      const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+      const store = new OperationalStore(config.databasePath);
+      store.migrate();
+      console.log(JSON.stringify(new WorkRepository(store).status(), null, 2));
       return 0;
     }
   }
@@ -393,7 +406,7 @@ async function main(argv: string[]): Promise<number> {
         adapter: new GmailRestAdapter(loadGmailAuthConfig(refreshToken)),
         store: new OperationalStore(config.databasePath), accountId: config.gmailAccountId,
       });
-      console.log(JSON.stringify(preview ?? { message: "No unextracted important messages." }, null, 2));
+      console.log(JSON.stringify(preview ?? { message: "No queued important messages." }, null, 2));
       return 0;
     }
   }
@@ -474,7 +487,7 @@ async function main(argv: string[]): Promise<number> {
           conversationIds: config.imessageConversationIds,
         },
       });
-      console.log(JSON.stringify(preview ?? { message: "No unextracted Messages sources." }, null, 2));
+      console.log(JSON.stringify(preview ?? { message: "No queued Messages sources." }, null, 2));
       return 0;
     }
     if (subcommand === "review-extractions") {
@@ -637,6 +650,7 @@ function printUsage(): void {
   console.error(`Usage:
   life-os doctor --vault <path> [--json]
   life-os db migrate --vault <path>
+  life-os work status --vault <path>
   life-os state rebuild --vault <path> [--json]
   life-os state show <projects|people|tasks|chief-of-staff> --vault <path>
   life-os normalize propose --vault <path> [--json]

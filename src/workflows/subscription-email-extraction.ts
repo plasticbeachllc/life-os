@@ -7,14 +7,13 @@ import {
   EMAIL_EXTRACTION_SCHEMA_VERSION,
 } from "../gmail/extraction-contract";
 import { GmailStore } from "../gmail/store";
-import { projectExtractionFindings } from "../findings/projector";
+import { semanticFindingsForExtraction } from "../findings/projector";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, gmailPromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
-import {
-  completeReasoningCall, prepareReasoningCall, requirePreparedReasoningCall,
-} from "../orchestration/prepared-reasoning";
+import { prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
 import { previewGmailExtractionContext } from "./gmail-extraction-preview";
+import { WorkRepository } from "../work/repository";
 
 export interface EmailExtractionItem {
   kind: typeof itemKinds[number];
@@ -46,14 +45,39 @@ export async function prepareSubscriptionEmailExtraction(input: {
     schemaVersion: EMAIL_EXTRACTION_SCHEMA_VERSION,
     policyVersion: input.policyVersion,
   });
-  const preview = await previewGmailExtractionContext(input);
-  if (!preview) return { cached: false, empty: true, message: "No unextracted important messages." };
+  const workRepository = new WorkRepository(input.store);
+  const leaseOwner = `prepare_${newId("work")}`;
+  const work = workRepository.claimNext({
+    workflow: "gmail_extraction", subjectSourceId: input.accountId,
+    leaseOwner, leaseDurationMs: 30 * 60 * 1000,
+  });
+  if (!work) return { cached: false, empty: true, message: "No queued important messages." };
+  let preview;
+  try {
+    preview = await previewGmailExtractionContext({ ...input, workItem: work });
+  } catch (error) {
+    if (/changed|re-ingest/i.test(error instanceof Error ? error.message : String(error))) {
+      workRepository.markStale({ workId: work.workId });
+    } else {
+      workRepository.fail({
+        workId: work.workId, leaseOwner, category: "provider_transient", retryable: true,
+        retryDelayMs: 30_000,
+      });
+    }
+    throw error;
+  }
+  if (!preview) throw new Error("claimed Gmail work could not be prepared");
   const cached = gmailStore.findExtraction({
     accountId: input.accountId, messageId: preview.messageId, sourceHash: preview.sourceHash,
     promptVersion: EMAIL_EXTRACTION_PROMPT_VERSION,
     schemaVersion: EMAIL_EXTRACTION_SCHEMA_VERSION, policyVersion: input.policyVersion,
   });
-  if (cached) return { cached: true, extractionId: cached.extractionId, output: cached.output };
+  if (cached) {
+    workRepository.complete({
+      workId: work.workId, leaseOwner, sourceHash: work.sourceHash, containerHash: work.containerHash,
+    });
+    return { cached: true, extractionId: cached.extractionId, output: cached.output };
+  }
 
   const call = prepareReasoningCall({
     store: input.store,
@@ -100,20 +124,36 @@ export async function submitSubscriptionEmailExtraction(input: {
   });
   const preparedSource = preparedSourceIdentity(manifest.includedItems);
   const preparedPolicyVersion = findStringField(manifest.includedItems, "policy_version");
+  const workId = findStringField(manifest.includedItems, "work_id");
+  const leaseOwner = findStringField(manifest.includedItems, "work_lease_owner");
+  const workSourceHash = findStringField(manifest.includedItems, "work_source_hash");
+  const workContainerHash = findStringField(manifest.includedItems, "work_container_hash");
   if (preparedPolicyVersion !== input.policyVersion) {
     throw new Error("prepared Gmail policy version mismatch; prepare extraction again");
   }
   const gmailStore = new GmailStore(input.store);
+  if (!workId || !leaseOwner || !workSourceHash || !workContainerHash) {
+    throw new Error("prepared Gmail work identity is missing");
+  }
+  const workRepository = new WorkRepository(input.store);
   if (!preparedSource || preparedSource.sourceHash !== call.sourceHash
     || preparedSource.threadStateHash !== input.threadStateHash
     || gmailStore.currentMessageHash(input.accountId, preparedSource.messageId) !== call.sourceHash
     || gmailStore.currentThreadHash(input.accountId, preparedSource.threadId) !== input.threadStateHash) {
+    workRepository.markStale({ workId });
     throw new Error("ingested Gmail source or thread changed; prepare extraction again");
   }
+  workRepository.requireLease({
+    workId, leaseOwner, sourceHash: workSourceHash, containerHash: workContainerHash,
+  });
   validateOutput(input.output, manifest.includedItems, call.sourceHash);
 
   const completedAt = new Date().toISOString();
   const extractionId = newId("extract");
+  const extraction = {
+    sourceType: "gmail_extraction" as const, extractionId, callId: input.callId,
+    output: input.output as unknown as Record<string, unknown>, createdAt: completedAt,
+  };
   gmailStore.saveExtraction({
     extractionId, accountId: input.accountId, messageId: preparedSource.messageId,
     sourceHash: preparedSource.sourceHash, threadStateHash: preparedSource.threadStateHash,
@@ -121,23 +161,12 @@ export async function submitSubscriptionEmailExtraction(input: {
     output: input.output as unknown as Record<string, unknown>,
     promptVersion: EMAIL_EXTRACTION_PROMPT_VERSION,
     schemaVersion: EMAIL_EXTRACTION_SCHEMA_VERSION, policyVersion: input.policyVersion,
-    model: call.model, createdAt: completedAt,
-  });
-  completeReasoningCall({
-    store: input.store, call,
+    model: call.model, createdAt: completedAt, call,
     usage: {
       ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
       ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
       ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
-    },
-    now: new Date(completedAt),
-  });
-  projectExtractionFindings({
-    store: input.store,
-    extraction: {
-      sourceType: "gmail_extraction", extractionId, callId: input.callId,
-      output: input.output as unknown as Record<string, unknown>, createdAt: completedAt,
-    },
+    }, findings: semanticFindingsForExtraction(extraction), workId, leaseOwner,
   });
   return { extractionId, output: input.output };
 }

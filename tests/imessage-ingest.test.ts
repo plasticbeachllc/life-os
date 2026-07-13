@@ -19,6 +19,7 @@ import {
   prepareSubscriptionIMessageExtraction, submitSubscriptionIMessageExtraction,
 } from "../src/workflows/subscription-imessage-extraction";
 import { triageIMessageServiceConversations } from "../src/workflows/imessage-deterministic-triage";
+import { WorkRepository } from "../src/work/repository";
 import { linkIMessageConversationToPerson } from "../src/workflows/link-imessage-person";
 
 class FakeMessagesAdapter implements IMessageSourceAdapter {
@@ -334,7 +335,10 @@ test("deterministic service triage avoids model work and feeds focused sanitized
   expect(store.countRows("imessage_deterministic_triage")).toBe(3);
   expect(store.countRows("model_calls")).toBe(0);
   expect(store.countRows("proposals")).toBe(0);
-  expect(new IMessageStore(store).extractionCandidates("local-messages", 10)).toHaveLength(1);
+  expect(new WorkRepository(store).listReady({
+    workflow: "imessage_extraction", subjectSourceId: "local-messages", limit: 10,
+  })).toHaveLength(1);
+  expect(new WorkRepository(store).status().byState.completed).toBe(3);
   const review = new IMessageStore(store).extractionReview("local-messages");
   expect(review).toMatchObject({ total: 3, actionable: 1 });
   expect(review.extractions.every((item) => item.source === "deterministic")).toBe(true);
@@ -433,6 +437,7 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
   });
   expect(result.extractionId).toStartWith("extract_");
   expect(store.countRows("imessage_extractions")).toBe(1);
+  expect(new WorkRepository(store).status().byState.completed).toBe(1);
   expect(store.countRows("findings")).toBe(1);
   expect(store.countRows("finding_status_events")).toBe(1);
   expect(store.countRows("proposals")).toBe(0);
@@ -446,16 +451,23 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
   expect(reviewJson).not.toContain(normalizeIMessage(selected).messageId);
   expect(reviewJson).not.toContain(normalizeIMessage(selected).contentHash);
 
-  expect(new IMessageStore(store).extractionCandidates("local-messages", 10)).toHaveLength(0);
+  expect(new WorkRepository(store).listReady({
+    workflow: "imessage_extraction", subjectSourceId: "local-messages", limit: 10,
+  })).toHaveLength(0);
   adapter.messages.push(sourceMessage({ rowId: 32, text: "Let us confirm the restaurant tomorrow." }));
   await ingestIMessageChanges({
     adapter, store, sourceId: "local-messages", selection, limit: 100,
   });
-  const changedConversation = new IMessageStore(store).extractionCandidates("local-messages", 10);
+  const changedConversation = new WorkRepository(store).listReady({
+    workflow: "imessage_extraction", subjectSourceId: "local-messages", limit: 10,
+  });
   expect(changedConversation).toHaveLength(1);
   expect(changedConversation[0]).toMatchObject({
-    sourceRowId: 32, previousSentAt: normalizeIMessage(selected).sentAt,
+    anchorId: normalizeIMessage(adapter.messages.at(-1)!).messageId,
   });
+  expect(new IMessageStore(store).previousProcessedSentAt(
+    "local-messages", normalizeIMessage(selected).conversationId,
+  )).toBe(normalizeIMessage(selected).sentAt);
 }, 15_000);
 
 test("Messages extraction submission rejects provider drift after prepare", async () => {
@@ -480,6 +492,10 @@ test("Messages extraction submission rejects provider drift after prepare", asyn
     },
   })).rejects.toThrow("ingest again");
   expect(store.countRows("imessage_extractions")).toBe(0);
+  expect(store.countRows("findings")).toBe(0);
+  expect(store.getModelCall(String(prepared.callId))?.status).toBe("prepared");
+  expect(new IMessageStore(store).cursor("local-messages")).toBe(40);
+  expect(new WorkRepository(store).status().byState.stale).toBe(1);
 }, 15_000);
 
 test("Messages context includes only linked person developments and rejects changed projections", async () => {

@@ -9,8 +9,11 @@ import { IMessageStore } from "../imessage/store";
 import { redactSensitiveTexts } from "../privacy/presidio";
 import { imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
+import type { WorkItem } from "../work/contract";
+import { WorkRepository } from "../work/repository";
 
 export interface IMessageExtractionPreview {
+  workId: string;
   messageId: string;
   conversationId: string;
   sourceHash: string;
@@ -28,11 +31,27 @@ export async function previewIMessageExtractionContext(input: {
   adapter: IMessageSourceAdapter; store: OperationalStore; sourceId: string;
   selection: IMessageConversationSelection; policyVersion?: string;
   policyPrompt?: CompiledPolicyPrompt;
+  workItem?: WorkItem;
 }): Promise<IMessageExtractionPreview | undefined> {
   input.store.migrate();
   const imessageStore = new IMessageStore(input.store);
-  const candidate = imessageStore.extractionCandidates(input.sourceId, 1)[0];
-  if (!candidate) return undefined;
+  const work = input.workItem ?? new WorkRepository(input.store).peekNext({
+    workflow: "imessage_extraction", subjectSourceId: input.sourceId,
+  });
+  if (!work) return undefined;
+  if (work.workflow !== "imessage_extraction" || work.subjectSourceId !== input.sourceId) {
+    throw new Error("Messages work subject does not match the configured source");
+  }
+  const identity = imessageStore.sourceIdentity(input.sourceId, work.anchorId);
+  if (!identity || identity.conversationId !== work.subjectId
+    || identity.contentHash !== work.sourceHash
+    || imessageStore.conversationStateHash(input.sourceId, identity.conversationId) !== work.containerHash) {
+    throw new Error("Messages work source or conversation changed; ingest again before extraction preview");
+  }
+  const candidate = {
+    ...identity, conversationStateHash: work.containerHash,
+    previousSentAt: imessageStore.previousProcessedSentAt(input.sourceId, identity.conversationId),
+  };
   const sourceWindow = await input.adapter.getConversationWindow({
     sourceRowId: candidate.sourceRowId, selection: input.selection, limit: 12,
   });
@@ -70,6 +89,7 @@ export async function previewIMessageExtractionContext(input: {
     ...redactions.map((redaction) => boundedText(redaction.text, 2000)),
   ].join("\n"));
   const candidates: ContextCandidate[] = [
+    workContextCandidate(work),
     {
       id: `imessage-metadata:${selected.messageId}`, category: "source", retrievalLevel: 0,
       content: {
@@ -134,10 +154,25 @@ export async function previewIMessageExtractionContext(input: {
   };
   const manifest = buildContext(candidates, budget);
   return {
+    workId: work.workId,
     messageId: selected.messageId, conversationId: selected.conversationId,
     sourceHash: selected.contentHash, conversationStateHash, deltaEvidenceIds,
     request, manifest, auditManifest: persistableContextManifest(manifest, imessageAuditItems),
     promptInjectionIndicators, modelCalls: 0, retainedText: false,
+  };
+}
+
+function workContextCandidate(work: WorkItem): ContextCandidate {
+  const content = {
+    work_id: work.workId,
+    ...(work.leaseOwner ? { work_lease_owner: work.leaseOwner } : {}),
+    work_source_hash: work.sourceHash,
+    work_container_hash: work.containerHash,
+  };
+  return {
+    id: `work:${work.workId}`, category: "policy", retrievalLevel: 0,
+    content, tokenEstimate: 80, relevance: 1, impact: 1,
+    sourceRefs: [work.workId, work.invalidationKey],
   };
 }
 
