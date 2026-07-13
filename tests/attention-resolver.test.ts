@@ -126,6 +126,55 @@ test("validated communication context derives reply attention and a later respon
   expect(responded.signals).toEqual([]);
 });
 
+test("validated resolution and supersession relations close response requests", () => {
+  for (const relationKind of ["resolves", "supersedes"] as const) {
+    const request = finding(
+      `finding_request_${relationKind}`, "explicit_request", "Choose a meeting time", "user", null,
+    );
+    const outcome = finding(
+      `finding_outcome_${relationKind}`, relationKind === "resolves" ? "acceptance" : "supersession",
+      relationKind === "resolves" ? "The proposed time works" : "A new meeting time is proposed",
+      "shared", null,
+    );
+    const resolution = resolveAttention({
+      now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [request, outcome], tasks: [],
+      communicationContexts: [communicationContext(request.findingId, {
+        direction: "incoming", responseExpectation: "required", responseState: "awaiting_response",
+      })],
+      relations: [relation(
+        `relation_${relationKind}`, relationKind, outcome.findingId, request.findingId,
+      )],
+    });
+
+    expect(resolution.signals).toEqual([]);
+  }
+});
+
+test("repeated equivalent response requests produce one attention signal with all evidence", () => {
+  const first = finding(
+    "finding_request_first", "explicit_request", "Choose an available meeting time", "user", null,
+  );
+  const followUp = finding(
+    "finding_request_followup", "open_loop", "choose an available meeting time!", "user", null,
+  );
+  const contexts = [first, followUp].map((candidate) => communicationContext(candidate.findingId, {
+    direction: "incoming", responseExpectation: "required", responseState: "awaiting_response",
+  }));
+
+  const resolution = resolveAttention({
+    now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [followUp, first], tasks: [],
+    communicationContexts: contexts,
+  });
+
+  expect(resolution.signals).toEqual([
+    expect.objectContaining({
+      type: "response_needed",
+      finding_ids: [first.findingId, followUp.findingId].sort(),
+      explanation: expect.stringContaining("combined into one attention item"),
+    }),
+  ]);
+});
+
 test("only validated incoming required-response context can create response attention", () => {
   const overdue = finding(
     "finding_overdue_response", "explicit_request", "Send confirmation", "user", "2026-07-10",

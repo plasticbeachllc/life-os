@@ -40,7 +40,8 @@ export function resolveAttention(input: {
   const communicationContexts = indexCommunicationContexts(input.communicationContexts ?? [], findingById);
   const relations = validateRelations(input.relations ?? [], findingById);
   const responseTargetIds = new Set(relations
-    .filter((relation) => relation.kind === "responds_to")
+    .filter((relation) => ["responds_to", "resolves", "supersedes"].includes(relation.kind)
+      && responseKinds.has(findingById.get(relation.to_finding_id)!.kind))
     .map((relation) => relation.to_finding_id));
   const resolutionRelations = relations.filter((relation) =>
     ["resolves", "supersedes"].includes(relation.kind)
@@ -74,23 +75,29 @@ export function resolveAttention(input: {
     }));
   }
 
-  for (const finding of input.activeFindings) {
+  const responseGroups = groupResponseFindings(input.activeFindings.filter((finding) => {
     if (!responseKinds.has(finding.kind) || finding.owner !== "user"
-      || finding.confidence < MIN_ATTENTION_CONFIDENCE) continue;
+      || finding.confidence < MIN_ATTENTION_CONFIDENCE
+      || responseTargetIds.has(finding.findingId)) return false;
     const context = communicationContexts.get(finding.findingId);
-    if (!context || context.direction !== "incoming"
-      || context.response_expectation !== "required"
-      || context.response_state !== "awaiting_response"
-      || responseTargetIds.has(finding.findingId)) continue;
-    const overdue = finding.dueDate !== null && finding.dueDate < date;
+    return context?.direction === "incoming"
+      && context.response_expectation === "required"
+      && context.response_state === "awaiting_response";
+  }));
+  for (const responseGroup of responseGroups) {
+    const finding = responseGroup[0]!;
+    const overdue = responseGroup.some((candidate) =>
+      candidate.dueDate !== null && candidate.dueDate < date);
     signals.push(signal({
       type: overdue ? "response_overdue" : "response_needed",
-      findings: [finding], tasks: [],
+      findings: responseGroup, tasks: [],
       title: overdue ? "Response is overdue" : "Response is needed",
       summary: finding.statement,
       impact: overdue ? "high" : "medium",
       urgency: overdue || finding.dueDate === date ? "today" : "soon",
-      explanation: "Validated incoming communication context requires a response and records no response yet.",
+      explanation: responseGroup.length > 1
+        ? "Repeated findings describe the same required response; they are combined into one attention item."
+        : "Validated incoming communication context requires a response and records no response yet.",
       interventions: [draftReply()],
     }));
   }
@@ -250,6 +257,19 @@ function groupFindings(findings: ActiveFindingProjectionInput[]): ActiveFindingP
   }
   return [...groups.values()].map((group) =>
     group.sort((left, right) => left.findingId.localeCompare(right.findingId)));
+}
+
+function groupResponseFindings(
+  findings: ActiveFindingProjectionInput[],
+): ActiveFindingProjectionInput[][] {
+  const groups = new Map<string, ActiveFindingProjectionInput[]>();
+  for (const finding of findings) {
+    const key = `${finding.owner}:${normalize(finding.statement)}`;
+    groups.set(key, [...(groups.get(key) ?? []), finding]);
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, group]) => group.sort((left, right) => left.findingId.localeCompare(right.findingId)));
 }
 
 function taskInput(state: DerivedStateRecord): TaskInput {

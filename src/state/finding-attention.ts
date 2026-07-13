@@ -52,7 +52,7 @@ interface FindingAttentionInput {
 }
 
 export const findingAttentionBuilder: ProjectionBuilder<FindingAttentionInput, FindingAttentionState> = {
-  name: "finding-attention", version: "v5", stateType: "finding_attention_state",
+  name: "finding-attention", version: "v6", stateType: "finding_attention_state",
   entityId: () => undefined,
   inputs: ({ now, active, tasks, communicationContexts, relations }) => [
     { type: "calendar_date", id: "current", hash: now.toISOString().slice(0, 10) },

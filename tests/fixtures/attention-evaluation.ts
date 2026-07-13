@@ -70,6 +70,34 @@ export const attentionEvaluationCorpus: AttentionEvaluationCase[] = [
     expected: [],
   },
   {
+    name: "incoming resolution closes an earlier request",
+    now,
+    findings: [
+      finding("resolved_request", "explicit_request", "Choose a meeting time", "user", null),
+      finding("acceptance", "acceptance", "The proposed meeting time works", "shared", null),
+    ],
+    tasks: [],
+    communicationContexts: [communication(
+      "resolved_request", "incoming", "required", "awaiting_response",
+    )],
+    relations: [relation("request_resolved", "resolves", "acceptance", "resolved_request")],
+    expected: [],
+  },
+  {
+    name: "repeated equivalent requests enter the review queue once",
+    now,
+    findings: [
+      finding("repeated_a", "explicit_request", "Choose an available meeting time", "user", null),
+      finding("repeated_b", "explicit_request", "choose an available meeting time!", "user", null),
+    ],
+    tasks: [],
+    communicationContexts: [
+      communication("repeated_a", "incoming", "required", "awaiting_response"),
+      communication("repeated_b", "incoming", "required", "awaiting_response"),
+    ],
+    expected: [{ type: "response_needed", channel: "review_queue" }],
+  },
+  {
     name: "validated completion enters resolution review",
     now,
     findings: [

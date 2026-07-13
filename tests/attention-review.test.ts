@@ -16,12 +16,12 @@ test("attention review compiles only bounded review-queue items from the evaluat
 
   expect(review.counts).toMatchObject({
     byChannel: {
-      suppress: 0, review_queue: 5, morning_briefing: 2, immediate_notification: 1,
+      suppress: 0, review_queue: 6, morning_briefing: 2, immediate_notification: 1,
     },
-    reviewQueue: 5, returned: 5, omitted: 0,
+    reviewQueue: 6, returned: 6, omitted: 0,
   });
   expect(review.items.map((item) => item.type).sort()).toEqual([
-    "commitment_resolved", "duplicate_commitment", "response_needed",
+    "commitment_resolved", "duplicate_commitment", "response_needed", "response_needed",
     "untracked_user_commitment", "untracked_user_commitment",
   ]);
   expect(review.items.every((item) => item.presentation.channel === "review_queue")).toBe(true);

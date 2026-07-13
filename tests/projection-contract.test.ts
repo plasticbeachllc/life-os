@@ -14,7 +14,7 @@ import { rebuildState } from "../src/workflows/rebuild-state";
 test("projection registry exposes the coordinated builders and durable provenance", () => {
   expect(lifeOsProjectionRegistry().list()).toEqual([
     { name: "chief-of-staff", version: "v6", stateType: "chief_of_staff_state" },
-    { name: "finding-attention", version: "v5", stateType: "finding_attention_state" },
+    { name: "finding-attention", version: "v6", stateType: "finding_attention_state" },
     { name: "person-state", version: "v2", stateType: "person_state" },
     { name: "project-state", version: "v2", stateType: "project_state" },
     { name: "task-state", version: "v2", stateType: "task_state" },
