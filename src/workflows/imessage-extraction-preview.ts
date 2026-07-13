@@ -6,6 +6,7 @@ import type { ContextRequest } from "../context/request";
 import type { OperationalStore } from "../db/store";
 import { normalizeIMessage } from "../imessage/normalizer";
 import { IMessageStore } from "../imessage/store";
+import { FindingStore } from "../findings/store";
 import { redactSensitiveTexts } from "../privacy/presidio";
 import { imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
@@ -88,6 +89,10 @@ export async function previewIMessageExtractionContext(input: {
     boundedText(selectedRedaction.text, 8000),
     ...redactions.map((redaction) => boundedText(redaction.text, 2000)),
   ].join("\n"));
+  const priorFindings = new FindingStore(input.store).activeRelationCandidatesForContainer({
+    sourceType: "imessage_extraction", sourceId: input.sourceId,
+    containerId: selected.conversationId,
+  });
   const candidates: ContextCandidate[] = [
     workContextCandidate(work),
     {
@@ -128,6 +133,17 @@ export async function previewIMessageExtractionContext(input: {
       sourceId: input.sourceId,
       conversationId: selected.conversationId,
     }),
+    ...(priorFindings.length > 0 ? [{
+      id: `findings:${selected.conversationId}`, category: "entity_state" as const, retrievalLevel: 1 as const,
+      content: { prior_findings: priorFindings.map((finding) => ({
+        finding_id: finding.findingId, kind: finding.kind, statement: finding.statement,
+        owner: finding.owner, due_date: finding.dueDate,
+        finding_content_hash: finding.contentHash,
+      })) },
+      tokenEstimate: Math.ceil(JSON.stringify(priorFindings).length / 4),
+      relevance: 1, impact: 0.9, recency: 1,
+      sourceRefs: priorFindings.flatMap((finding) => [finding.findingId, finding.contentHash]),
+    }] : []),
     policyCandidate(input.policyPrompt, input.policyVersion),
   ];
   const budget = {
@@ -197,7 +213,7 @@ function stripTransientText(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
     if ([
       "untrusted_message_text", "untrusted_text", "display_name", "aliases",
-      "recent_interaction_summary", "description", "summary", "location",
+      "recent_interaction_summary", "description", "summary", "location", "statement",
     ].includes(key)) return [];
     return [[key, stripTransientText(item)]];
   }));

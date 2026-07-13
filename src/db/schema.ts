@@ -1,4 +1,4 @@
-export const schemaVersion = 20;
+export const schemaVersion = 22;
 
 export const ddl = [
   `
@@ -202,6 +202,36 @@ export const ddl = [
   CREATE INDEX IF NOT EXISTS idx_finding_status_events_current
   ON finding_status_events(finding_id, created_at DESC)
   `,
+  `
+  CREATE TABLE IF NOT EXISTS finding_communication_contexts (
+    finding_id TEXT PRIMARY KEY REFERENCES findings(finding_id),
+    direction TEXT NOT NULL CHECK(direction IN ('incoming', 'outgoing', 'system', 'unknown')),
+    response_expectation TEXT NOT NULL CHECK(response_expectation IN ('required', 'optional', 'none', 'unknown')),
+    response_state TEXT NOT NULL CHECK(response_state IN ('awaiting_response', 'responded', 'resolved', 'unknown')),
+    validator_method TEXT NOT NULL CHECK(validator_method IN ('deterministic')),
+    validator_version TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS finding_relations (
+    relation_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('responds_to', 'resolves', 'supersedes')),
+    from_finding_id TEXT NOT NULL REFERENCES findings(finding_id),
+    to_finding_id TEXT NOT NULL REFERENCES findings(finding_id),
+    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    validator_method TEXT NOT NULL CHECK(validator_method IN ('validated_reasoning')),
+    validator_version TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    CHECK(from_finding_id <> to_finding_id),
+    UNIQUE(kind, from_finding_id, to_finding_id, content_hash)
+  )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_finding_relations_target
+    ON finding_relations(to_finding_id, kind, created_at)`,
   `
   CREATE TABLE IF NOT EXISTS model_calls (
     call_id TEXT PRIMARY KEY,
@@ -743,4 +773,29 @@ export const ddl = [
   )
   `,
   `CREATE INDEX IF NOT EXISTS idx_ui_feedback_subject ON ui_feedback(subject_kind, subject_ui_id, created_at)`,
+  `
+  CREATE TABLE IF NOT EXISTS attention_feedback (
+    feedback_id TEXT PRIMARY KEY,
+    attention_id TEXT NOT NULL,
+    signal_type TEXT NOT NULL CHECK(signal_type IN (
+      'untracked_user_commitment', 'waiting_on_other', 'commitment_at_risk',
+      'deadline_not_tracked', 'duplicate_commitment', 'response_needed',
+      'response_overdue', 'commitment_resolved'
+    )),
+    disposition TEXT NOT NULL CHECK(disposition IN (
+      'useful', 'incorrect', 'duplicate', 'already_handled',
+      'irrelevant', 'too_late', 'too_intrusive'
+    )),
+    presentation_channel TEXT NOT NULL CHECK(presentation_channel IN (
+      'review_queue', 'morning_briefing', 'immediate_notification'
+    )),
+    presentation_reason TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    intervention_level INTEGER NOT NULL CHECK(intervention_level BETWEEN 2 AND 4),
+    recorded_at TEXT NOT NULL,
+    UNIQUE(attention_id, presentation_channel, presentation_reason, policy_version)
+  )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_attention_feedback_disposition
+    ON attention_feedback(signal_type, presentation_channel, intervention_level, disposition, recorded_at)`,
 ];

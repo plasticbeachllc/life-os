@@ -2,6 +2,12 @@ import type { IMessageConversationSelection, IMessageSourceAdapter } from "../ad
 import type { OperationalStore } from "../db/store";
 import { IMessageStore } from "../imessage/store";
 import { semanticFindingsForExtraction } from "../findings/projector";
+import { deriveFindingSemantics } from "../findings/semantics";
+import {
+  semanticFindingKinds, semanticFindingOwners,
+  type ExtractionFindingRelation, type PriorFindingRelationCandidate,
+} from "../findings/contract";
+import { FindingStore } from "../findings/store";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
@@ -9,9 +15,12 @@ import { failPreparedCallAndMarkWorkStale, prepareReasoningCall, requirePrepared
 import { previewIMessageExtractionContext } from "./imessage-extraction-preview";
 import { refetchIMessage } from "./imessage-refetch";
 import { WorkRepository } from "../work/repository";
+import {
+  refreshAfterExtraction, type PostExtractionRefresher, type PostExtractionRefreshReceipt,
+} from "./post-extraction-refresh";
 
 export const IMESSAGE_EXTRACTION_PROMPT_VERSION = imessagePromptSpec.version;
-export const IMESSAGE_EXTRACTION_SCHEMA_VERSION = "imessage-extraction-schema-v3";
+export const IMESSAGE_EXTRACTION_SCHEMA_VERSION = "imessage-extraction-schema-v4-relations";
 
 export interface IMessageExtractionItem {
   kind: typeof itemKinds[number];
@@ -27,6 +36,7 @@ export interface IMessageExtractionOutput {
   classification: typeof classifications[number];
   summary: string;
   items: IMessageExtractionItem[];
+  relations: ExtractionFindingRelation[];
   unresolved: string[];
   promptInjectionDetected: boolean;
 }
@@ -73,7 +83,10 @@ export async function prepareSubscriptionIMessageExtraction(input: {
     workRepository.complete({
       workId: work.workId, leaseOwner, sourceHash: work.sourceHash, containerHash: work.containerHash,
     });
-    return { cached: true, extractionId: cached.extractionId, output: cached.output };
+    return {
+      cached: true, extractionId: cached.extractionId, output: cached.output,
+      projectionRefresh: refreshAfterExtraction({ store: input.store }),
+    };
   }
 
   const call = prepareReasoningCall({
@@ -101,7 +114,12 @@ export async function submitSubscriptionIMessageExtraction(input: {
   selection: IMessageConversationSelection; callId: string;
   conversationStateHash: string; policyVersion: string; output: IMessageExtractionOutput;
   inputTokens?: number; outputTokens?: number; cachedTokens?: number;
-}): Promise<{ extractionId: string; output: IMessageExtractionOutput }> {
+  projectionRefresher?: PostExtractionRefresher;
+}): Promise<{
+  extractionId: string;
+  output: IMessageExtractionOutput;
+  projectionRefresh: PostExtractionRefreshReceipt;
+}> {
   const { call, manifest } = requirePreparedReasoningCall({
     store: input.store, callId: input.callId,
     workflow: "imessage_extraction", taskType: "subscription_imessage_extraction",
@@ -133,6 +151,7 @@ export async function submitSubscriptionIMessageExtraction(input: {
   }
   try {
     assertContextStatesCurrent(input.store, manifest.includedItems);
+    assertPriorFindingsCurrent(input.store, priorFindingCandidates(manifest.includedItems));
   } catch (error) {
     failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "context_changed" });
     throw error;
@@ -161,6 +180,12 @@ export async function submitSubscriptionIMessageExtraction(input: {
     sourceType: "imessage_extraction" as const, extractionId, callId: input.callId,
     output: input.output as unknown as Record<string, unknown>, createdAt: completedAt,
   };
+  const findings = semanticFindingsForExtraction(extraction);
+  const semantics = deriveFindingSemantics({
+    findings, evidenceDirections: imessageEvidenceDirections(manifest.includedItems),
+    relations: input.output.relations, priorFindings: priorFindingCandidates(manifest.includedItems),
+    relationValidatorVersion: IMESSAGE_EXTRACTION_PROMPT_VERSION,
+  });
   imessageStore.saveExtraction({
     extractionId, sourceId: input.sourceId, messageId: prepared.messageId,
     sourceHash: prepared.sourceHash, conversationId: prepared.conversationId,
@@ -174,9 +199,13 @@ export async function submitSubscriptionIMessageExtraction(input: {
       ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
       ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
       ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
-    }, findings: semanticFindingsForExtraction(extraction), workId, leaseOwner,
+    }, findings, communicationContexts: semantics.communicationContexts,
+    relations: semantics.relations, workId, leaseOwner,
   });
-  return { extractionId, output: input.output };
+  return {
+    extractionId, output: input.output,
+    projectionRefresh: (input.projectionRefresher ?? refreshAfterExtraction)({ store: input.store }),
+  };
 }
 
 function findStringField(value: unknown, key: string): string | undefined {
@@ -234,6 +263,7 @@ function validateOutput(
 ): void {
   if (!classifications.includes(output.classification) || !output.summary.trim()
     || !Array.isArray(output.items) || output.items.length > 20
+    || !Array.isArray(output.relations) || output.relations.length > 20
     || !Array.isArray(output.unresolved) || typeof output.promptInjectionDetected !== "boolean") {
     throw new Error("Messages extraction output does not match the required schema");
   }
@@ -251,6 +281,67 @@ function validateOutput(
     }
     if (!item.evidenceIds.some((evidence) => deltaEvidenceIds.includes(evidence))) {
       throw new Error("Messages extraction item must cite a newly changed message");
+    }
+  }
+  validateRelations(output.relations, output.items, allowed, priorFindingCandidates(manifestItems));
+}
+
+function validateRelations(
+  relations: ExtractionFindingRelation[], items: IMessageExtractionItem[], allowed: Set<string>,
+  prior: PriorFindingRelationCandidate[],
+): void {
+  const priorIds = new Set(prior.map((finding) => finding.findingId));
+  for (const relation of relations) {
+    const item = items[relation.fromItemIndex];
+    if (!relation || !["responds_to", "resolves", "supersedes"].includes(relation.kind)
+      || !Number.isInteger(relation.fromItemIndex) || !item
+      || !priorIds.has(relation.toFindingId)
+      || typeof relation.confidence !== "number" || relation.confidence < 0.75 || relation.confidence > 1
+      || !Array.isArray(relation.evidenceIds) || relation.evidenceIds.length === 0
+      || relation.evidenceIds.some((id) => !allowed.has(id) || !item.evidenceIds.includes(id))) {
+      throw new Error("Messages extraction relation is invalid or ungrounded");
+    }
+  }
+}
+
+function imessageEvidenceDirections(value: unknown): Map<string, "incoming" | "outgoing"> {
+  const result = new Map<string, "incoming" | "outgoing">();
+  visitRecords(value, (record) => {
+    if (typeof record.evidence_id !== "string" || !record.evidence_id.startsWith("imessage:")
+      || !["incoming", "outgoing"].includes(String(record.direction))) return;
+    const direction = record.direction as "incoming" | "outgoing";
+    const existing = result.get(record.evidence_id);
+    if (!existing || existing === direction) result.set(record.evidence_id, direction);
+  });
+  return result;
+}
+
+function priorFindingCandidates(value: unknown): PriorFindingRelationCandidate[] {
+  const result = new Map<string, PriorFindingRelationCandidate>();
+  visitRecords(value, (record) => {
+    if (typeof record.finding_id !== "string" || !/^finding_[A-Za-z0-9_-]+$/.test(record.finding_id)
+      || !semanticFindingKinds.includes(record.kind as never)
+      || !semanticFindingOwners.includes(record.owner as never)
+      || !(record.due_date === null || typeof record.due_date === "string")
+      || typeof record.finding_content_hash !== "string") return;
+    result.set(record.finding_id, {
+      findingId: record.finding_id, kind: record.kind as PriorFindingRelationCandidate["kind"],
+      statement: typeof record.statement === "string" ? record.statement : "",
+      owner: record.owner as PriorFindingRelationCandidate["owner"],
+      dueDate: record.due_date as string | null, contentHash: record.finding_content_hash,
+    });
+  });
+  return [...result.values()].sort((left, right) => left.findingId.localeCompare(right.findingId));
+}
+
+function assertPriorFindingsCurrent(
+  store: OperationalStore, candidates: PriorFindingRelationCandidate[],
+): void {
+  const findings = new FindingStore(store);
+  for (const candidate of candidates) {
+    const current = findings.get(candidate.findingId);
+    if (!current || current.status !== "active" || current.contentHash !== candidate.contentHash) {
+      throw new Error("prepared Messages finding context changed; prepare extraction again");
     }
   }
 }

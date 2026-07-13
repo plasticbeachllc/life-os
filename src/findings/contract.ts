@@ -35,3 +35,40 @@ export interface SemanticFinding {
   contentHash: string;
   createdAt: string;
 }
+
+export interface ExtractionFindingRelation {
+  kind: "responds_to" | "resolves" | "supersedes";
+  fromItemIndex: number;
+  toFindingId: string;
+  confidence: number;
+  evidenceIds: string[];
+}
+
+export interface FindingCommunicationContext {
+  findingId: string;
+  direction: "incoming" | "outgoing" | "system" | "unknown";
+  responseExpectation: "required" | "optional" | "none" | "unknown";
+  responseState: "awaiting_response" | "responded" | "resolved" | "unknown";
+  validatorMethod: "deterministic";
+  validatorVersion: string;
+  contentHash: string;
+  createdAt: string;
+}
+
+export interface FindingRelation {
+  relationId: string;
+  kind: ExtractionFindingRelation["kind"];
+  fromFindingId: string;
+  toFindingId: string;
+  confidence: number;
+  validatorMethod: "validated_reasoning";
+  validatorVersion: string;
+  evidenceIds: string[];
+  contentHash: string;
+  createdAt: string;
+}
+
+export interface PriorFindingRelationCandidate {
+  findingId: string; kind: SemanticFindingKind; statement: string;
+  owner: SemanticFindingOwner; dueDate: string | null; contentHash: string;
+}

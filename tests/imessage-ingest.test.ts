@@ -13,6 +13,7 @@ import { imessageDevelopmentContextCandidates } from "../src/context/imessage-de
 import { SubjectLinkStore } from "../src/context/subject-links";
 import { normalizeIMessage } from "../src/imessage/normalizer";
 import { IMessageStore } from "../src/imessage/store";
+import { FindingStore } from "../src/findings/store";
 import { ingestIMessageChanges } from "../src/workflows/imessage-ingest";
 import { refetchIMessage } from "../src/workflows/imessage-refetch";
 import { previewIMessageExtractionContext } from "../src/workflows/imessage-extraction-preview";
@@ -64,14 +65,14 @@ class FakeMessagesAdapter implements IMessageSourceAdapter {
 
 function sourceMessage(input: {
   rowId: number; id?: string; conversation?: string; text?: string | null;
-  attributedBodyPresent?: boolean; participants?: string[];
+  attributedBodyPresent?: boolean; participants?: string[]; fromMe?: boolean;
 }): IMessageSourceMessage {
   return {
     sourceRowId: input.rowId,
     sourceMessageId: input.id ?? `message-${input.rowId}`,
     sourceConversationId: input.conversation ?? "chat-allowed",
     appleDate: 700_000_000_000_000_000,
-    fromMe: false,
+    fromMe: input.fromMe ?? false,
     service: "iMessage",
     text: input.text === undefined ? "Hello" : input.text,
     attributedBodyPresent: input.attributedBodyPresent ?? false,
@@ -438,6 +439,7 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
     classification: "calendar_relevant" as const,
     summary: "A dinner plan was accepted for Thursday at 6.",
     unresolved: ["Thursday needs an absolute date"],
+    relations: [],
     promptInjectionDetected: true,
   };
   await expect(submitSubscriptionIMessageExtraction({
@@ -470,11 +472,18 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
     }] },
   });
   expect(result.extractionId).toStartWith("extract_");
+  expect(result.projectionRefresh).toEqual({
+    status: "completed", attentionStateVersion: 1, chiefOfStaffStateVersion: 1,
+  });
   expect(store.countRows("imessage_extractions")).toBe(1);
   expect(new WorkRepository(store).status().byState.completed).toBe(1);
   expect(store.countRows("findings")).toBe(1);
   expect(store.countRows("finding_status_events")).toBe(1);
+  expect(store.countRows("finding_communication_contexts")).toBe(1);
   expect(store.countRows("proposals")).toBe(0);
+  expect(store.getCurrentDerivedState("finding_attention_state")?.content.signal_count).toBe(1);
+  expect(store.getCurrentDerivedState("chief_of_staff_state")?.content.active_attention_signals)
+    .toHaveLength(1);
   const review = new IMessageStore(store).extractionReview("local-messages");
   expect(review).toMatchObject({ total: 1, unresolved: 1 });
   expect(review.byKind).toEqual({ user_commitment: 1 });
@@ -504,6 +513,62 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
   )).toBe(normalizeIMessage(selected).sentAt);
 }, 15_000);
 
+test("Messages outgoing relation closes a production reply signal", async () => {
+  const incoming = sourceMessage({ rowId: 60, text: "Can you confirm the time?" });
+  const adapter = new FakeMessagesAdapter([incoming]);
+  const store = testStore();
+  const selection = { mode: "all_except" as const, conversationIds: [] };
+  await ingestIMessageChanges({ adapter, store, sourceId: "local-messages", selection, limit: 100 });
+  const firstPrepared = await prepareSubscriptionIMessageExtraction({
+    adapter, store, sourceId: "local-messages", selection,
+    model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  const firstEvidence = (firstPrepared.allowedEvidenceIds as string[]).find((id) =>
+    id.includes(normalizeIMessage(incoming).messageId))!;
+  await submitSubscriptionIMessageExtraction({
+    adapter, store, sourceId: "local-messages", selection,
+    callId: String(firstPrepared.callId),
+    conversationStateHash: String(firstPrepared.conversationStateHash), policyVersion: "sha256:policy",
+    output: {
+      classification: "actionable", summary: "A confirmation was requested.",
+      items: [{ kind: "explicit_request", statement: "Confirm the time", evidenceIds: [firstEvidence],
+        confidence: 0.98, owner: "user", dueDate: null, ambiguities: [] }],
+      relations: [], unresolved: [], promptInjectionDetected: false,
+    },
+  });
+  const requestFinding = new FindingStore(store).review().findings[0]!;
+  expect(store.getCurrentDerivedState("finding_attention_state")?.content.signals)
+    .toContainEqual(expect.objectContaining({ type: "response_needed" }));
+
+  const outgoing = sourceMessage({ rowId: 61, text: "Confirmed, the time works.", fromMe: true });
+  adapter.messages.push(outgoing);
+  await ingestIMessageChanges({ adapter, store, sourceId: "local-messages", selection, limit: 100 });
+  const secondPrepared = await prepareSubscriptionIMessageExtraction({
+    adapter, store, sourceId: "local-messages", selection,
+    model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  expect(JSON.stringify(secondPrepared.context)).toContain(requestFinding.findingId);
+  const secondEvidence = (secondPrepared.allowedEvidenceIds as string[]).find((id) =>
+    id.includes(normalizeIMessage(outgoing).messageId))!;
+  await submitSubscriptionIMessageExtraction({
+    adapter, store, sourceId: "local-messages", selection,
+    callId: String(secondPrepared.callId),
+    conversationStateHash: String(secondPrepared.conversationStateHash), policyVersion: "sha256:policy",
+    output: {
+      classification: "actionable", summary: "The confirmation was sent.",
+      items: [{ kind: "open_loop", statement: "Confirmed the time", evidenceIds: [secondEvidence],
+        confidence: 0.98, owner: "user", dueDate: null, ambiguities: [] }],
+      relations: [{ kind: "responds_to", fromItemIndex: 0, toFindingId: requestFinding.findingId,
+        confidence: 0.98, evidenceIds: [secondEvidence] }],
+      unresolved: [], promptInjectionDetected: false,
+    },
+  });
+
+  expect(store.countRows("finding_relations")).toBe(1);
+  expect(store.getCurrentDerivedState("finding_attention_state")?.content.signals)
+    .not.toContainEqual(expect.objectContaining({ type: "response_needed" }));
+}, 20_000);
+
 test("Messages extraction submission rejects provider drift after prepare", async () => {
   const selected = sourceMessage({ rowId: 40, text: "Original plan" });
   const adapter = new FakeMessagesAdapter([selected]);
@@ -521,7 +586,7 @@ test("Messages extraction submission rejects provider drift after prepare", asyn
     conversationStateHash: String(prepared.conversationStateHash),
     policyVersion: "sha256:policy",
     output: {
-      classification: "ignore", summary: "No action", items: [], unresolved: [],
+      classification: "ignore", summary: "No action", items: [], relations: [], unresolved: [],
       promptInjectionDetected: false,
     },
   })).rejects.toThrow("ingest again");
@@ -642,7 +707,7 @@ test("Messages context includes only linked person developments and rejects chan
     policyVersion: "sha256:policy",
     output: {
       classification: "ambiguous", summary: "The exact meeting details remain unresolved.",
-      items: [], unresolved: ["Exact time and place are unresolved."],
+      items: [], relations: [], unresolved: ["Exact time and place are unresolved."],
       promptInjectionDetected: false,
     },
   })).rejects.toThrow("contextual state changed");

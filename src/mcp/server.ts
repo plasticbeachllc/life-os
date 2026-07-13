@@ -47,6 +47,13 @@ const extractionOutputInput = z.object({
     evidenceIds: z.array(z.string().min(1)).min(1), confidence: z.number().min(0).max(1),
     owner: z.enum(extractionOwners), dueDate: z.string().nullable(), ambiguities: z.array(z.string()),
   })).max(20),
+  relations: z.array(z.object({
+    kind: z.enum(["responds_to", "resolves", "supersedes"]),
+    fromItemIndex: z.number().int().nonnegative(),
+    toFindingId: z.string().regex(/^finding_[A-Za-z0-9_-]+$/),
+    confidence: z.number().min(0.75).max(1),
+    evidenceIds: z.array(z.string().min(1)).min(1),
+  })).max(20),
   unresolved: z.array(z.string()), promptInjectionDetected: z.boolean(),
 });
 
@@ -133,7 +140,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_preview_email_extraction_context", {
-    description: "Refetch and hash-verify one queued IMPORTANT Gmail message, then return its bounded untrusted extraction context manifest. Makes no model call and creates no proposal.",
+    description: "Refetch and hash-verify one queued IMPORTANT or SENT Gmail message, then return its bounded untrusted extraction context manifest. Makes no model call and creates no proposal.",
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false },
   }, async () => {
@@ -147,11 +154,11 @@ export function createLifeOsMcpServer(): McpServer {
       adapter: new GmailRestAdapter(loadGmailAuthConfig(refreshToken)),
       store, accountId: config.gmailAccountId,
     });
-    return jsonResult(preview ?? { message: "No queued important messages." });
+    return jsonResult(preview ?? { message: "No queued selected Gmail messages." });
   });
 
   server.registerTool("life_os_prepare_email_extraction", {
-    description: "Prepare one audited, bounded IMPORTANT-message context for extraction by the subscription-authenticated host agent. Creates no proposal or vault write.",
+    description: "Prepare one audited, bounded IMPORTANT-or-SENT context for extraction by the subscription-authenticated host agent. Creates no proposal or vault write.",
     inputSchema: { model: z.string().min(1) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   }, async ({ model }) => {
@@ -165,7 +172,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_submit_email_extraction", {
-    description: "Validate, stale-check, and persist structured subscription-agent extraction. Creates no task, proposal, reply, or vault write.",
+    description: "Validate, stale-check, and persist structured subscription-agent extraction, then deterministically refresh compact attention state. Creates no task, proposal, reply, or vault write.",
     inputSchema: {
       callId: z.string().min(1),
       threadStateHash: z.string().startsWith("sha256:"),
@@ -239,7 +246,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_submit_imessage_extraction", {
-    description: "Validate evidence, recheck source and conversation state, and persist a structured Messages extraction. Creates no task, proposal, reply, send, or vault write.",
+    description: "Validate evidence, recheck source and conversation state, persist a structured Messages extraction, and deterministically refresh compact attention state. Creates no task, proposal, reply, send, or vault write.",
     inputSchema: {
       callId: z.string().min(1),
       conversationStateHash: z.string().startsWith("sha256:"),

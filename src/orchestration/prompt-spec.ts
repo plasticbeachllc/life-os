@@ -30,8 +30,8 @@ const workflowTerms: Record<PromptWorkflow, RegExp> = {
 };
 
 const mandatoryPolicyTerms = /\b(?:approval|approved|credential|do not|forbid|must|never|only|permission|privacy|prohibit|require|secret|untrusted|write|writes)\b/i;
-const maxCompiledPolicyLines = 12;
-const maxCompiledPolicyCharacters = 800;
+const maxCompiledPolicyLines = 40;
+const maxCompiledPolicyCharacters = 3_200;
 
 /** Compile trusted canonical policy into a small, deterministic workflow excerpt. */
 export function compilePolicyPrompt(policy: LoadedPolicy, workflow: PromptWorkflow): CompiledPolicyPrompt {
@@ -42,7 +42,7 @@ export function compilePolicyPrompt(policy: LoadedPolicy, workflow: PromptWorkfl
   for (const name of ["constitution", "permissions", "agent", "schemas"] as PolicyDocName[]) {
     for (const line of policyLines(policy.found[name] ?? "")) {
       const labeled = `${name}: ${line}`;
-      if (name === "permissions" || mandatoryPolicyTerms.test(line)) mandatory.push(labeled);
+      if (mandatoryPolicyTerms.test(line)) mandatory.push(labeled);
       else (workflowTerms[workflow].test(line) ? preferred : fallback).push(labeled);
     }
   }

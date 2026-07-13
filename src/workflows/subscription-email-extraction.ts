@@ -8,12 +8,21 @@ import {
 } from "../gmail/extraction-contract";
 import { GmailStore } from "../gmail/store";
 import { semanticFindingsForExtraction } from "../findings/projector";
+import { deriveFindingSemantics } from "../findings/semantics";
+import {
+  semanticFindingKinds, semanticFindingOwners,
+  type ExtractionFindingRelation, type PriorFindingRelationCandidate,
+} from "../findings/contract";
+import { FindingStore } from "../findings/store";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, gmailPromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
 import { failPreparedCallAndMarkWorkStale, prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
 import { previewGmailExtractionContext } from "./gmail-extraction-preview";
 import { WorkRepository } from "../work/repository";
+import {
+  refreshAfterExtraction, type PostExtractionRefresher, type PostExtractionRefreshReceipt,
+} from "./post-extraction-refresh";
 
 export interface EmailExtractionItem {
   kind: typeof itemKinds[number];
@@ -29,6 +38,7 @@ export interface EmailExtractionOutput {
   classification: typeof classifications[number];
   summary: string;
   items: EmailExtractionItem[];
+  relations: ExtractionFindingRelation[];
   unresolved: string[];
   promptInjectionDetected: boolean;
 }
@@ -51,7 +61,7 @@ export async function prepareSubscriptionEmailExtraction(input: {
     workflow: "gmail_extraction", subjectSourceId: input.accountId,
     leaseOwner, leaseDurationMs: 30 * 60 * 1000,
   });
-  if (!work) return { cached: false, empty: true, message: "No queued important messages." };
+  if (!work) return { cached: false, empty: true, message: "No queued selected Gmail messages." };
   let preview;
   try {
     preview = await previewGmailExtractionContext({ ...input, workItem: work });
@@ -76,7 +86,10 @@ export async function prepareSubscriptionEmailExtraction(input: {
     workRepository.complete({
       workId: work.workId, leaseOwner, sourceHash: work.sourceHash, containerHash: work.containerHash,
     });
-    return { cached: true, extractionId: cached.extractionId, output: cached.output };
+    return {
+      cached: true, extractionId: cached.extractionId, output: cached.output,
+      projectionRefresh: refreshAfterExtraction({ store: input.store }),
+    };
   }
 
   const call = prepareReasoningCall({
@@ -107,7 +120,7 @@ function stripSourceText(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripSourceText);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
-    if (["untrusted_authored_text", "authored_excerpt", "subject", "from", "to", "cc"].includes(key)) return [];
+    if (["untrusted_authored_text", "authored_excerpt", "subject", "from", "to", "cc", "statement"].includes(key)) return [];
     return [[key, stripSourceText(item)]];
   }));
 }
@@ -116,7 +129,12 @@ export async function submitSubscriptionEmailExtraction(input: {
   store: OperationalStore; accountId: string;
   callId: string; threadStateHash: string; policyVersion: string; output: EmailExtractionOutput;
   inputTokens?: number; outputTokens?: number; cachedTokens?: number;
-}): Promise<{ extractionId: string; output: EmailExtractionOutput }> {
+  projectionRefresher?: PostExtractionRefresher;
+}): Promise<{
+  extractionId: string;
+  output: EmailExtractionOutput;
+  projectionRefresh: PostExtractionRefreshReceipt;
+}> {
   const { call, manifest } = requirePreparedReasoningCall({
     store: input.store, callId: input.callId,
     workflow: "gmail_extraction", taskType: "subscription_email_extraction",
@@ -148,6 +166,12 @@ export async function submitSubscriptionEmailExtraction(input: {
   workRepository.requireLease({
     workId, leaseOwner, sourceHash: workSourceHash, containerHash: workContainerHash,
   });
+  try {
+    assertPriorFindingsCurrent(input.store, priorFindingCandidates(manifest.includedItems));
+  } catch (error) {
+    failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "context_changed" });
+    throw error;
+  }
   validateOutput(input.output, manifest.includedItems, call.sourceHash);
 
   const completedAt = new Date().toISOString();
@@ -156,6 +180,12 @@ export async function submitSubscriptionEmailExtraction(input: {
     sourceType: "gmail_extraction" as const, extractionId, callId: input.callId,
     output: input.output as unknown as Record<string, unknown>, createdAt: completedAt,
   };
+  const findings = semanticFindingsForExtraction(extraction);
+  const semantics = deriveFindingSemantics({
+    findings, evidenceDirections: gmailEvidenceDirections(manifest.includedItems),
+    relations: input.output.relations, priorFindings: priorFindingCandidates(manifest.includedItems),
+    relationValidatorVersion: EMAIL_EXTRACTION_PROMPT_VERSION,
+  });
   gmailStore.saveExtraction({
     extractionId, accountId: input.accountId, messageId: preparedSource.messageId,
     sourceHash: preparedSource.sourceHash, threadStateHash: preparedSource.threadStateHash,
@@ -168,9 +198,13 @@ export async function submitSubscriptionEmailExtraction(input: {
       ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
       ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
       ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
-    }, findings: semanticFindingsForExtraction(extraction), workId, leaseOwner,
+    }, findings, communicationContexts: semantics.communicationContexts,
+    relations: semantics.relations, workId, leaseOwner,
   });
-  return { extractionId, output: input.output };
+  return {
+    extractionId, output: input.output,
+    projectionRefresh: (input.projectionRefresher ?? refreshAfterExtraction)({ store: input.store }),
+  };
 }
 
 function findStringField(value: unknown, key: string): string | undefined {
@@ -219,6 +253,7 @@ function preparedSourceIdentity(value: unknown): {
 function validateOutput(output: EmailExtractionOutput, manifestItems: unknown[], sourceHash?: string): void {
   if (!output || !classifications.includes(output.classification) || typeof output.summary !== "string"
     || !output.summary.trim() || !Array.isArray(output.items) || output.items.length > 20
+    || !Array.isArray(output.relations) || output.relations.length > 20
     || !Array.isArray(output.unresolved) || typeof output.promptInjectionDetected !== "boolean") {
     throw new Error("email extraction output does not match the required schema");
   }
@@ -237,6 +272,67 @@ function validateOutput(output: EmailExtractionOutput, manifestItems: unknown[],
     }
     if (selectedEvidence && !item.evidenceIds.includes(selectedEvidence)) {
       throw new Error("email extraction item must cite the selected message");
+    }
+  }
+  validateRelations(output.relations, output.items, allowed, priorFindingCandidates(manifestItems));
+}
+
+function validateRelations(
+  relations: ExtractionFindingRelation[], items: EmailExtractionItem[], allowed: Set<string>,
+  prior: PriorFindingRelationCandidate[],
+): void {
+  const priorIds = new Set(prior.map((finding) => finding.findingId));
+  for (const relation of relations) {
+    const item = items[relation.fromItemIndex];
+    if (!relation || !["responds_to", "resolves", "supersedes"].includes(relation.kind)
+      || !Number.isInteger(relation.fromItemIndex) || !item
+      || !priorIds.has(relation.toFindingId)
+      || typeof relation.confidence !== "number" || relation.confidence < 0.75 || relation.confidence > 1
+      || !Array.isArray(relation.evidenceIds) || relation.evidenceIds.length === 0
+      || relation.evidenceIds.some((id) => !allowed.has(id) || !item.evidenceIds.includes(id))) {
+      throw new Error("email extraction relation is invalid or ungrounded");
+    }
+  }
+}
+
+function gmailEvidenceDirections(value: unknown): Map<string, "incoming" | "outgoing" | "unknown"> {
+  const result = new Map<string, "incoming" | "outgoing" | "unknown">();
+  visitRecords(value, (record) => {
+    if (typeof record.evidence_id !== "string" || !record.evidence_id.startsWith("gmail:")) return;
+    const direction = record.message_type === "received" ? "incoming"
+      : record.message_type === "sent" ? "outgoing" : "unknown";
+    const existing = result.get(record.evidence_id);
+    result.set(record.evidence_id, existing && existing !== direction ? "unknown" : direction);
+  });
+  return result;
+}
+
+function priorFindingCandidates(value: unknown): PriorFindingRelationCandidate[] {
+  const result = new Map<string, PriorFindingRelationCandidate>();
+  visitRecords(value, (record) => {
+    if (typeof record.finding_id !== "string" || !/^finding_[A-Za-z0-9_-]+$/.test(record.finding_id)
+      || !semanticFindingKinds.includes(record.kind as never)
+      || !semanticFindingOwners.includes(record.owner as never)
+      || !(record.due_date === null || typeof record.due_date === "string")
+      || typeof record.finding_content_hash !== "string") return;
+    result.set(record.finding_id, {
+      findingId: record.finding_id, kind: record.kind as PriorFindingRelationCandidate["kind"],
+      statement: typeof record.statement === "string" ? record.statement : "",
+      owner: record.owner as PriorFindingRelationCandidate["owner"],
+      dueDate: record.due_date as string | null, contentHash: record.finding_content_hash,
+    });
+  });
+  return [...result.values()].sort((left, right) => left.findingId.localeCompare(right.findingId));
+}
+
+function assertPriorFindingsCurrent(
+  store: OperationalStore, candidates: PriorFindingRelationCandidate[],
+): void {
+  const findings = new FindingStore(store);
+  for (const candidate of candidates) {
+    const current = findings.get(candidate.findingId);
+    if (!current || current.status !== "active" || current.contentHash !== candidate.contentHash) {
+      throw new Error("prepared Gmail finding context changed; prepare extraction again");
     }
   }
 }

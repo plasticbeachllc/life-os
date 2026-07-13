@@ -29,8 +29,16 @@ export interface GmailApiThread {
   messages?: GmailApiMessage[];
 }
 
+export const GMAIL_SELECTION_QUERY = "{label:important label:sent}";
+export const GMAIL_SELECTION_ID = "IMPORTANT_OR_SENT" as const;
+
+export function matchesGmailSelection(message: Pick<GmailApiMessage, "labelIds">): boolean {
+  const labels = message.labelIds ?? [];
+  return labels.includes("IMPORTANT") || labels.includes("SENT");
+}
+
 export interface GmailSourceAdapter {
-  listImportantMessageIds(input: { maxResults: number; pageToken?: string }): Promise<{
+  listSelectedMessageIds(input: { maxResults: number; pageToken?: string }): Promise<{
     messageIds: string[]; nextPageToken?: string;
   }>;
   getMessage(messageId: string): Promise<GmailApiMessage>;
@@ -46,14 +54,14 @@ export class GmailRestAdapter implements GmailSourceAdapter {
     this.auth.setCredentials({ refresh_token: input.refreshToken, scope: "https://www.googleapis.com/auth/gmail.readonly" });
   }
 
-  async listImportantMessageIds(input: { maxResults: number; pageToken?: string }): Promise<{
+  async listSelectedMessageIds(input: { maxResults: number; pageToken?: string }): Promise<{
     messageIds: string[]; nextPageToken?: string;
   }> {
     const parameters = new URLSearchParams({
       maxResults: String(Math.min(Math.max(input.maxResults, 1), 500)),
       includeSpamTrash: "false",
     });
-    parameters.append("labelIds", "IMPORTANT");
+    parameters.set("q", GMAIL_SELECTION_QUERY);
     if (input.pageToken) parameters.set("pageToken", input.pageToken);
     const result = await this.request<{ messages?: Array<{ id?: string }>; nextPageToken?: string }>(`/users/me/messages?${parameters}`);
     const messageIds = (result.messages ?? []).flatMap((message) => message.id ? [message.id] : []);

@@ -8,7 +8,7 @@ const feedbackTokenPattern = /^[0-9a-f]{64}$/;
 const feedbackCapabilityTtlMs = 8 * 60 * 60 * 1000;
 const maxFeedbackSessions = 1_000;
 const feedbackCapabilities = new Map<string, {
-	token: string; subjects: Map<string, "finding" | "proposal">; expiresAt: number;
+	token: string; subjects: Map<string, "finding" | "proposal" | "attention">; expiresAt: number;
 }>();
 
 export function ensureChatSession(cookies: Cookies): string {
@@ -36,7 +36,7 @@ export function clearChatSession(cookies: Cookies): void {
 }
 
 export function issueFeedbackCapability(input: {
-	sessionId: string; subjects: Array<{ id: string; kind: "finding" | "proposal" }>; now?: Date;
+	sessionId: string; subjects: Array<{ id: string; kind: "finding" | "proposal" | "attention" }>; now?: Date;
 }): string {
 	if (!sessionPattern.test(input.sessionId)) throw new Error("invalid feedback session");
 	pruneFeedbackCapabilities((input.now ?? new Date()).getTime());
@@ -50,7 +50,7 @@ export function issueFeedbackCapability(input: {
 
 export function validateFeedbackCapability(input: {
 	sessionId: string | undefined; token: string; subjectUiId: string;
-	subjectKind: "finding" | "proposal"; now?: Date;
+	subjectKind: "finding" | "proposal" | "attention"; now?: Date;
 }): boolean {
 	const now = (input.now ?? new Date()).getTime();
 	pruneFeedbackCapabilities(now);

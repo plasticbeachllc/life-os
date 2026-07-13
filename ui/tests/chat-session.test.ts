@@ -40,7 +40,10 @@ describe("LifeOS chat sessions", () => {
 		const firstId = ensureChatSession(first.cookies); const secondId = ensureChatSession(second.cookies);
 		const now = new Date("2026-07-12T12:00:00.000Z");
 		const token = issueFeedbackCapability({ sessionId: firstId,
-			subjects: [{ id: "ui_0123456789abcdefabcd", kind: "finding" }], now });
+			subjects: [
+				{ id: "ui_0123456789abcdefabcd", kind: "finding" },
+				{ id: "ui_aaaaaaaaaaaaaaaaaaaa", kind: "attention" },
+			], now });
 		expect(validateFeedbackCapability({ sessionId: firstId, token,
 			subjectUiId: "ui_0123456789abcdefabcd", subjectKind: "finding", now })).toBe(true);
 		expect(validateFeedbackCapability({ sessionId: secondId, token,
@@ -49,6 +52,8 @@ describe("LifeOS chat sessions", () => {
 			subjectUiId: "ui_ffffffffffffffffffff", subjectKind: "finding", now })).toBe(false);
 		expect(validateFeedbackCapability({ sessionId: firstId, token,
 			subjectUiId: "ui_0123456789abcdefabcd", subjectKind: "proposal", now })).toBe(false);
+		expect(validateFeedbackCapability({ sessionId: firstId, token,
+			subjectUiId: "ui_aaaaaaaaaaaaaaaaaaaa", subjectKind: "attention", now })).toBe(true);
 		expect(validateFeedbackCapability({ sessionId: firstId, token: "0".repeat(64),
 			subjectUiId: "ui_0123456789abcdefabcd", subjectKind: "finding", now })).toBe(false);
 		expect(validateFeedbackCapability({ sessionId: firstId, token,

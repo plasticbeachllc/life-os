@@ -311,7 +311,7 @@ async function main(argv: string[]): Promise<number> {
         adapter: new GmailRestAdapter(loadGmailAuthConfig(refreshToken)),
         store: new OperationalStore(config.databasePath), accountId: config.gmailAccountId,
       });
-      console.log(JSON.stringify(preview ?? { message: "No queued important messages." }, null, 2));
+      console.log(JSON.stringify(preview ?? { message: "No queued selected Gmail messages." }, null, 2));
       return 0;
     }
   }

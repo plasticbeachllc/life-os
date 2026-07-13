@@ -27,6 +27,9 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	const feedbackToken = issueFeedbackCapability({ sessionId, subjects: [
 		...workspace.proposals.map((proposal) => ({ id: proposal.id, kind: "proposal" as const })),
 		...workspace.findings.items.map((finding) => ({ id: finding.id, kind: "finding" as const })),
+		...bundle.snapshot.notifications
+			.filter((notification) => notification.feedbackSubjectKind === "attention")
+			.map((notification) => ({ id: notification.id, kind: "attention" as const })),
 	] });
 	return { ...bundle.snapshot, workspace, feedbackToken };
 };

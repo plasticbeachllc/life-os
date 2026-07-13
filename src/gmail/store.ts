@@ -2,9 +2,11 @@ import type { ModelCallRecord, OperationalStore } from "../db/store";
 import type { NormalizedGmailMessage } from "./normalizer";
 import { gmailNormalizerVersion } from "./normalizer";
 import { sha256Value } from "../util/hashing";
-import type { ExtractionRecordForProjection, SemanticFinding } from "../findings/contract";
+import type {
+  ExtractionRecordForProjection, FindingCommunicationContext, FindingRelation, SemanticFinding,
+} from "../findings/contract";
 import { completeWorkInTransaction, enqueueWorkInTransaction } from "../work/repository";
-import { saveFindingsInTransaction } from "../findings/store";
+import { saveFindingSemanticsInTransaction, saveFindingsInTransaction } from "../findings/store";
 import { completeReasoningCallInTransaction, type PreparedReasoningUsage } from "../orchestration/prepared-reasoning";
 
 export function gmailThreadStateHash(messages: NormalizedGmailMessage[]): string {
@@ -17,7 +19,7 @@ export class GmailStore {
   constructor(private readonly store: OperationalStore) {}
 
   upsertAccount(input: {
-    accountId: string; emailAddress: string; selectionLabelId: "IMPORTANT";
+    accountId: string; emailAddress: string; selectionLabelId: "IMPORTANT_OR_SENT";
     historyId?: string; now: string;
   }): void {
     const db = this.store.open();
@@ -313,6 +315,7 @@ export class GmailStore {
     output: Record<string, unknown>; promptVersion: string; schemaVersion: string;
     policyVersion: string; model: string; createdAt: string;
     call?: ModelCallRecord; usage?: PreparedReasoningUsage; findings?: SemanticFinding[];
+    communicationContexts?: FindingCommunicationContext[]; relations?: FindingRelation[];
     workId?: string; leaseOwner?: string;
   }): void {
     const db = this.store.open();
@@ -340,8 +343,12 @@ export class GmailStore {
            WHERE workflow = 'gmail_extraction' AND task_type = 'subscription_email_extraction'
              AND source_hash = ? AND status = 'prepared' AND call_id <> ?`,
         ).run(input.createdAt, input.sourceHash, input.callId);
-        if (input.call && input.findings && input.workId && input.leaseOwner) {
+        if (input.call && input.findings && input.communicationContexts && input.relations
+          && input.workId && input.leaseOwner) {
           saveFindingsInTransaction(db, input.findings);
+          saveFindingSemanticsInTransaction(db, {
+            communicationContexts: input.communicationContexts, relations: input.relations,
+          });
           completeReasoningCallInTransaction(db, {
             call: input.call, ...(input.usage ? { usage: input.usage } : {}), completedAt: input.createdAt,
           });
@@ -350,7 +357,8 @@ export class GmailStore {
             sourceHash: input.sourceHash, containerHash: input.threadStateHash,
             completedAt: input.createdAt,
           });
-        } else if (input.call || input.findings || input.workId || input.leaseOwner) {
+        } else if (input.call || input.findings || input.communicationContexts || input.relations
+          || input.workId || input.leaseOwner) {
           throw new Error("transactional Gmail extraction completion is incomplete");
         }
       })();

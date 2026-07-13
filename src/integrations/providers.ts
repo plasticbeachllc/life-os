@@ -12,7 +12,7 @@ import { IMessageStore } from "../imessage/store";
 import { TelegramStore } from "../telegram/store";
 import { NativeTdJsonClient } from "../telegram/tdjson-client";
 import { ingestCalendar } from "../workflows/calendar-ingest";
-import { ingestImportantGmail } from "../workflows/gmail-ingest";
+import { ingestSelectedGmail } from "../workflows/gmail-ingest";
 import type { GmailIngestionReport } from "../workflows/gmail-ingest";
 import { ingestIMessageChanges } from "../workflows/imessage-ingest";
 import { ingestTelegramChanges } from "../workflows/telegram-ingest";
@@ -35,8 +35,8 @@ export function createIntegrationRegistry(): IntegrationRegistry {
       id: "gmail", capabilities: messageExtractionCapabilities,
       application: { cliCommand: "email", statusTool: "life_os_gmail_status", ingestTool: "life_os_ingest_gmail" },
       statusDescription: "Return sanitized Gmail integration status and capabilities.",
-      ingestDescription: "Incrementally ingest metadata and hashes for IMPORTANT Gmail messages using gmail.readonly. Never sends, labels, archives, or deletes email.",
-      limit: { default: 50, maximum: 100, description: "Maximum IMPORTANT messages to inspect." },
+      ingestDescription: "Incrementally ingest metadata and hashes for IMPORTANT or SENT Gmail messages using gmail.readonly. Never sends, labels, archives, or deletes email.",
+      limit: { default: 50, maximum: 100, description: "Maximum IMPORTANT or SENT messages to inspect." },
       status: (input) => {
         const config = configured(input); const store = operationalStore(config.databasePath);
         return status("gmail", "primary", config.gmailEnabled, messageExtractionCapabilities,
@@ -45,7 +45,7 @@ export function createIntegrationRegistry(): IntegrationRegistry {
       ingest: async ({ limit, vaultPath }) => {
         const config = configuredVault(vaultPath);
         if (!config.gmailEnabled) throw new Error("Gmail ingestion is disabled");
-        const report = await ingestImportantGmail({ adapter: gmailAdapter(config.gmailAccountId),
+        const report = await ingestSelectedGmail({ adapter: gmailAdapter(config.gmailAccountId),
           store: operationalStore(config.databasePath), accountId: config.gmailAccountId, limit: limit ?? 50 });
         return result("gmail", "primary", report.runId,
           counts(report.discovered, report.ingested, report.unchanged, report.failed, 0),
@@ -166,11 +166,11 @@ function counts(discovered: number, changed: number, unchanged: number,
 }
 
 export function gmailIngestionDetails(report: Pick<GmailIngestionReport, "selector" | "failures">): {
-  selector: "IMPORTANT"; partialFailures: number; failureCategories: Record<string, number>;
+  selector: "IMPORTANT_OR_SENT"; partialFailures: number; failureCategories: Record<string, number>;
 } {
   const failureCategories: Record<string, number> = {};
   for (const failure of report.failures) {
-    const category = /no longer has IMPORTANT label/.test(failure.error)
+    const category = /no longer has IMPORTANT or SENT label/.test(failure.error)
       ? "selection_changed"
       : /API request failed|OAuth|access token/i.test(failure.error)
         ? "provider_request_failed"

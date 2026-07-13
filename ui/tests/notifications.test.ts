@@ -139,4 +139,48 @@ describe("LifeOS notification compiler", () => {
 			|| notification.summary.includes("structured extraction"),
 		)).toBe(false);
 	});
+
+	test("surfaces only routed review-queue attention through opaque UI identities", () => {
+		temporaryDirectory = mkdtempSync(join(tmpdir(), "life-os-ui-attention-"));
+		const databasePath = join(temporaryDirectory, "life-os.db");
+		const store = new OperationalStore(databasePath);
+		store.migrate();
+		store.saveDerivedState({
+			stateId: "state_private_attention", stateType: "finding_attention_state", stateVersion: 4,
+			content: {
+				as_of: "2026-07-12T12:00:00.000Z",
+				signals: [{
+					attention_id: "attention_private_review", type: "untracked_user_commitment",
+					title: "Commitment is not tracked", summary: "Prepare the planning notes",
+					finding_ids: ["finding_private"], subject_refs: [], owner: "user",
+					confidence: 0.95, impact: "medium", urgency: "soon", due_date: null,
+					explanation: "No matching canonical task exists.", ambiguities: [],
+					suggested_interventions: [{ kind: "create_task", rationale: "Track it.",
+						expected_benefit: "Include it in planning.", consequence_of_delay: null,
+						permission_class: "yellow", readiness: "ready", reversible: true }],
+				}],
+				presentation: [{ attention_id: "attention_private_review", channel: "review_queue",
+					reason: "reviewable_intervention", explanation: "A bounded review is useful.",
+					policy_version: "attention-presentation-v1" }],
+			},
+			sourceHashes: ["sha256:private"], generationMethod: "test",
+			createdAt: "2026-07-12T12:00:00.000Z",
+		});
+
+		Bun.env.LIFE_OS_VAULT_PATH = temporaryDirectory;
+		Bun.env.LIFE_OS_DATABASE_PATH = databasePath;
+		Bun.env.LIFE_OS_GMAIL_ENABLED = "false";
+		Bun.env.LIFE_OS_CALENDAR_ENABLED = "false";
+
+		const snapshot = compileUiNotifications(new Date("2026-07-12T13:00:00.000Z"));
+		const notification = snapshot.notifications.find((item) => item.feedbackSubjectKind === "attention");
+		const serialized = JSON.stringify(snapshot);
+		expect(notification).toMatchObject({
+			kind: "task", category: "needs_you", title: "Commitment is not tracked",
+			feedbackSubjectKind: "attention", primaryAction: { label: "Review next step" },
+			secondaryAction: { label: "Not relevant" },
+		});
+		expect(notification?.id).toMatch(/^ui_[a-f0-9]{20}$/);
+		expect(serialized).not.toMatch(/attention_private_review|finding_private|state_private_attention|sha256:/);
+	});
 });

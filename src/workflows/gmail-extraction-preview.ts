@@ -1,9 +1,10 @@
-import type { GmailSourceAdapter } from "../adapters/gmail";
+import { matchesGmailSelection, type GmailSourceAdapter } from "../adapters/gmail";
 import { buildContext, type ContextCandidate, type ContextManifest } from "../context/builder";
 import type { OperationalStore } from "../db/store";
 import { normalizeGmailMessage } from "../gmail/normalizer";
 import { GmailStore } from "../gmail/store";
 import { gmailThreadStateHash } from "../gmail/store";
+import { FindingStore } from "../findings/store";
 import { redactSensitiveTexts } from "../privacy/presidio";
 import { gmailPromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
@@ -44,7 +45,9 @@ export async function previewGmailExtractionContext(input: {
     throw new Error("Gmail work source changed; re-ingest before extraction preview");
   }
   const message = await input.adapter.getMessage(candidate.messageId);
-  if (!(message.labelIds ?? []).includes("IMPORTANT")) throw new Error("extraction candidate no longer has IMPORTANT label");
+  if (!matchesGmailSelection(message)) {
+    throw new Error("extraction candidate no longer has IMPORTANT or SENT label");
+  }
   const normalized = normalizeGmailMessage(message);
   if (normalized.contentHash !== candidate.contentHash) throw new Error("Gmail source hash changed; re-ingest before extraction preview");
   const thread = await input.adapter.getThread(candidate.threadId);
@@ -83,6 +86,9 @@ export async function previewGmailExtractionContext(input: {
     ...redactedTurns.map(({ redacted }) => boundedText(redacted.text, 1200)),
   ].join("\n"));
   const entityCandidates = exactEntityCandidates(input.store, normalized);
+  const priorFindings = new FindingStore(input.store).activeRelationCandidatesForContainer({
+    sourceType: "gmail_extraction", sourceId: input.accountId, containerId: normalized.threadId,
+  });
   const candidates: ContextCandidate[] = [
     workContextCandidate(work),
     {
@@ -127,6 +133,17 @@ export async function previewGmailExtractionContext(input: {
       tokenEstimate: Math.ceil(JSON.stringify(entityCandidates).length / 4),
       relevance: 0.9, impact: 0.8, recency: 1,
       sourceRefs: entityCandidates.flatMap((candidate) => [candidate.entity_id, candidate.state_id]),
+    }] : []),
+    ...(priorFindings.length > 0 ? [{
+      id: `findings:${normalized.threadId}`, category: "entity_state" as const, retrievalLevel: 1 as const,
+      content: { prior_findings: priorFindings.map((finding) => ({
+        finding_id: finding.findingId, kind: finding.kind, statement: finding.statement,
+        owner: finding.owner, due_date: finding.dueDate,
+        finding_content_hash: finding.contentHash,
+      })) },
+      tokenEstimate: Math.ceil(JSON.stringify(priorFindings).length / 4),
+      relevance: 1, impact: 0.9, recency: 1,
+      sourceRefs: priorFindings.flatMap((finding) => [finding.findingId, finding.contentHash]),
     }] : []),
     policyCandidate(input.policyPrompt, input.policyVersion),
   ];

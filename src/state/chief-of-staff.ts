@@ -14,6 +14,16 @@ export interface ChiefOfStaffState {
   overdue_commitments: string[];
   active_finding_open_loops: string[];
   active_finding_commitments: string[];
+  active_attention_signals: Array<{
+    attention_id: string;
+    type: string;
+    summary: string;
+    impact: string;
+    urgency: string;
+    finding_ids: string[];
+    presentation_channel: string;
+    presentation_reason: string;
+  }>;
   unresolved_ambiguities: string[];
   suggested_focus: string[];
 }
@@ -30,7 +40,7 @@ interface ChiefProjectionInput {
 }
 
 export const chiefOfStaffBuilder: ProjectionBuilder<ChiefProjectionInput, ChiefOfStaffState> = {
-  name: "chief-of-staff", version: "v4", stateType: "chief_of_staff_state",
+  name: "chief-of-staff", version: "v6", stateType: "chief_of_staff_state",
   entityId: () => undefined,
   inputs: (input) => [
     { type: "calendar_date", id: "current", hash: localDate(input.now) },
@@ -83,6 +93,10 @@ function buildChiefContent(input: ChiefProjectionInput): ChiefOfStaffState {
   const waiting = openTasks.filter((state) => state.content.waiting === true);
   const findingOpenLoops = objects(input.findingAttention?.content.open_loops);
   const findingCommitments = objects(input.findingAttention?.content.commitments);
+  const attentionSignals = objects(input.findingAttention?.content.signals).slice(0, 20);
+  const presentationById = new Map(objects(input.findingAttention?.content.presentation).map((decision) => [
+    String(decision.attention_id ?? ""), decision,
+  ]));
   const overdueFindingIds = array(input.findingAttention?.content.overdue_finding_ids).map(String);
   const priorities = input.projects
     .filter((state) => state.content.status === "active" && array(state.content.next_actions).length > 0)
@@ -109,9 +123,20 @@ function buildChiefContent(input: ChiefProjectionInput): ChiefOfStaffState {
     ],
     active_finding_open_loops: findingOpenLoops.map((finding) => String(finding.finding_id ?? "")).filter(Boolean),
     active_finding_commitments: findingCommitments.map((finding) => String(finding.finding_id ?? "")).filter(Boolean),
+    active_attention_signals: attentionSignals.map((signal) => ({
+      attention_id: String(signal.attention_id ?? ""),
+      type: String(signal.type ?? ""),
+      summary: String(signal.summary ?? ""),
+      impact: String(signal.impact ?? ""),
+      urgency: String(signal.urgency ?? ""),
+      finding_ids: array(signal.finding_ids).map(String),
+      presentation_channel: String(presentationById.get(String(signal.attention_id ?? ""))?.channel ?? "suppress"),
+      presentation_reason: String(presentationById.get(String(signal.attention_id ?? ""))?.reason ?? "low_value_no_action"),
+    })).filter((signal) => signal.attention_id && signal.type && signal.summary),
     unresolved_ambiguities: input.unresolvedAmbiguities,
     suggested_focus: suggestedFocus(
-      overdue.length + overdueFindingIds.length, stalledProjects.length, waiting.length, priorities,
+      overdue.length + overdueFindingIds.length, stalledProjects.length, waiting.length,
+      attentionSignals.filter((signal) => signal.type !== "commitment_at_risk").length, priorities,
     ),
   };
 }
@@ -134,12 +159,14 @@ function suggestedFocus(
   overdue: number,
   stalled: number,
   waiting: number,
+  attention: number,
   priorities: ChiefOfStaffState["current_priorities"],
 ): string[] {
   const result: string[] = [];
   if (overdue > 0) result.push(`Resolve ${overdue} overdue commitment(s).`);
   if (stalled > 0) result.push(`Define next actions for ${stalled} stalled project(s).`);
   if (waiting > 0) result.push(`Review ${waiting} waiting item(s).`);
+  if (attention > 0) result.push(`Review ${attention} new attention signal(s).`);
   if (result.length === 0 && priorities.length > 0) result.push("Advance the highest-priority active project.");
   return result;
 }

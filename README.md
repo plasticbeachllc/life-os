@@ -14,7 +14,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Token-budgeted context manifests, model routing, caching, and usage instrumentation.
 - Deterministic morning briefings with optional subscription-agent synthesis.
 - Approval-gated, hash-checked, atomic vault proposals with backup and undo.
-- Read-only Gmail ingestion for messages carrying Gmail's `IMPORTANT` system label.
+- Read-only Gmail ingestion for messages carrying Gmail's `IMPORTANT` or `SENT` system label.
 - Incremental, evidence-grounded Gmail extraction through a subscription-agent prepare/submit flow.
 - Stock Microsoft Presidio redaction of standard high-risk PII before email context reaches a model.
 - Sanitized extraction review with no Gmail IDs, hashes, headers, addresses, subjects, or source text.
@@ -22,6 +22,8 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Bounded, high-risk-redacted Messages extraction with hash-verified refetch and sanitized review.
 - Deterministic cross-provider findings projected from validated Gmail and Messages extraction items.
 - Regenerable open-loop and commitment attention state feeding chief-of-staff and morning briefings.
+- Policy-routed attention review cards with opaque browser identities and capability-bound feedback.
+- Evidence-bound reply and resolution relations with deterministic communication direction.
 - Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
   and order-pickup alerts.
 - Primary Google Calendar read-only ingestion and deterministic compact calendar state.
@@ -33,7 +35,7 @@ rewrite journal prose, expose arbitrary shell access, or give a model unrestrict
 ## Architecture
 
 ```text
-Obsidian Markdown                    Gmail API (readonly, IMPORTANT)
+Obsidian Markdown                    Gmail API (readonly, IMPORTANT or SENT)
        |                                      |
        v                                      v
 deterministic indexing                   deterministic ingestion
@@ -61,8 +63,10 @@ the vault or Gmail.
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
 assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
 current provider architecture. The comprehensive target architecture, normative contracts, reference
-code, and phased implementation checklist are in [`docs/architecture.md`](docs/architecture.md).
-Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
+code, and phased implementation checklist are in [`docs/architecture.md`](docs/architecture.md). The
+proposed attention-signal taxonomy and intervention lifecycle are in
+[`docs/findings-and-actions.md`](docs/findings-and-actions.md). Parallel contributors must also follow
+[`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
@@ -131,8 +135,10 @@ provider extraction IDs, reasoning-call IDs, evidence IDs, and hashes. Finding c
 a task, proposal, reply, or provider mutation.
 
 State rebuild also derives `finding_attention_state` from active findings. It tracks open loops,
-commitments, and overdue finding IDs under a date- and status-aware dependency hash. Chief-of-staff and
-morning briefing state consume this projection; they never query provider extraction bodies directly.
+commitments, and overdue finding IDs under a date- and status-aware dependency hash. Chief-of-staff,
+morning briefing, and the bounded browser review queue consume this projection; they never query
+provider extraction bodies directly. Browser attention feedback is resolved against the exact current
+presentation decision and retained as structured calibration data without source text or provider IDs.
 
 Proposal lifecycle:
 
@@ -300,7 +306,10 @@ separate optional reasoning overlay and never replace deterministic daily state.
 Gmail and Messages extraction now run from a shared durable work queue. Provider delta commits enqueue
 metadata-only work atomically, unchanged replay emits nothing, and changed source/container identity
 stales older active work. A prepare call holds one bounded lease; extraction, findings, model-call
-completion, and work completion commit together. Inspect the sanitized aggregate backlog with:
+completion, and work completion commit together. After that commit, Life OS deterministically refreshes
+finding attention and chief-of-staff projections and returns a sanitized refresh receipt. A refresh
+failure does not roll back completed extraction work; a later state rebuild safely recovers it. Inspect
+the sanitized aggregate backlog with:
 
 ```bash
 bun run src/cli.ts work status --vault /path/to/vault
