@@ -50,6 +50,6 @@ test("prompt contracts are concise, content-addressed, and share extraction rule
     expect(spec.instructions.length).toBeLessThan(240);
     expect(new Set(spec.rules).size).toBe(spec.rules.length);
   }
-  expect(gmailPromptSpec.rules.slice(0, 6)).toEqual([...imessagePromptSpec.rules]);
+  expect(gmailPromptSpec.rules.slice(0, 7)).toEqual([...imessagePromptSpec.rules]);
   expect(JSON.stringify(gmailPromptSpec.schema)).toContain("supersession");
 });

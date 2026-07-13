@@ -47,6 +47,13 @@ const extractionOutputInput = z.object({
     evidenceIds: z.array(z.string().min(1)).min(1), confidence: z.number().min(0).max(1),
     owner: z.enum(extractionOwners), dueDate: z.string().nullable(), ambiguities: z.array(z.string()),
   })).max(20),
+  relations: z.array(z.object({
+    kind: z.enum(["responds_to", "resolves", "supersedes"]),
+    fromItemIndex: z.number().int().nonnegative(),
+    toFindingId: z.string().regex(/^finding_[A-Za-z0-9_-]+$/),
+    confidence: z.number().min(0.75).max(1),
+    evidenceIds: z.array(z.string().min(1)).min(1),
+  })).max(20),
   unresolved: z.array(z.string()), promptInjectionDetected: z.boolean(),
 });
 

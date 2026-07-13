@@ -29,7 +29,7 @@ required; all other rows run in the normal Bun suite.
 - `git diff --check`
 - `cd ui && bun run check`
 - `cd ui && bun run build`
-- fresh schema-21 database creation and deterministic state rebuild
+- fresh schema-22 database creation and deterministic state rebuild
 - MCP initialize/list-tools smoke test
 - proposal review/authorize/apply/undo smoke test against a disposable vault
 

@@ -1005,6 +1005,8 @@ export class OperationalStore {
       "subject_links",
       "findings",
       "finding_status_events",
+      "finding_communication_contexts",
+      "finding_relations",
       "model_calls",
       "context_manifests",
       "model_cache",

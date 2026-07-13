@@ -1,6 +1,10 @@
 import type { OperationalStore } from "../db/store";
 import { sha256Value } from "../util/hashing";
-import type { FindingStatus, SemanticFinding } from "./contract";
+import type { ValidatedCommunicationContext, ValidatedFindingRelation } from "../attention/contract";
+import type {
+  FindingCommunicationContext, FindingRelation, FindingStatus,
+  PriorFindingRelationCandidate, SemanticFinding,
+} from "./contract";
 
 export interface ActiveFindingProjectionInput {
   findingId: string; kind: string; statement: string; owner: string;
@@ -57,6 +61,45 @@ export function saveFindingsInTransaction(
   return { created, unchanged };
 }
 
+export function saveFindingSemanticsInTransaction(
+  db: DatabaseConnection,
+  input: { communicationContexts: FindingCommunicationContext[]; relations: FindingRelation[] },
+): void {
+  for (const context of input.communicationContexts) {
+    const existing = db.query<{ content_hash: string }, [string]>(
+      "SELECT content_hash FROM finding_communication_contexts WHERE finding_id = ?",
+    ).get(context.findingId);
+    if (existing && existing.content_hash !== context.contentHash) {
+      throw new Error("immutable finding communication context conflicts with existing content");
+    }
+    if (existing) continue;
+    db.query(`INSERT INTO finding_communication_contexts (
+      finding_id, direction, response_expectation, response_state,
+      validator_method, validator_version, content_hash, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      context.findingId, context.direction, context.responseExpectation, context.responseState,
+      context.validatorMethod, context.validatorVersion, context.contentHash, context.createdAt,
+    );
+  }
+  for (const relation of input.relations) {
+    const existing = db.query<{ content_hash: string }, [string]>(
+      "SELECT content_hash FROM finding_relations WHERE relation_id = ?",
+    ).get(relation.relationId);
+    if (existing && existing.content_hash !== relation.contentHash) {
+      throw new Error("immutable finding relation conflicts with existing content");
+    }
+    if (existing) continue;
+    db.query(`INSERT INTO finding_relations (
+      relation_id, kind, from_finding_id, to_finding_id, confidence,
+      validator_method, validator_version, evidence_json, content_hash, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      relation.relationId, relation.kind, relation.fromFindingId, relation.toFindingId,
+      relation.confidence, relation.validatorMethod, relation.validatorVersion,
+      JSON.stringify(relation.evidenceIds), relation.contentHash, relation.createdAt,
+    );
+  }
+}
+
 export class FindingStore {
   constructor(private readonly store: OperationalStore) {}
 
@@ -68,6 +111,88 @@ export class FindingStore {
     } finally {
       db.close();
     }
+  }
+
+  activeRelationCandidatesForContainer(input:
+    | { sourceType: "gmail_extraction"; sourceId: string; containerId: string }
+    | { sourceType: "imessage_extraction"; sourceId: string; containerId: string }
+  ): PriorFindingRelationCandidate[] {
+    const db = this.store.open();
+    try {
+      const rows = input.sourceType === "gmail_extraction"
+        ? db.query<RelationCandidateRow, [string, string]>(`
+          SELECT finding.finding_id, finding.kind, finding.statement, finding.owner,
+            finding.due_date, finding.content_hash
+          FROM findings finding
+          JOIN gmail_extractions extraction ON extraction.extraction_id = finding.source_extraction_id
+          JOIN gmail_messages message ON message.account_id = extraction.account_id
+            AND message.message_id = extraction.message_id
+          WHERE finding.source_type = 'gmail_extraction'
+            AND extraction.account_id = ? AND message.thread_id = ?
+            AND (SELECT event.status FROM finding_status_events event
+              WHERE event.finding_id = finding.finding_id
+              ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) = 'active'
+          ORDER BY finding.created_at DESC, finding.finding_id LIMIT 20
+        `).all(input.sourceId, input.containerId)
+        : db.query<RelationCandidateRow, [string, string]>(`
+          SELECT finding.finding_id, finding.kind, finding.statement, finding.owner,
+            finding.due_date, finding.content_hash
+          FROM findings finding
+          JOIN imessage_extractions extraction ON extraction.extraction_id = finding.source_extraction_id
+          WHERE finding.source_type = 'imessage_extraction'
+            AND extraction.source_id = ? AND extraction.conversation_id = ?
+            AND (SELECT event.status FROM finding_status_events event
+              WHERE event.finding_id = finding.finding_id
+              ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) = 'active'
+          ORDER BY finding.created_at DESC, finding.finding_id LIMIT 20
+        `).all(input.sourceId, input.containerId);
+      return rows.map(relationCandidate);
+    } finally { db.close(); }
+  }
+
+  activeCommunicationContexts(): ValidatedCommunicationContext[] {
+    const db = this.store.open();
+    try {
+      return db.query<{
+        finding_id: string; direction: ValidatedCommunicationContext["direction"];
+        response_expectation: ValidatedCommunicationContext["response_expectation"];
+        response_state: ValidatedCommunicationContext["response_state"];
+        validator_method: "deterministic"; validator_version: string; content_hash: string;
+      }, []>(`SELECT context.* FROM finding_communication_contexts context
+        WHERE (SELECT event.status FROM finding_status_events event
+          WHERE event.finding_id = context.finding_id
+          ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) = 'active'
+        ORDER BY context.finding_id`).all().map((row) => ({
+          finding_id: row.finding_id, direction: row.direction,
+          response_expectation: row.response_expectation, response_state: row.response_state,
+          validator: { method: row.validator_method, version: row.validator_version },
+          content_hash: row.content_hash,
+        }));
+    } finally { db.close(); }
+  }
+
+  activeRelations(): ValidatedFindingRelation[] {
+    const db = this.store.open();
+    try {
+      return db.query<{
+        relation_id: string; kind: ValidatedFindingRelation["kind"];
+        from_finding_id: string; to_finding_id: string; confidence: number;
+        validator_method: "validated_reasoning"; validator_version: string; content_hash: string;
+      }, []>(`SELECT relation.* FROM finding_relations relation
+        WHERE (SELECT event.status FROM finding_status_events event
+          WHERE event.finding_id = relation.from_finding_id
+          ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) = 'active'
+          AND (SELECT event.status FROM finding_status_events event
+          WHERE event.finding_id = relation.to_finding_id
+          ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) = 'active'
+        ORDER BY relation.relation_id`).all().map((row) => ({
+          relation_id: row.relation_id, kind: row.kind,
+          from_finding_id: row.from_finding_id, to_finding_id: row.to_finding_id,
+          confidence: row.confidence,
+          validator: { method: row.validator_method, version: row.validator_version },
+          content_hash: row.content_hash,
+        }));
+    } finally { db.close(); }
   }
 
   get(findingId: string): StoredFinding | undefined {
@@ -261,4 +386,17 @@ export class FindingStore {
       db.close();
     }
   }
+}
+
+interface RelationCandidateRow {
+  finding_id: string; kind: PriorFindingRelationCandidate["kind"];
+  statement: string; owner: PriorFindingRelationCandidate["owner"];
+  due_date: string | null; content_hash: string;
+}
+
+function relationCandidate(row: RelationCandidateRow): PriorFindingRelationCandidate {
+  return {
+    findingId: row.finding_id, kind: row.kind, statement: row.statement,
+    owner: row.owner, dueDate: row.due_date, contentHash: row.content_hash,
+  };
 }

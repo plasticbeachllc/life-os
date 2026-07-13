@@ -23,6 +23,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Deterministic cross-provider findings projected from validated Gmail and Messages extraction items.
 - Regenerable open-loop and commitment attention state feeding chief-of-staff and morning briefings.
 - Policy-routed attention review cards with opaque browser identities and capability-bound feedback.
+- Evidence-bound reply and resolution relations with deterministic communication direction.
 - Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
   and order-pickup alerts.
 - Primary Google Calendar read-only ingestion and deterministic compact calendar state.

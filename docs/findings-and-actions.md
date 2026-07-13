@@ -131,11 +131,20 @@ The pure resolver also supports compatibility inputs for the next architecture r
 - stale finding references, duplicate identities, self-relations, and incomplete validator identities
   fail closed.
 
-The current `finding_attention_state` builder does **not** supply these compatibility inputs because the
-common finding store does not yet persist their final architecture-owned representation. Production
-therefore continues to avoid response and automatic-resolution claims. Once the architecture branch
-defines that representation, its content hashes and validator versions must become explicit projection
-inputs before these signals are enabled.
+Schema 22 now persists these inputs as immutable `finding_communication_contexts` and
+`finding_relations`. Communication direction is derived from provider-normalized Gmail message type or
+Messages direction, never inferred from prose. An incoming `explicit_request` owned by the user becomes
+`required` and `awaiting_response`; unsupported or mixed evidence remains unknown. Relations are emitted
+only through the versioned Gmail/Messages extraction schema and may reference at most 20 active prior
+findings from the same thread or conversation. Submit rechecks allowed evidence, source item index,
+relation kind compatibility, confidence, target content hash, and current active status.
+
+The attention builder is now `finding-attention/v5`. Communication and relation content hashes are
+explicit projection inputs. Production can derive `response_needed` and `response_overdue`, suppress a
+reply signal after a validated outgoing `responds_to` relation, and emit `commitment_resolved` after a
+validated `resolves` relation. A prior finding changed or dismissed after prepare rejects submit as
+stale context. Provider IDs and relation evidence remain internal and are excluded from attention,
+extraction-review, browser, and feedback projections.
 
 ### Implemented presentation policy
 
