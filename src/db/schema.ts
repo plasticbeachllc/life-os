@@ -1,4 +1,4 @@
-export const schemaVersion = 13;
+export const schemaVersion = 20;
 
 export const ddl = [
   `
@@ -25,14 +25,18 @@ export const ddl = [
   CREATE TABLE IF NOT EXISTS actions (
     action_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(run_id),
-    tool_name TEXT NOT NULL,
+    effect_type TEXT NOT NULL CHECK(effect_type IN (
+      'frontmatter_patch', 'task_id_patch', 'policy_bootstrap', 'finding_task_append'
+    )),
+    effect_plan_json TEXT NOT NULL,
+    effect_plan_hash TEXT NOT NULL,
+    executor_version TEXT NOT NULL,
     lifecycle_state TEXT NOT NULL,
     permission_class TEXT NOT NULL,
     target_entity_id TEXT,
     target_path TEXT,
     source_hash TEXT,
     target_hash TEXT,
-    arguments_json TEXT NOT NULL,
     created_at TEXT NOT NULL
   )
   `,
@@ -86,6 +90,10 @@ export const ddl = [
     content_json TEXT NOT NULL,
     source_hashes_json TEXT NOT NULL,
     generation_method TEXT NOT NULL,
+    builder_name TEXT NOT NULL,
+    builder_version TEXT NOT NULL,
+    input_provenance_json TEXT NOT NULL,
+    dependency_hash TEXT NOT NULL,
     prompt_version TEXT,
     model TEXT,
     created_at TEXT NOT NULL,
@@ -96,6 +104,103 @@ export const ddl = [
   `
   CREATE INDEX IF NOT EXISTS idx_derived_states_current
   ON derived_states(state_type, entity_id, superseded_at)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS work_items (
+    work_id TEXT PRIMARY KEY,
+    workflow TEXT NOT NULL CHECK(workflow IN ('gmail_extraction', 'imessage_extraction')),
+    subject_type TEXT NOT NULL CHECK(subject_type IN ('gmail_message', 'imessage_conversation')),
+    subject_source_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    anchor_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    container_hash TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK(reason IN ('source_delta', 'contract_refresh')),
+    invalidation_key TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK(state IN ('pending', 'leased', 'completed', 'stale', 'failed')),
+    priority INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 3 CHECK(max_attempts BETWEEN 1 AND 10),
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    available_at TEXT NOT NULL,
+    error_category TEXT CHECK(error_category IN (
+      'provider_transient', 'rate_limited', 'source_unavailable', 'validation',
+      'stale_source', 'internal', 'retry_exhausted'
+    )),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK((state = 'leased') = (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL))
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_work_items_ready
+  ON work_items(state, available_at, priority DESC, created_at)
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_work_items_subject
+  ON work_items(workflow, subject_source_id, subject_id, state)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS subject_links (
+    link_id TEXT PRIMARY KEY,
+    from_type TEXT NOT NULL CHECK(from_type IN ('imessage_conversation')),
+    from_source_id TEXT NOT NULL,
+    from_id TEXT NOT NULL,
+    relationship TEXT NOT NULL CHECK(relationship IN ('concerns')),
+    to_type TEXT NOT NULL CHECK(to_type IN ('person')),
+    to_id TEXT NOT NULL,
+    basis TEXT NOT NULL CHECK(basis IN ('explicit_config', 'reviewed')),
+    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    source_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(from_type, from_source_id, from_id, relationship, to_type, to_id, source_hash)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_subject_links_from
+  ON subject_links(from_type, from_source_id, from_id, relationship)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS findings (
+    finding_id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL CHECK(source_type IN ('gmail_extraction', 'imessage_extraction')),
+    source_extraction_id TEXT NOT NULL,
+    source_item_index INTEGER NOT NULL CHECK(source_item_index >= 0),
+    reasoning_call_id TEXT NOT NULL REFERENCES model_calls(call_id),
+    kind TEXT NOT NULL,
+    statement TEXT NOT NULL,
+    owner TEXT NOT NULL CHECK(owner IN ('user', 'other', 'shared', 'unknown')),
+    due_date TEXT,
+    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    ambiguities_json TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    evidence_count INTEGER NOT NULL CHECK(evidence_count > 0),
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_type, source_extraction_id, source_item_index)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_findings_kind_created
+  ON findings(kind, created_at)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS finding_status_events (
+    event_id TEXT PRIMARY KEY,
+    finding_id TEXT NOT NULL REFERENCES findings(finding_id),
+    status TEXT NOT NULL CHECK(status IN ('active', 'dismissed', 'superseded', 'converted')),
+    related_finding_id TEXT REFERENCES findings(finding_id),
+    related_entity_type TEXT CHECK(related_entity_type IN ('task')),
+    related_entity_id TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_finding_status_events_current
+  ON finding_status_events(finding_id, created_at DESC)
   `,
   `
   CREATE TABLE IF NOT EXISTS model_calls (
@@ -184,10 +289,12 @@ export const ddl = [
     source_hash TEXT NOT NULL,
     target_path TEXT NOT NULL,
     target_hash TEXT NOT NULL,
+    effect_plan_hash TEXT NOT NULL,
+    executor_version TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT,
     applied_at TEXT,
-    UNIQUE(workflow, target_path, target_hash)
+    UNIQUE(workflow, target_path, target_hash, effect_plan_hash, executor_version)
   )
   `,
   `
@@ -238,6 +345,8 @@ export const ddl = [
     proposal_id TEXT,
     action_id TEXT NOT NULL,
     expected_target_hash TEXT NOT NULL,
+    expected_plan_hash TEXT,
+    executor_version TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     used_at TEXT
@@ -489,6 +598,16 @@ export const ddl = [
   )
   `,
   `
+  CREATE TABLE IF NOT EXISTS calendar_ingestion_cursors (
+    account_id TEXT PRIMARY KEY,
+    calendar_id TEXT NOT NULL,
+    time_min TEXT NOT NULL,
+    time_max TEXT NOT NULL,
+    next_page_token TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+  `,
+  `
   CREATE TABLE IF NOT EXISTS calendar_events (
     account_id TEXT NOT NULL,
     calendar_id TEXT NOT NULL,
@@ -614,4 +733,14 @@ export const ddl = [
   CREATE INDEX IF NOT EXISTS idx_telegram_messages_candidates
   ON telegram_messages(source_id, last_extraction_hash, sent_at)
   `,
+  `
+  CREATE TABLE IF NOT EXISTS ui_feedback (
+    feedback_id TEXT PRIMARY KEY,
+    subject_kind TEXT NOT NULL CHECK(subject_kind IN ('finding', 'proposal')),
+    subject_ui_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('useful', 'not_useful', 'accepted', 'rejected')),
+    created_at TEXT NOT NULL
+  )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_ui_feedback_subject ON ui_feedback(subject_kind, subject_ui_id, created_at)`,
 ];

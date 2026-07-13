@@ -33,6 +33,12 @@ test("subscription reasoning validates evidence, records usage, and caches resul
   expect(prepared.cached).toBe(false);
   expect(prepared.allowedEvidenceIds).toContain("task_done");
   expect(store.countRows("context_manifests")).toBe(1);
+  const auditDb = store.open();
+  const audit = auditDb.query<{ included_items_json: string }, [string]>(
+    "SELECT included_items_json FROM context_manifests WHERE call_id = ?",
+  ).get(prepared.callId!)!.included_items_json;
+  auditDb.close();
+  expect(audit).not.toContain("Completed task");
 
   expect(() => submitSubscriptionMorningReasoning({
     store, callId: prepared.callId!,
@@ -53,4 +59,22 @@ test("subscription reasoning validates evidence, records usage, and caches resul
   const cached = prepareSubscriptionMorningReasoning({ store, model: "subscription-model", policyVersion: "sha256:policy" });
   expect(cached.cached).toBe(true);
   expect(cached.state?.stateId).toBe(state.stateId);
+});
+
+test("subscription reasoning rejects a superseded compact state", () => {
+  const store = fixture();
+  const prepared = prepareSubscriptionMorningReasoning({
+    store, model: "subscription-model", policyVersion: "sha256:policy",
+  });
+  store.saveDerivedState({
+    stateId: "state_chief_v2", stateType: "chief_of_staff_state", stateVersion: 2,
+    content: { current_priorities: [], active_risks: [], important_recent_changes: ["changed"] },
+    sourceHashes: ["sha256:chief-v2"], generationMethod: "test",
+    createdAt: "2026-07-12T08:01:00Z",
+  });
+  expect(() => submitSubscriptionMorningReasoning({
+    store, callId: prepared.callId!, recommendations: [],
+  })).toThrow("contextual state changed");
+  expect(store.getModelCall(prepared.callId!)?.status).toBe("failed");
+  expect(store.getModelCall(prepared.callId!)?.error).toBe("context_changed");
 });

@@ -1,6 +1,7 @@
 import type { DerivedStateRecord, OperationalStore } from "../db/store";
 import { sha256Value } from "../util/hashing";
 import { newId } from "../util/ids";
+import { materializeProjection, type ProjectionBuilder } from "../state/projection-contract";
 
 export interface BriefingItem {
   summary: string;
@@ -22,6 +23,35 @@ export interface MorningBriefing {
   metrics: { modelCalls: 0; inputTokens: 0; outputTokens: 0 };
 }
 
+export interface MorningRecommendationOverlay {
+  date: string;
+  stateId: string;
+  recommendations: unknown[];
+}
+
+interface MorningBriefingInput {
+  date: string;
+  now: Date;
+  chief: DerivedStateRecord;
+  tasks: DerivedStateRecord[];
+  people: DerivedStateRecord[];
+  projects: DerivedStateRecord[];
+  findingAttention?: DerivedStateRecord;
+}
+
+export const morningBriefingBuilder: ProjectionBuilder<MorningBriefingInput, MorningBriefing> = {
+  name: "morning-briefing", version: "v3", stateType: "daily_state",
+  entityId: ({ date }) => date,
+  inputs: (input) => [
+    { type: "calendar_date", id: "briefing", hash: input.date },
+    ...morningDependencies(input).map((state) => ({
+      type: state.stateType, id: state.entityId ?? state.stateId,
+      hash: state.dependencyHash ?? sha256Value([state.stateId, state.stateVersion]),
+    })),
+  ],
+  build: buildMorningBriefing,
+};
+
 export function generateMorningBriefing(input: {
   store: OperationalStore;
   now?: Date;
@@ -33,36 +63,43 @@ export function generateMorningBriefing(input: {
   const tasks = input.store.listCurrentDerivedStates("task_state");
   const people = input.store.listCurrentDerivedStates("person_state");
   const projects = input.store.listCurrentDerivedStates("project_state");
-  const dependencies = [chief, ...tasks, ...people, ...projects];
-  const dependencyHash = sha256Value({
-    generatorVersion: "deterministic-morning-briefing-v2",
-    date,
-    states: dependencies.map((state) => [state.stateId, state.stateVersion]),
-  });
-  const prior = input.store.getCurrentDerivedState("daily_state", date);
+  const findingAttention = input.store.getCurrentDerivedState("finding_attention_state");
   const startedAt = new Date().toISOString();
   const runId = newId("run");
-  if (prior?.sourceHashes.includes(dependencyHash)) {
-    input.store.recordRun({
-      runId, workflow: "morning_briefing", mode: "deterministic",
-      startedAt, completedAt: new Date().toISOString(), status: "cached",
-    });
-    return { state: prior, cached: true };
-  }
+  const value: MorningBriefingInput = {
+    date, now, chief, tasks, people, projects,
+    ...(findingAttention ? { findingAttention } : {}),
+  };
+  const projection = materializeProjection({
+    store: input.store, builder: morningBriefingBuilder,
+    value, now,
+  });
+  input.store.recordRun({
+    runId, workflow: "morning_briefing", mode: "deterministic",
+    startedAt, completedAt: new Date().toISOString(), status: projection.changed ? "completed" : "cached",
+  });
+  return { state: projection.state, cached: !projection.changed };
+}
 
-  const chiefContent = chief.content;
-  const taskById = new Map(tasks.flatMap((task) => task.entityId ? [[task.entityId, task]] : []));
-  const personById = new Map(people.flatMap((person) => person.entityId ? [[person.entityId, person]] : []));
-  const briefing: MorningBriefing = {
-    date,
-    generatedAt: now.toISOString(),
+function buildMorningBriefing(input: MorningBriefingInput): MorningBriefing {
+  const chiefContent = input.chief.content;
+  const taskById = new Map(input.tasks.flatMap((task) => task.entityId ? [[task.entityId, task]] : []));
+  const personById = new Map(input.people.flatMap((person) => person.entityId ? [[person.entityId, person]] : []));
+  const findingById = new Map(objects(input.findingAttention?.content.open_loops).map((finding) => [
+    String(finding.finding_id ?? ""), finding,
+  ]));
+  return {
+    date: input.date, generatedAt: input.now.toISOString(),
     focus: objects(chiefContent.current_priorities).map((item) => ({
       summary: String(item.reason ?? "Current priority"),
       evidenceIds: strings(item.evidence_ids ?? item.entity_id),
     })),
-    overdue: stateItems(strings(chiefContent.overdue_commitments), taskById, "Overdue"),
-    dueToday: tasks
-      .filter((task) => task.content.status === "open" && task.content.due_date === date)
+    overdue: attentionItems(
+      strings(chiefContent.overdue_commitments), taskById, findingById,
+      input.findingAttention?.stateId, "Overdue",
+    ),
+    dueToday: input.tasks
+      .filter((task) => task.content.status === "open" && task.content.due_date === input.date)
       .map((task) => taskItem(task, "Due today")),
     waiting: objects(chiefContent.waiting_items).map((item) => {
       const taskId = String(item.task_id ?? "");
@@ -79,26 +116,29 @@ export function generateMorningBriefing(input: {
     risks: objects(chiefContent.active_risks).map((risk) => ({
       summary: String(risk.summary ?? "Active risk"), evidenceIds: strings(risk.entity_ids),
     })),
-    recentCompletions: tasks
-      .filter((task) => task.content.status === "completed" && recentDate(task.content.completed_at, date, 7))
+    recentCompletions: input.tasks
+      .filter((task) => task.content.status === "completed" && recentDate(task.content.completed_at, input.date, 7))
       .map((task) => taskItem(task, "Completed")),
     unresolved: strings(chiefContent.unresolved_ambiguities).map((summary) => ({ summary, evidenceIds: [] })),
     ignoredSummary: "Unchanged low-priority state omitted.",
     metrics: { modelCalls: 0, inputTokens: 0, outputTokens: 0 },
   };
-  const state: DerivedStateRecord = {
-    stateId: newId("state"), stateType: "daily_state", entityId: date,
-    stateVersion: (prior?.stateVersion ?? 0) + 1,
-    content: briefing as unknown as Record<string, unknown>,
-    sourceHashes: [dependencyHash, ...new Set(dependencies.flatMap((state) => state.sourceHashes))],
-    generationMethod: "deterministic-morning-briefing-v2", createdAt: now.toISOString(),
-  };
-  input.store.saveDerivedState(state);
-  input.store.recordRun({
-    runId, workflow: "morning_briefing", mode: "deterministic",
-    startedAt, completedAt: new Date().toISOString(), status: "completed",
-  });
-  return { state, cached: false };
+}
+
+function morningDependencies(input: MorningBriefingInput): DerivedStateRecord[] {
+  return [
+    input.chief, ...input.tasks, ...input.people, ...input.projects,
+    ...(input.findingAttention ? [input.findingAttention] : []),
+  ];
+}
+
+export function getMorningRecommendationOverlay(
+  store: OperationalStore, date: string,
+): MorningRecommendationOverlay | undefined {
+  const state = store.getCurrentDerivedState("briefing_reasoning_state", date);
+  if (!state) return undefined;
+  const recommendations = Array.isArray(state.content.recommendations) ? state.content.recommendations : [];
+  return { date, stateId: state.stateId, recommendations };
 }
 
 export function formatMorningBriefing(briefing: MorningBriefing, cached: boolean): string {
@@ -129,8 +169,21 @@ function taskItem(task: DerivedStateRecord, prefix: string): BriefingItem {
   };
 }
 
-function stateItems(ids: string[], states: Map<string, DerivedStateRecord>, prefix: string): BriefingItem[] {
-  return ids.map((id) => states.has(id) ? taskItem(states.get(id)!, prefix) : { summary: `${prefix}: ${id}`, evidenceIds: [id] });
+function attentionItems(
+  ids: string[], tasks: Map<string, DerivedStateRecord>,
+  findings: Map<string, Record<string, unknown>>, attentionStateId: string | undefined,
+  prefix: string,
+): BriefingItem[] {
+  return ids.map((id) => {
+    const task = tasks.get(id);
+    if (task) return taskItem(task, prefix);
+    const finding = findings.get(id);
+    if (finding) return {
+      summary: `${prefix}: ${String(finding.statement ?? id)}`,
+      evidenceIds: [id, attentionStateId].filter((value): value is string => Boolean(value)),
+    };
+    return { summary: `${prefix}: ${id}`, evidenceIds: [id] };
+  });
 }
 
 function objects(value: unknown): Array<Record<string, unknown>> {

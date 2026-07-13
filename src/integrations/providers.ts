@@ -33,16 +33,17 @@ export function createIntegrationRegistry(): IntegrationRegistry {
   return new IntegrationRegistry()
     .register({
       id: "gmail", capabilities: messageExtractionCapabilities,
+      application: { cliCommand: "email", statusTool: "life_os_gmail_status", ingestTool: "life_os_ingest_gmail" },
       statusDescription: "Return sanitized Gmail integration status and capabilities.",
       ingestDescription: "Incrementally ingest metadata and hashes for IMPORTANT Gmail messages using gmail.readonly. Never sends, labels, archives, or deletes email.",
       limit: { default: 50, maximum: 100, description: "Maximum IMPORTANT messages to inspect." },
-      status: () => {
-        const config = loadConfig(); const store = operationalStore(config.databasePath);
+      status: (input) => {
+        const config = configured(input); const store = operationalStore(config.databasePath);
         return status("gmail", "primary", config.gmailEnabled, messageExtractionCapabilities,
           new GmailStore(store).inspectionSummary(config.gmailAccountId, currentEmailExtractionIdentity));
       },
-      ingest: async ({ limit }) => {
-        const config = loadConfig();
+      ingest: async ({ limit, vaultPath }) => {
+        const config = configuredVault(vaultPath);
         if (!config.gmailEnabled) throw new Error("Gmail ingestion is disabled");
         const report = await ingestImportantGmail({ adapter: gmailAdapter(config.gmailAccountId),
           store: operationalStore(config.databasePath), accountId: config.gmailAccountId, limit: limit ?? 50 });
@@ -53,22 +54,25 @@ export function createIntegrationRegistry(): IntegrationRegistry {
     })
     .register({
       id: "imessage", capabilities: messageExtractionCapabilities,
+      application: { cliCommand: "message", statusTool: "life_os_imessage_status", ingestTool: "life_os_ingest_imessage" },
       statusDescription: "Return sanitized Messages integration status and capabilities.",
       ingestDescription: "Incrementally ingest metadata and hashes from the configured Messages selection. Never sends or modifies messages.",
       limit: { default: 500, maximum: 5000, description: "Maximum Messages rows to inspect." },
-      status: () => {
-        const config = loadConfig(); const store = operationalStore(config.databasePath);
+      status: async (input) => {
+        const config = configured(input); const store = operationalStore(config.databasePath);
+        const access = await new MacOsMessagesAdapter(config.imessageDatabasePath).checkAccess();
         const { cursor: _cursor, ...summary } = new IMessageStore(store)
           .inspectionSummary(config.imessageSourceId);
         return status("imessage", "primary", config.imessageEnabled,
           messageExtractionCapabilities, {
             selectionMode: config.imessageSelectionMode,
             configuredConversationIds: config.imessageConversationIds.length,
+            access,
             ...summary,
           });
       },
-      ingest: async ({ limit }) => {
-        const config = loadConfig();
+      ingest: async ({ limit, vaultPath }) => {
+        const config = configuredVault(vaultPath);
         if (!config.imessageEnabled) throw new Error("Messages ingestion is disabled");
         const report = await ingestIMessageChanges({ adapter: new MacOsMessagesAdapter(config.imessageDatabasePath),
           store: operationalStore(config.databasePath), sourceId: config.imessageSourceId,
@@ -84,36 +88,39 @@ export function createIntegrationRegistry(): IntegrationRegistry {
     })
     .register({
       id: "calendar", capabilities: ingestionOnlyCapabilities,
+      application: { cliCommand: "calendar", statusTool: "life_os_calendar_status", ingestTool: "life_os_ingest_calendar" },
       statusDescription: "Return sanitized Google Calendar integration status and capabilities.",
       ingestDescription: "Incrementally ingest the primary Google Calendar using calendar.readonly. Never writes Google Calendar.",
-      status: () => {
-        const config = loadConfig(); const store = operationalStore(config.databasePath);
+      limit: { default: 500, maximum: 5000, description: "Maximum Calendar event instances per resumable ingestion run." },
+      status: (input) => {
+        const config = configured(input); const store = operationalStore(config.databasePath);
         return status("calendar", "primary", config.calendarEnabled,
           ingestionOnlyCapabilities, new CalendarStore(store).summary(config.gmailAccountId));
       },
-      ingest: async () => {
-        const config = loadConfig();
+      ingest: async ({ limit, vaultPath }) => {
+        const config = configuredVault(vaultPath);
         if (!config.calendarEnabled) throw new Error("Calendar ingestion is disabled");
         const report = await ingestCalendar({ adapter: new GoogleCalendarRestAdapter(
           loadGmailAuthConfig(refreshToken(config.gmailAccountId))),
-        store: operationalStore(config.databasePath), accountId: config.gmailAccountId });
+        store: operationalStore(config.databasePath), accountId: config.gmailAccountId, maxEvents: limit ?? 500 });
         return result("calendar", "primary", report.runId,
           counts(report.discovered, report.changed, report.unchanged, 0, 0),
-          { stateId: report.stateId });
+          { stateId: report.stateId, partial: report.partial, resumed: report.resumed });
       },
     })
     .register({
       id: "telegram", capabilities: ingestionOnlyCapabilities,
+      application: { cliCommand: "telegram", statusTool: "life_os_telegram_status", ingestTool: "life_os_ingest_telegram" },
       statusDescription: "Return sanitized Telegram integration status and capabilities.",
       ingestDescription: "Incrementally ingest metadata and hashes from explicitly allowlisted Telegram chats. Never sends or modifies messages.",
       limit: { default: 50, maximum: 100, description: "Bounded TDLib history page size per chat." },
-      status: () => {
-        const config = loadConfig(); const store = operationalStore(config.databasePath);
+      status: (input) => {
+        const config = configured(input); const store = operationalStore(config.databasePath);
         return status("telegram", "primary", config.telegramEnabled,
           ingestionOnlyCapabilities, new TelegramStore(store).status(config.telegramSourceId));
       },
-      ingest: async ({ limit }) => {
-        const config = loadConfig();
+      ingest: async ({ limit, vaultPath }) => {
+        const config = configuredVault(vaultPath);
         if (!config.telegramEnabled) throw new Error("Telegram ingestion is disabled");
         if (config.telegramChatIds.length === 0) throw new Error("Telegram ingestion requires a configured chat allowlist");
         const client = new NativeTdJsonClient({ ...loadTelegramTdLibConfig(),
@@ -128,6 +135,14 @@ export function createIntegrationRegistry(): IntegrationRegistry {
         } finally { client.close(); }
       },
     });
+}
+
+function configured(input?: { vaultPath?: string }) {
+  return loadConfig(input?.vaultPath ? { vaultPath: input.vaultPath } : {});
+}
+
+function configuredVault(vaultPath: string | undefined) {
+  return configured(vaultPath ? { vaultPath } : undefined);
 }
 
 function operationalStore(path: string): OperationalStore {

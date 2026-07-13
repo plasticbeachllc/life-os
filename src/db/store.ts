@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 import { ddl, schemaVersion } from "./schema";
+import type { EffectPlan, EffectType } from "../effects/contract";
 
 export interface RunRecord {
   runId: string;
@@ -19,10 +20,12 @@ export interface RunRecord {
 export interface ActionRecord {
   actionId: string;
   runId: string;
-  toolName: string;
+  effectType: EffectType;
+  effectPlan: EffectPlan;
+  effectPlanHash: string;
+  executorVersion: string;
   lifecycleState: string;
   permissionClass: string;
-  arguments: Record<string, unknown>;
   targetEntityId?: string;
   targetPath?: string;
   sourceHash?: string;
@@ -37,6 +40,10 @@ export interface DerivedStateRecord {
   content: Record<string, unknown>;
   sourceHashes: string[];
   generationMethod: string;
+  builderName?: string;
+  builderVersion?: string;
+  inputProvenance?: Array<{ type: string; id: string; hash: string }>;
+  dependencyHash?: string;
   promptVersion?: string;
   model?: string;
   createdAt: string;
@@ -75,8 +82,10 @@ export interface ProposalRecord {
   targetPath: string;
   targetHash: string;
   permissionClass: string;
-  toolName: string;
-  arguments: Record<string, unknown>;
+  effectType: EffectType;
+  effectPlan: EffectPlan;
+  effectPlanHash: string;
+  executorVersion: string;
   createdAt: string;
   expiresAt?: string;
   approved: boolean;
@@ -90,6 +99,16 @@ export interface UndoRecord {
   afterHash: string;
   createdAt: string;
   undoneAt?: string;
+}
+
+export interface ActionReviewRecord {
+  actionId: string;
+  effectType: EffectType;
+  lifecycleState: string;
+  ok?: boolean;
+  createdAt: string;
+  undoAvailable: boolean;
+  undone: boolean;
 }
 
 export interface ModelCacheRecord {
@@ -106,6 +125,8 @@ export interface AuthorizationTokenRecord {
   proposalId?: string;
   actionId: string;
   expectedTargetHash: string;
+  expectedPlanHash?: string;
+  executorVersion?: string;
   createdAt: string;
   expiresAt: string;
   usedAt?: string;
@@ -117,6 +138,7 @@ export class OperationalStore {
   open(): Database {
     mkdirSync(dirname(this.databasePath), { recursive: true });
     const db = new Database(this.databasePath);
+    db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA foreign_keys = ON");
     return db;
   }
@@ -124,11 +146,29 @@ export class OperationalStore {
   migrate(): void {
     const db = this.open();
     try {
-      db.transaction(() => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const hasMigrations = Boolean(db.query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+        ).get());
+        if (hasMigrations) {
+          const current = db.query<{ version: number | null }, []>(
+            "SELECT MAX(version) AS version FROM schema_migrations",
+          ).get()?.version;
+          if (current !== null && current !== undefined && current !== schemaVersion) {
+            throw new Error(
+              `prototype database schema ${current} is incompatible with ${schemaVersion}; delete the operational database and rebuild`,
+            );
+          }
+        }
         for (const statement of ddl) db.exec(statement);
         db.query("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
           .run(schemaVersion, new Date().toISOString());
-      })();
+        db.exec("COMMIT");
+      } catch (error) {
+        if (db.inTransaction) db.exec("ROLLBACK");
+        throw error;
+      }
     } finally {
       db.close();
     }
@@ -183,23 +223,25 @@ export class OperationalStore {
       db.query(
         `
         INSERT OR REPLACE INTO actions (
-          action_id, run_id, tool_name, lifecycle_state, permission_class,
-          target_entity_id, target_path, source_hash, target_hash,
-          arguments_json, created_at
+          action_id, run_id, effect_type, effect_plan_json, effect_plan_hash,
+          executor_version, lifecycle_state, permission_class,
+          target_entity_id, target_path, source_hash, target_hash, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       ).run(
         record.actionId,
         record.runId,
-        record.toolName,
+        record.effectType,
+        JSON.stringify(record.effectPlan),
+        record.effectPlanHash,
+        record.executorVersion,
         record.lifecycleState,
         record.permissionClass,
         record.targetEntityId ?? null,
         record.targetPath ?? null,
         record.sourceHash ?? null,
         record.targetHash ?? null,
-        JSON.stringify(record.arguments),
         new Date().toISOString(),
       );
     } finally {
@@ -238,13 +280,65 @@ export class OperationalStore {
     }
   }
 
+  listRecentActionReviews(limit = 20): ActionReviewRecord[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("action review limit is invalid");
+    const db = this.open();
+    try {
+      return db.query<{
+        action_id: string; effect_type: EffectType; lifecycle_state: string;
+        ok: number | null; created_at: string; undo_created_at: string | null;
+        undone_at: string | null;
+      }, [number]>(`
+        SELECT action.action_id, action.effect_type, action.lifecycle_state,
+          result.ok, action.created_at, undo.created_at AS undo_created_at, undo.undone_at
+        FROM actions action
+        LEFT JOIN action_results result ON result.result_id = (
+          SELECT latest.result_id FROM action_results latest
+          WHERE latest.action_id = action.action_id ORDER BY latest.result_id DESC LIMIT 1
+        )
+        LEFT JOIN undo_records undo ON undo.undo_id = (
+          SELECT latest.undo_id FROM undo_records latest
+          WHERE latest.action_id = action.action_id ORDER BY latest.undo_id DESC LIMIT 1
+        )
+        WHERE action.lifecycle_state IN ('applied', 'undone', 'failed')
+        ORDER BY action.created_at DESC, action.action_id DESC LIMIT ?
+      `).all(limit).map((row) => ({
+        actionId: row.action_id, effectType: row.effect_type,
+        lifecycleState: row.lifecycle_state,
+        ...(row.ok === null ? {} : { ok: Boolean(row.ok) }), createdAt: row.created_at,
+        undoAvailable: row.undo_created_at !== null && row.undone_at === null,
+        undone: row.undone_at !== null,
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  recordUiFeedback(input: {
+    feedbackId: string; subjectKind: "finding" | "proposal";
+    subjectUiId: string; outcome: "useful" | "not_useful" | "accepted" | "rejected";
+    createdAt: string;
+  }): void {
+    const db = this.open();
+    try {
+      db.query(`INSERT INTO ui_feedback (
+        feedback_id, subject_kind, subject_ui_id, outcome, created_at
+      ) VALUES (?, ?, ?, ?, ?)`).run(
+        input.feedbackId, input.subjectKind, input.subjectUiId, input.outcome, input.createdAt,
+      );
+    } finally { db.close(); }
+  }
+
   createProposal(input: {
     proposalId: string; runId: string; actionId: string; workflow: string;
     sourceType: string; sourceId: string; sourceHash: string; targetPath: string;
-    targetHash: string; toolName: string; permissionClass: string;
-    arguments: Record<string, unknown>; createdAt: string; expiresAt?: string;
+    targetHash: string; effectType: EffectType; effectPlan: EffectPlan;
+    effectPlanHash: string; executorVersion: string; permissionClass: string;
+    createdAt: string; expiresAt?: string;
   }): ProposalRecord {
-    const existing = this.findProposal(input.workflow, input.targetPath, input.targetHash);
+    const existing = this.findProposal(
+      input.workflow, input.targetPath, input.targetHash, input.effectType, input.executorVersion,
+    );
     if (existing) return existing;
     const db = this.open();
     try {
@@ -256,22 +350,25 @@ export class OperationalStore {
         db.query(
           `INSERT INTO proposals (
             proposal_id, run_id, workflow, mode, lifecycle_state, source_type, source_id,
-            source_hash, target_path, target_hash, created_at, expires_at
-          ) VALUES (?, ?, ?, 'proposal', 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+            source_hash, target_path, target_hash, effect_plan_hash, executor_version,
+            created_at, expires_at
+          ) VALUES (?, ?, ?, 'proposal', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           input.proposalId, input.runId, input.workflow, input.sourceType, input.sourceId,
-          input.sourceHash, input.targetPath, input.targetHash, input.createdAt,
+          input.sourceHash, input.targetPath, input.targetHash,
+          input.effectPlanHash, input.executorVersion, input.createdAt,
           input.expiresAt ?? null,
         );
         db.query(
           `INSERT INTO actions (
-            action_id, run_id, tool_name, lifecycle_state, permission_class,
-            target_path, source_hash, target_hash, arguments_json, created_at
-          ) VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?)`,
+            action_id, run_id, effect_type, effect_plan_json, effect_plan_hash,
+            executor_version, lifecycle_state, permission_class,
+            target_path, source_hash, target_hash, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?)`,
         ).run(
-          input.actionId, input.runId, input.toolName, input.permissionClass,
-          input.targetPath, input.sourceHash, input.targetHash,
-          JSON.stringify(input.arguments), input.createdAt,
+          input.actionId, input.runId, input.effectType, JSON.stringify(input.effectPlan),
+          input.effectPlanHash, input.executorVersion, input.permissionClass,
+          input.targetPath, input.sourceHash, input.targetHash, input.createdAt,
         );
       })();
     } finally {
@@ -280,10 +377,15 @@ export class OperationalStore {
     return this.getProposal(input.proposalId)!;
   }
 
-  findProposal(workflow: string, targetPath: string, targetHash: string): ProposalRecord | undefined {
+  findProposal(
+    workflow: string, targetPath: string, targetHash: string,
+    effectType?: EffectType, executorVersion?: string,
+  ): ProposalRecord | undefined {
+    const effectWhere = effectType && executorVersion
+      ? " AND a.effect_type = ? AND a.executor_version = ?" : "";
     return this.queryProposal(
-      "WHERE p.workflow = ? AND p.target_path = ? AND p.target_hash = ?",
-      [workflow, targetPath, targetHash],
+      `WHERE p.workflow = ? AND p.target_path = ? AND p.target_hash = ?${effectWhere}`,
+      [workflow, targetPath, targetHash, ...(effectType && executorVersion ? [effectType, executorVersion] : [])],
     );
   }
 
@@ -326,6 +428,9 @@ export class OperationalStore {
   markProposalApplied(input: {
     proposalId: string; actionId: string; appliedAt: string; targetHash: string;
     backupPath: string; beforeHash: string; afterHash: string;
+    findingConversion?: {
+      eventId: string; findingId: string; expectedContentHash: string; taskId: string;
+    };
   }): void {
     const db = this.open();
     try {
@@ -336,6 +441,24 @@ export class OperationalStore {
           .run(input.appliedAt, input.proposalId);
         db.query("INSERT INTO undo_records (action_id, target_path, backup_path, before_hash, after_hash, created_at) VALUES (?, (SELECT target_path FROM actions WHERE action_id = ?), ?, ?, ?, ?)")
           .run(input.actionId, input.actionId, input.backupPath, input.beforeHash, input.afterHash, input.appliedAt);
+        if (input.findingConversion) {
+          const finding = db.query<{ content_hash: string; status: string }, [string]>(`
+            SELECT finding.content_hash,
+              (SELECT event.status FROM finding_status_events event
+               WHERE event.finding_id = finding.finding_id
+               ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) AS status
+            FROM findings finding WHERE finding.finding_id = ?
+          `).get(input.findingConversion.findingId);
+          if (!finding || finding.content_hash !== input.findingConversion.expectedContentHash
+            || finding.status !== "active") {
+            throw new Error("finding changed before task conversion was recorded");
+          }
+          db.query(`INSERT INTO finding_status_events (
+            event_id, finding_id, status, related_entity_type, related_entity_id, created_at
+          ) VALUES (?, ?, 'converted', 'task', ?, ?)`)
+            .run(input.findingConversion.eventId, input.findingConversion.findingId,
+              input.findingConversion.taskId, input.appliedAt);
+        }
       })();
     } finally {
       db.close();
@@ -364,8 +487,24 @@ export class OperationalStore {
     const db = this.open();
     try {
       db.transaction(() => {
+        const findingTask = db.query<{
+          effect_type: EffectType; source_id: string; effect_plan_json: string;
+        }, [string]>(`
+          SELECT action.effect_type, proposal.source_id, action.effect_plan_json
+          FROM actions action JOIN proposals proposal ON proposal.run_id = action.run_id
+          WHERE action.action_id = ?
+        `).get(actionId);
         db.query("UPDATE undo_records SET undone_at = ? WHERE action_id = ? AND undone_at IS NULL").run(undoneAt, actionId);
         db.query("UPDATE actions SET lifecycle_state = 'undone' WHERE action_id = ?").run(actionId);
+        if (findingTask?.effect_type === "finding_task_append") {
+          const plan = JSON.parse(findingTask.effect_plan_json) as Record<string, unknown>;
+          const taskId = typeof plan.taskId === "string" ? plan.taskId : undefined;
+          if (!taskId) throw new Error("finding task action lacks a stable task ID");
+          db.query(`INSERT INTO finding_status_events (
+            event_id, finding_id, status, related_entity_type, related_entity_id, reason, created_at
+          ) VALUES (?, ?, 'active', 'task', ?, 'task creation undone', ?)`)
+            .run(`findingevent_undo_${actionId}`, findingTask.source_id, taskId, undoneAt);
+        }
       })();
     } finally {
       db.close();
@@ -393,8 +532,9 @@ export class OperationalStore {
         db.query(
           `INSERT INTO derived_states (
              state_id, state_type, entity_id, state_version, content_json,
-             source_hashes_json, generation_method, prompt_version, model, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             source_hashes_json, generation_method, builder_name, builder_version,
+             input_provenance_json, dependency_hash, prompt_version, model, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           record.stateId,
           record.stateType,
@@ -403,6 +543,10 @@ export class OperationalStore {
           JSON.stringify(record.content),
           JSON.stringify(record.sourceHashes),
           record.generationMethod,
+          record.builderName ?? record.generationMethod,
+          record.builderVersion ?? "legacy",
+          JSON.stringify(record.inputProvenance ?? []),
+          record.dependencyHash ?? record.sourceHashes[0] ?? record.stateId,
           record.promptVersion ?? null,
           record.model ?? null,
           record.createdAt,
@@ -419,6 +563,7 @@ export class OperationalStore {
       const row = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string, string | null]>(
         `SELECT * FROM derived_states
@@ -434,6 +579,9 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}),
         createdAt: row.created_at,
@@ -449,6 +597,7 @@ export class OperationalStore {
       const rows = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string]>(
         "SELECT * FROM derived_states WHERE state_type = ? AND superseded_at IS NULL ORDER BY entity_id",
@@ -459,6 +608,9 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}), createdAt: row.created_at,
       }));
@@ -473,6 +625,7 @@ export class OperationalStore {
       const row = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string]>("SELECT * FROM derived_states WHERE state_id = ?").get(stateId);
       if (!row) return undefined;
@@ -482,9 +635,48 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}), createdAt: row.created_at,
       };
+    } finally {
+      db.close();
+    }
+  }
+
+  retireDerivedStates(input: {
+    stateType: string; keepEntityIds: string[]; retiredAt: string;
+  }): number {
+    const db = this.open();
+    try {
+      const current = db.query<{ entity_id: string | null }, [string]>(
+        "SELECT entity_id FROM derived_states WHERE state_type = ? AND superseded_at IS NULL",
+      ).all(input.stateType);
+      const keep = new Set(input.keepEntityIds);
+      const retired = current.filter((row) => row.entity_id !== null && !keep.has(row.entity_id));
+      const update = db.query(
+        "UPDATE derived_states SET superseded_at = ? WHERE state_type = ? AND entity_id = ? AND superseded_at IS NULL",
+      );
+      db.transaction(() => {
+        for (const row of retired) update.run(input.retiredAt, input.stateType, row.entity_id!);
+      })();
+      return retired.length;
+    } finally {
+      db.close();
+    }
+  }
+
+  retireDerivedState(input: {
+    stateType: string; entityId: string; retiredAt: string;
+  }): boolean {
+    const db = this.open();
+    try {
+      const result = db.query(
+        "UPDATE derived_states SET superseded_at = ? WHERE state_type = ? AND entity_id = ? AND superseded_at IS NULL",
+      ).run(input.retiredAt, input.stateType, input.entityId);
+      return result.changes > 0;
     } finally {
       db.close();
     }
@@ -587,11 +779,13 @@ export class OperationalStore {
     try {
       db.query(
         `INSERT INTO authorization_tokens (
-          token_hash, purpose, proposal_id, action_id, expected_target_hash, created_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          token_hash, purpose, proposal_id, action_id, expected_target_hash,
+          expected_plan_hash, executor_version, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.tokenHash, record.purpose, record.proposalId ?? null, record.actionId,
-        record.expectedTargetHash, record.createdAt, record.expiresAt,
+        record.expectedTargetHash, record.expectedPlanHash ?? null,
+        record.executorVersion ?? null, record.createdAt, record.expiresAt,
       );
     } finally {
       db.close();
@@ -600,21 +794,25 @@ export class OperationalStore {
 
   consumeAuthorizationToken(input: {
     tokenHash: string; purpose: "apply_proposal" | "undo_action";
-    proposalId?: string; actionId: string; expectedTargetHash: string; now: string;
+    proposalId?: string; actionId: string; expectedTargetHash: string;
+    expectedPlanHash?: string; executorVersion?: string; now: string;
   }): void {
     const db = this.open();
     try {
       db.transaction(() => {
         const row = db.query<{
           purpose: string; proposal_id: string | null; action_id: string;
-          expected_target_hash: string; expires_at: string; used_at: string | null;
+          expected_target_hash: string; expected_plan_hash: string | null;
+          executor_version: string | null; expires_at: string; used_at: string | null;
         }, [string]>("SELECT * FROM authorization_tokens WHERE token_hash = ?").get(input.tokenHash);
         if (!row) throw new Error("authorization token is invalid");
         if (row.used_at) throw new Error("authorization token has already been used");
         if (new Date(row.expires_at).getTime() <= new Date(input.now).getTime()) throw new Error("authorization token has expired");
         if (row.purpose !== input.purpose || row.action_id !== input.actionId
           || row.proposal_id !== (input.proposalId ?? null)
-          || row.expected_target_hash !== input.expectedTargetHash) {
+          || row.expected_target_hash !== input.expectedTargetHash
+          || row.expected_plan_hash !== (input.expectedPlanHash ?? null)
+          || row.executor_version !== (input.executorVersion ?? null)) {
           throw new Error("authorization token does not match this operation");
         }
         db.query("UPDATE authorization_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL")
@@ -759,6 +957,10 @@ export class OperationalStore {
       "workflow_state",
       "change_events",
       "derived_states",
+      "work_items",
+      "subject_links",
+      "findings",
+      "finding_status_events",
       "model_calls",
       "context_manifests",
       "model_cache",
@@ -769,6 +971,7 @@ export class OperationalStore {
       "rejections",
       "undo_records",
       "briefing_feedback",
+      "ui_feedback",
       "authorization_tokens",
       "gmail_accounts",
       "gmail_ingestion_runs",
@@ -802,12 +1005,14 @@ export class OperationalStore {
 interface ProposalRow {
   proposal_id: string; run_id: string; action_id: string; workflow: string; mode: string;
   lifecycle_state: string; source_type: string; source_id: string; source_hash: string;
-  target_path: string; target_hash: string; permission_class: string; tool_name: string;
-  arguments_json: string; created_at: string; expires_at: string | null; approved: number;
+  target_path: string; target_hash: string; permission_class: string; effect_type: EffectType;
+  effect_plan_json: string; effect_plan_hash: string; executor_version: string;
+  created_at: string; expires_at: string | null; approved: number;
 }
 
 const proposalSelect = `
-  SELECT p.*, a.action_id, a.permission_class, a.tool_name, a.arguments_json,
+  SELECT p.*, a.action_id, a.permission_class, a.effect_type, a.effect_plan_json,
+    a.effect_plan_hash, a.executor_version,
     EXISTS(SELECT 1 FROM approvals ap WHERE ap.proposal_id = p.proposal_id AND ap.action_id = a.action_id) AS approved
   FROM proposals p JOIN actions a ON a.run_id = p.run_id
 `;
@@ -818,8 +1023,9 @@ function toProposalRecord(row: ProposalRow): ProposalRecord {
     workflow: row.workflow, mode: row.mode, lifecycleState: row.lifecycle_state,
     sourceType: row.source_type, sourceId: row.source_id, sourceHash: row.source_hash,
     targetPath: row.target_path, targetHash: row.target_hash,
-    permissionClass: row.permission_class, toolName: row.tool_name,
-    arguments: JSON.parse(row.arguments_json) as Record<string, unknown>,
+    permissionClass: row.permission_class, effectType: row.effect_type,
+    effectPlan: JSON.parse(row.effect_plan_json) as EffectPlan,
+    effectPlanHash: row.effect_plan_hash, executorVersion: row.executor_version,
     createdAt: row.created_at, ...(row.expires_at ? { expiresAt: row.expires_at } : {}),
     approved: Boolean(row.approved),
   };

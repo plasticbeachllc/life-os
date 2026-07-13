@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { loadConfig } from "../config";
 import { CalendarStore } from "../calendar/store";
 import { OperationalStore } from "../db/store";
+import { schemaVersion } from "../db/schema";
+import { browserProposalReview } from "../effects/review-projection";
 import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { buildContext, type ContextManifest } from "../context/builder";
@@ -70,8 +72,13 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
     }
 
     const store = new OperationalStore(config.databasePath);
-    if (store.getSchemaVersion() === undefined) {
-      return { snapshot: setupSnapshot(now, "LifeOS needs a database migration before the Inbox can load."), summaryCandidates: [] };
+    const currentSchemaVersion = store.getSchemaVersion();
+    if (currentSchemaVersion === undefined) {
+      return { snapshot: setupSnapshot(now, "LifeOS needs an initialized operational database before the Inbox can load."), summaryCandidates: [] };
+    }
+    if (currentSchemaVersion !== schemaVersion) {
+      return { snapshot: setupSnapshot(now,
+        `LifeOS prototype database schema ${currentSchemaVersion} must be reset for schema ${schemaVersion}.`), summaryCandidates: [] };
     }
 
     const notifications: UiNotification[] = [];
@@ -86,7 +93,7 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
         tone: "proposal",
         status: "open",
         title: "Change ready for review",
-        summary: compactText(String(proposal.arguments.preview ?? "A LifeOS change is ready for review."), 180),
+        summary: compactText(browserProposalReview(proposal).preview, 180),
         detail: "Nothing will change without your approval.",
         relativeTime: relativeTime(proposal.createdAt, now),
         primaryAction: { kind: "review", label: "Review" },
@@ -280,6 +287,8 @@ function buildSummaryCandidates(input: {
       contextHash: manifest.contextHash,
       schemaVersion: UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION,
       policyVersion: UI_NOTIFICATION_SUMMARY_POLICY_VERSION,
+      redactionVersion: "stock-presidio-v1",
+      builderVersion: "ui-notification-summary-v1",
     });
     const actionRequired = notification.category !== "activity";
     const cachedSummary = parseCachedSummary(input.store.getModelCache(cacheKey)?.output, actionRequired);
@@ -331,7 +340,7 @@ function setupSnapshot(now: Date, summary: string): UiNotificationSnapshot {
       status: "open",
       title: "Finish LifeOS setup",
       summary,
-      detail: "LifeOS needs its initial health check and database setup before the Inbox can connect.",
+      detail: "Run the health check and database setup. Incompatible prototype state requires an explicit reset and canonical rebuild.",
       relativeTime: "Setup required",
       primaryAction: { kind: "discuss", label: "Ask how to finish" },
     }],

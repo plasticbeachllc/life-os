@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { ObsidianVault } from "../src/adapters/obsidian";
 import { OperationalStore } from "../src/db/store";
 import { applyTaskIdProposal } from "../src/tools/apply-task-id-patch";
+import { requireEffectPlan } from "../src/effects/contract";
 import { undoAction } from "../src/tools/undo-action";
 import { proposeTaskIdNormalization } from "../src/workflows/normalize-task-ids";
 import { rebuildState } from "../src/workflows/rebuild-state";
@@ -35,7 +36,7 @@ test("task normalization patches a note atomically and enables task projection",
   const first = await proposeTaskIdNormalization({ vault, store });
   const proposal = first.created[0]!;
   expect(first.created).toHaveLength(1);
-  expect((proposal.arguments.patches as unknown[])).toHaveLength(2);
+  expect(requireEffectPlan(proposal, "task_id_patch").patches).toHaveLength(2);
   expect((await proposeTaskIdNormalization({ vault, store })).existing[0]?.proposalId).toBe(proposal.proposalId);
 
   store.approveProposalAction(proposal.proposalId, proposal.actionId, new Date().toISOString());

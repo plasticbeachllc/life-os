@@ -26,13 +26,36 @@ export class CalendarStore {
         .run(runId, accountId, now);
     } finally { db.close(); }
   }
-  finishRun(input: { runId: string; now: string; status: "completed" | "failed"; discovered: number;
+  finishRun(input: { runId: string; now: string; status: "completed" | "partial" | "failed"; discovered: number;
     changed: number; unchanged: number; error?: string }): void {
     const db = this.store.open(); try {
       db.query(`UPDATE calendar_ingestion_runs SET completed_at=?,status=?,discovered_count=?,changed_count=?,
         unchanged_count=?,error=? WHERE ingestion_run_id=?`).run(input.now, input.status, input.discovered,
         input.changed, input.unchanged, input.error ?? null, input.runId);
     } finally { db.close(); }
+  }
+
+  resumeCursor(accountId: string, calendarId: string): { timeMin: string; timeMax: string; nextPageToken: string } | undefined {
+    const db = this.store.open();
+    try {
+      const row = db.query<{ time_min: string; time_max: string; next_page_token: string }, [string, string]>(
+        "SELECT time_min, time_max, next_page_token FROM calendar_ingestion_cursors WHERE account_id=? AND calendar_id=?",
+      ).get(accountId, calendarId);
+      return row ? { timeMin: row.time_min, timeMax: row.time_max, nextPageToken: row.next_page_token } : undefined;
+    } finally { db.close(); }
+  }
+
+  saveResumeCursor(input: { accountId: string; calendarId: string; timeMin: string; timeMax: string; nextPageToken: string; now: string }): void {
+    const db = this.store.open();
+    try { db.query(`INSERT INTO calendar_ingestion_cursors (account_id,calendar_id,time_min,time_max,next_page_token,updated_at)
+      VALUES (?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET calendar_id=excluded.calendar_id,time_min=excluded.time_min,
+      time_max=excluded.time_max,next_page_token=excluded.next_page_token,updated_at=excluded.updated_at`)
+      .run(input.accountId, input.calendarId, input.timeMin, input.timeMax, input.nextPageToken, input.now); }
+    finally { db.close(); }
+  }
+
+  clearResumeCursor(accountId: string): void {
+    const db = this.store.open(); try { db.query("DELETE FROM calendar_ingestion_cursors WHERE account_id=?").run(accountId); } finally { db.close(); }
   }
 
   currentHash(accountId: string, calendarId: string, eventId: string): string | undefined {
@@ -81,11 +104,11 @@ export class CalendarStore {
         endAt: row.end_at, allDay: Boolean(row.all_day), contentHash: row.content_hash }));
     } finally { db.close(); }
   }
-  markProcessed(accountId: string, events: StoredCalendarEvent[]): void {
+  markProcessed(accountId: string, calendarId: string, events: StoredCalendarEvent[]): void {
     const db = this.store.open(); try {
       const update = db.query(`UPDATE calendar_events SET last_processed_hash=?
-        WHERE account_id=? AND event_id=? AND content_hash=?`);
-      db.transaction(() => { for (const event of events) update.run(event.contentHash, accountId, event.eventId, event.contentHash); })();
+        WHERE account_id=? AND calendar_id=? AND event_id=? AND content_hash=?`);
+      db.transaction(() => { for (const event of events) update.run(event.contentHash, accountId, calendarId, event.eventId, event.contentHash); })();
     } finally { db.close(); }
   }
 

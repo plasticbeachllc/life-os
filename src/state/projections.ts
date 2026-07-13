@@ -1,8 +1,8 @@
 import type { VaultNote } from "../adapters/obsidian";
 import type { DerivedStateRecord, OperationalStore } from "../db/store";
 import { sha256Text, sha256Value } from "../util/hashing";
-import { newId } from "../util/ids";
 import { markdownTasks, sectionBody, type MarkdownTask } from "../util/markdown";
+import { materializeProjection, type ProjectionBuilder } from "./projection-contract";
 
 export interface ProjectState {
   entity_id: string;
@@ -48,100 +48,98 @@ export interface TaskState {
   state_version: number;
 }
 
-export class StateProjector {
-  constructor(private readonly store: OperationalStore) {}
-
-  projectProject(note: VaultNote): DerivedStateRecord {
+export const projectStateBuilder: ProjectionBuilder<VaultNote, ProjectState> = {
+  name: "project-state", version: "v2", stateType: "project_state",
+  entityId: requireEntityId,
+  inputs: (note) => [{ type: "obsidian_note", id: note.relativePath, hash: sha256Text(note.raw) }],
+  build: (note) => {
     requireType(note, "project");
-    const entityId = requireEntityId(note);
     const sourceHash = sha256Text(note.raw);
-    const prior = this.store.getCurrentDerivedState("project_state", entityId);
-    const nextVersion = nextStateVersion(prior, sourceHash);
-    if (prior && nextVersion === prior.stateVersion) return prior;
     const openTasks = markdownTasks(note.raw).filter((task) => task.state.toLowerCase() !== "x");
-    const content: ProjectState = {
-      entity_id: entityId,
-      name: note.title,
+    return {
+      entity_id: requireEntityId(note), name: note.title,
       status: String(note.metadata.status ?? "active"),
       outcome: sectionBody(note.body, "Outcome") ?? null,
-      next_actions: openTasks.map((task) => task.text),
-      open_loop_count: openTasks.length,
+      next_actions: openTasks.map((task) => task.text), open_loop_count: openTasks.length,
       risk_summary: sectionBody(note.body, "Risks") ?? null,
       last_meaningful_change: metadataString(note, "last_meaningful_change"),
-      source_hashes: [sourceHash],
-      state_version: nextVersion,
+      source_hashes: [sourceHash], state_version: 0,
     };
-    return save(this.store, "project_state", entityId, content, [sourceHash], nextVersion);
-  }
+  },
+};
 
-  projectPerson(note: VaultNote): DerivedStateRecord {
+export const personStateBuilder: ProjectionBuilder<VaultNote, PersonState> = {
+  name: "person-state", version: "v2", stateType: "person_state",
+  entityId: requireEntityId,
+  inputs: (note) => [{ type: "obsidian_note", id: note.relativePath, hash: sha256Text(note.raw) }],
+  build: (note) => {
     requireType(note, "person");
-    const entityId = requireEntityId(note);
     const sourceHash = sha256Text(note.raw);
-    const prior = this.store.getCurrentDerivedState("person_state", entityId);
-    const nextVersion = nextStateVersion(prior, sourceHash);
-    if (prior && nextVersion === prior.stateVersion) return prior;
     const openTasks = markdownTasks(note.raw).filter((task) => task.state.toLowerCase() !== "x");
     const interactionLog = sectionBody(note.body, "Interaction log");
-    const content: PersonState = {
-      entity_id: entityId,
-      display_name: note.title,
-      aliases: metadataList(note, "aliases"),
-      emails: metadataList(note, "emails"),
-      last_contact: metadataString(note, "last_contact"),
-      next_contact: metadataString(note, "next_contact"),
+    return {
+      entity_id: requireEntityId(note), display_name: note.title,
+      aliases: metadataList(note, "aliases"), emails: metadataList(note, "emails"),
+      last_contact: metadataString(note, "last_contact"), next_contact: metadataString(note, "next_contact"),
       open_loop_count: openTasks.length,
       recent_interaction_summary: interactionLog ? tail(interactionLog, 800) : null,
       active_project_ids: metadataList(note, "active_project_ids"),
-      source_hashes: [sourceHash],
-      state_version: nextVersion,
+      source_hashes: [sourceHash], state_version: 0,
     };
-    return save(this.store, "person_state", entityId, content, [sourceHash], nextVersion);
-  }
+  },
+};
 
-  projectTask(note: VaultNote, task: MarkdownTask): DerivedStateRecord {
+interface TaskProjectionInput { note: VaultNote; task: MarkdownTask }
+
+export const taskStateBuilder: ProjectionBuilder<TaskProjectionInput, TaskState> = {
+  name: "task-state", version: "v2", stateType: "task_state",
+  entityId: ({ task }) => task.taskId,
+  inputs: ({ note, task }) => [{
+    type: "obsidian_task", id: task.taskId ?? `${note.relativePath}:${task.line}`,
+    hash: taskProjectionHash(note, task),
+  }],
+  build: ({ note, task }) => {
     if (!task.taskId) throw new Error(`stable task id required: ${note.relativePath}:${task.line}`);
-    const sourceHash = sha256Text(note.raw);
-    const prior = this.store.getCurrentDerivedState("task_state", task.taskId);
-    const taskHash = sha256Value({ sourceHash, task });
-    const nextVersion = nextStateVersion(prior, taskHash);
-    if (prior && nextVersion === prior.stateVersion) return prior;
+    const sourceHash = taskProjectionHash(note, task);
     const canonicalEntityId = metadataString(note, "id");
-    const content: TaskState = {
-      task_id: task.taskId,
-      description: cleanTaskDescription(task.text),
-      canonical_note: note.relativePath,
+    return {
+      task_id: task.taskId, description: cleanTaskDescription(task.text), canonical_note: note.relativePath,
       source: task.source ?? `obsidian:${note.relativePath}#L${task.line}`,
       owner: task.text.includes("#waiting") ? "other" : "user",
       status: task.state.toLowerCase() === "x" ? "completed" : "open",
       waiting: task.text.includes("#waiting"),
       project_id: note.metadata.type === "project" ? canonicalEntityId : null,
       person_id: note.metadata.type === "person" ? canonicalEntityId : null,
-      due_date: markerDate(task.text, "\\u{1F4C5}"),
-      scheduled_date: markerDate(task.text, "\\u{23F3}"),
-      completed_at: markerDate(task.text, "\\u{2705}"),
-      source_hashes: [sourceHash],
-      state_version: nextVersion,
+      due_date: markerDate(task.text, "\\u{1F4C5}"), scheduled_date: markerDate(task.text, "\\u{23F3}"),
+      completed_at: markerDate(task.text, "\\u{2705}"), source_hashes: [sourceHash], state_version: 0,
     };
-    return save(this.store, "task_state", task.taskId, content, [taskHash], nextVersion);
-  }
+  },
+};
+
+function taskProjectionHash(note: VaultNote, task: MarkdownTask): string {
+  return sha256Value({
+    note: note.relativePath, noteType: note.metadata.type ?? null,
+    canonicalEntityId: metadataString(note, "id"), task,
+  });
 }
 
-function save(
-  store: OperationalStore,
-  stateType: string,
-  entityId: string,
-  content: ProjectState | PersonState | TaskState,
-  sourceHashes: string[],
-  stateVersion: number,
-): DerivedStateRecord {
-  const record: DerivedStateRecord = {
-    stateId: newId("state"), stateType, entityId, stateVersion,
-    content: content as unknown as Record<string, unknown>, sourceHashes,
-    generationMethod: "deterministic-projection-v1", createdAt: new Date().toISOString(),
-  };
-  store.saveDerivedState(record);
-  return record;
+export class StateProjector {
+  constructor(private readonly store: OperationalStore, private readonly now = new Date()) {}
+
+  projectProject(note: VaultNote): DerivedStateRecord {
+    const result = materializeProjection({ store: this.store, builder: projectStateBuilder, value: note, now: this.now });
+    return result.state;
+  }
+
+  projectPerson(note: VaultNote): DerivedStateRecord {
+    const result = materializeProjection({ store: this.store, builder: personStateBuilder, value: note, now: this.now });
+    return result.state;
+  }
+
+  projectTask(note: VaultNote, task: MarkdownTask): DerivedStateRecord {
+    const result = materializeProjection({ store: this.store, builder: taskStateBuilder, value: { note, task }, now: this.now });
+    return result.state;
+  }
 }
 
 function markerDate(text: string, escapedMarker: string): string | null {
@@ -154,11 +152,6 @@ function cleanTaskDescription(text: string): string {
     .replace(/\s+#waiting\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function nextStateVersion(prior: DerivedStateRecord | undefined, sourceHash: string): number {
-  if (!prior) return 1;
-  return prior.sourceHashes.includes(sourceHash) ? prior.stateVersion : prior.stateVersion + 1;
 }
 
 function requireType(note: VaultNote, expected: string): void {

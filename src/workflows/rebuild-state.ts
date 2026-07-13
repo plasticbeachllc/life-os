@@ -4,6 +4,9 @@ import { ChangeTracker } from "../state/change-tracker";
 import { StateProjector } from "../state/projections";
 import { rebuildChiefOfStaffState } from "../state/chief-of-staff";
 import { markdownTasks, sectionBody, type MarkdownTask } from "../util/markdown";
+import { backfillExtractionFindings } from "../findings/projector";
+import { rebuildFindingAttentionState } from "../state/finding-attention";
+import { targetIncludes, type ProjectionTarget } from "../state/projection-contract";
 
 export interface StateRebuildIssue {
   path: string;
@@ -19,6 +22,11 @@ export interface StateRebuildReport {
   people: number;
   tasks: number;
   taskCandidates: number;
+  findingExtractions: number;
+  findingsCreated: number;
+  findingsUnchanged: number;
+  retired: number;
+  findingAttentionStateVersion: number;
   chiefOfStaffStateVersion: number;
   issues: StateRebuildIssue[];
 }
@@ -26,19 +34,31 @@ export interface StateRebuildReport {
 export async function rebuildState(input: {
   vault: ObsidianVault;
   store: OperationalStore;
+  targets?: ProjectionTarget[];
+  now?: Date;
 }): Promise<StateRebuildReport> {
   input.vault.requireExists();
   input.store.migrate();
   const tracker = new ChangeTracker(input.store);
-  const projector = new StateProjector(input.store);
+  const now = input.now ?? new Date();
+  const projector = new StateProjector(input.store, now);
   const allNotes = await input.vault.notes();
   const notes = allNotes.filter(isStateCandidate);
   const report: StateRebuildReport = {
     scanned: notes.length, changed: 0, unchanged: 0, projected: 0,
     projects: 0, people: 0, tasks: 0, taskCandidates: 0,
+    findingExtractions: 0, findingsCreated: 0, findingsUnchanged: 0,
+    retired: 0,
+    findingAttentionStateVersion: 0,
     chiefOfStaffStateVersion: 0, issues: [],
   };
   const recentChanges: string[] = [];
+  const findingBackfill = backfillExtractionFindings(input.store);
+  report.findingExtractions = findingBackfill.extractions;
+  report.findingsCreated = findingBackfill.created;
+  report.findingsUnchanged = findingBackfill.unchanged;
+  const liveProjectIds = new Set<string>();
+  const livePersonIds = new Set<string>();
 
   for (const note of notes) {
     const expectedType = note.relativePath.startsWith("20 Projects/") ? "project" : "person";
@@ -54,22 +74,28 @@ export async function rebuildState(input: {
       content: note.raw,
       relevantSections: relevantSections(note, expectedType),
     });
-    if (!change.changed) {
-      report.unchanged += 1;
-      continue;
-    }
-
-    report.changed += 1;
+    if (change.changed) report.changed += 1;
+    else report.unchanged += 1;
+    const entityId = String(note.metadata.id);
+    if (expectedType === "project") liveProjectIds.add(entityId);
+    else livePersonIds.add(entityId);
+    const stateType = expectedType === "project" ? "project_state" : "person_state";
+    if (!targetIncludes(input.targets, stateType, entityId)) continue;
+    const prior = input.store.getCurrentDerivedState(stateType, entityId);
     if (expectedType === "project") {
-      projector.projectProject(note);
-      report.projects += 1;
-      recentChanges.push(`Project state changed: ${String(note.metadata.id)}`);
+      const state = projector.projectProject(note);
+      if (!prior || prior.stateId !== state.stateId) {
+        report.projects += 1;
+        recentChanges.push(`Project state changed: ${entityId}`);
+      }
     } else {
-      projector.projectPerson(note);
-      report.people += 1;
-      recentChanges.push(`Person state changed: ${String(note.metadata.id)}`);
+      const state = projector.projectPerson(note);
+      if (!prior || prior.stateId !== state.stateId) {
+        report.people += 1;
+        recentChanges.push(`Person state changed: ${entityId}`);
+      }
     }
-    report.projected += 1;
+    if (!prior || input.store.getCurrentDerivedState(stateType, entityId)?.stateId !== prior.stateId) report.projected += 1;
   }
 
   const taskEntries = allNotes.flatMap((note) => markdownTasks(note.raw).map((task) => ({ note, task })));
@@ -85,6 +111,7 @@ export async function rebuildState(input: {
       continue;
     }
     const taskId = task.taskId!;
+    if (!targetIncludes(input.targets, "task_state", taskId)) continue;
     const prior = input.store.getCurrentDerivedState("task_state", taskId);
     const state = projector.projectTask(note, task);
     if (!prior || prior.stateId !== state.stateId) {
@@ -94,8 +121,39 @@ export async function rebuildState(input: {
     }
   }
 
+  if (!input.targets || input.targets.length === 0) {
+    report.retired += input.store.retireDerivedStates({
+      stateType: "project_state", keepEntityIds: [...liveProjectIds], retiredAt: now.toISOString(),
+    });
+    report.retired += input.store.retireDerivedStates({
+      stateType: "person_state", keepEntityIds: [...livePersonIds], retiredAt: now.toISOString(),
+    });
+    report.retired += input.store.retireDerivedStates({
+      stateType: "task_state",
+      keepEntityIds: taskEntries.flatMap(({ note, task }) =>
+        taskValidationIssue(note, task, taskIdCounts) || !task.taskId ? [] : [task.taskId]),
+      retiredAt: now.toISOString(),
+    });
+  } else {
+    const liveIds: Record<string, Set<string>> = {
+      project_state: liveProjectIds,
+      person_state: livePersonIds,
+      task_state: new Set(taskEntries.flatMap(({ note, task }) =>
+        taskValidationIssue(note, task, taskIdCounts) || !task.taskId ? [] : [task.taskId])),
+    };
+    for (const target of input.targets) {
+      const live = liveIds[target.stateType];
+      if (!target.entityId || !live || live.has(target.entityId)) continue;
+      if (input.store.retireDerivedState({
+        stateType: target.stateType, entityId: target.entityId, retiredAt: now.toISOString(),
+      })) report.retired += 1;
+    }
+  }
+
+  const findingAttention = rebuildFindingAttentionState({ store: input.store, now });
+  report.findingAttentionStateVersion = findingAttention.stateVersion;
   const chiefState = rebuildChiefOfStaffState({
-    store: input.store, recentChanges,
+    store: input.store, recentChanges, now,
     unresolvedAmbiguities: report.issues.map((issue) => `${issue.path}: ${issue.message}`),
   });
   report.chiefOfStaffStateVersion = chiefState.stateVersion;

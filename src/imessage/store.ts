@@ -1,7 +1,11 @@
-import type { OperationalStore } from "../db/store";
+import type { ModelCallRecord, OperationalStore } from "../db/store";
 import { sha256Value } from "../util/hashing";
 import type { NormalizedIMessage } from "./normalizer";
 import { imessageNormalizerVersion } from "./normalizer";
+import type { ExtractionRecordForProjection, SemanticFinding } from "../findings/contract";
+import { completeWorkInTransaction, enqueueWorkInTransaction } from "../work/repository";
+import { saveFindingsInTransaction } from "../findings/store";
+import { completeReasoningCallInTransaction, type PreparedReasoningUsage } from "../orchestration/prepared-reasoning";
 
 export class IMessageStore {
   constructor(private readonly store: OperationalStore) {}
@@ -56,89 +60,6 @@ export class IMessageStore {
     }
   }
 
-  extractionCandidates(sourceId: string, limit: number): Array<{
-    messageId: string; conversationId: string; sourceRowId: number;
-    contentHash: string; participantSetHash: string; sentAt: string;
-    conversationStateHash: string; previousSentAt: string | null;
-  }> {
-    const db = this.store.open();
-    try {
-      return db.query<{
-        message_id: string; conversation_id: string; source_row_id: number;
-        content_hash: string; participant_set_hash: string; sent_at: string;
-        conversation_state_hash: string; previous_sent_at: string | null;
-      }, [string, number]>(`
-        SELECT latest.message_id, latest.conversation_id, latest.source_row_id,
-          latest.content_hash, latest.participant_set_hash, latest.sent_at,
-          c.conversation_state_hash,
-          (SELECT MAX(processed.sent_at) FROM (
-             SELECT previous.sent_at AS sent_at
-             FROM imessage_extractions e JOIN imessage_messages previous
-               ON previous.source_id = e.source_id AND previous.message_id = e.message_id
-             WHERE e.source_id = c.source_id AND e.conversation_id = c.conversation_id
-             UNION ALL
-             SELECT previous.sent_at AS sent_at
-             FROM imessage_deterministic_triage t JOIN imessage_messages previous
-               ON previous.source_id = t.source_id AND previous.message_id = t.message_id
-             WHERE t.source_id = c.source_id AND t.conversation_id = c.conversation_id
-           ) processed
-          ) AS previous_sent_at
-        FROM imessage_conversations c
-        JOIN imessage_messages latest
-          ON latest.source_id = c.source_id AND latest.conversation_id = c.conversation_id
-         AND latest.message_id = (
-           SELECT candidate.message_id FROM imessage_messages candidate
-           WHERE candidate.source_id = c.source_id
-             AND candidate.conversation_id = c.conversation_id
-             AND candidate.text_available = 1 AND candidate.text_character_count > 0
-           ORDER BY candidate.sent_at DESC, candidate.source_row_id DESC LIMIT 1
-         )
-        WHERE c.source_id = ?
-          AND NOT EXISTS (
-            SELECT 1 FROM imessage_extractions current
-            WHERE current.source_id = c.source_id
-              AND current.conversation_id = c.conversation_id
-              AND current.conversation_state_hash = c.conversation_state_hash
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM imessage_deterministic_triage current
-            WHERE current.source_id = c.source_id
-              AND current.conversation_id = c.conversation_id
-              AND current.conversation_state_hash = c.conversation_state_hash
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM imessage_extractions same_anchor
-            JOIN imessage_messages anchored
-              ON anchored.source_id = same_anchor.source_id
-             AND anchored.message_id = same_anchor.message_id
-            WHERE same_anchor.source_id = c.source_id
-              AND same_anchor.conversation_id = c.conversation_id
-              AND anchored.source_row_id = latest.source_row_id
-              AND same_anchor.source_hash = latest.content_hash
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM imessage_deterministic_triage same_anchor
-            JOIN imessage_messages anchored
-              ON anchored.source_id = same_anchor.source_id
-             AND anchored.message_id = same_anchor.message_id
-            WHERE same_anchor.source_id = c.source_id
-              AND same_anchor.conversation_id = c.conversation_id
-              AND anchored.source_row_id = latest.source_row_id
-              AND same_anchor.source_hash = latest.content_hash
-          )
-        ORDER BY latest.sent_at DESC, latest.source_row_id DESC LIMIT ?
-      `).all(sourceId, limit).map((row) => ({
-        messageId: row.message_id, conversationId: row.conversation_id,
-        sourceRowId: row.source_row_id, contentHash: row.content_hash,
-        participantSetHash: row.participant_set_hash, sentAt: row.sent_at,
-        conversationStateHash: row.conversation_state_hash,
-        previousSentAt: row.previous_sent_at,
-      }));
-    } finally {
-      db.close();
-    }
-  }
-
   conversationStateHash(sourceId: string, conversationId: string): string | undefined {
     const db = this.store.open();
     try {
@@ -146,6 +67,27 @@ export class IMessageStore {
         SELECT conversation_state_hash FROM imessage_conversations
         WHERE source_id = ? AND conversation_id = ?
       `).get(sourceId, conversationId)?.conversation_state_hash;
+    } finally {
+      db.close();
+    }
+  }
+
+  previousProcessedSentAt(sourceId: string, conversationId: string): string | null {
+    const db = this.store.open();
+    try {
+      return db.query<{ sent_at: string | null }, [string, string, string, string]>(`
+        SELECT MAX(processed.sent_at) AS sent_at FROM (
+          SELECT message.sent_at FROM imessage_extractions extraction
+          JOIN imessage_messages message ON message.source_id = extraction.source_id
+            AND message.message_id = extraction.message_id
+          WHERE extraction.source_id = ? AND extraction.conversation_id = ?
+          UNION ALL
+          SELECT message.sent_at FROM imessage_deterministic_triage triage
+          JOIN imessage_messages message ON message.source_id = triage.source_id
+            AND message.message_id = triage.message_id
+          WHERE triage.source_id = ? AND triage.conversation_id = ?
+        ) processed
+      `).get(sourceId, conversationId, sourceId, conversationId)?.sent_at ?? null;
     } finally {
       db.close();
     }
@@ -174,11 +116,61 @@ export class IMessageStore {
     }
   }
 
+  enqueueExtractionRefreshes(input: {
+    sourceId: string; promptVersion: string; schemaVersion: string; policyVersion: string; now: string;
+  }): number {
+    const db = this.store.open();
+    try {
+      return db.transaction(() => {
+        const rows = db.query<{
+          conversation_id: string; conversation_state_hash: string;
+          message_id: string; content_hash: string;
+        }, [string, string, string, string]>(`
+          SELECT conversation.conversation_id, conversation.conversation_state_hash,
+            anchor.message_id, anchor.content_hash
+          FROM imessage_conversations conversation
+          JOIN imessage_messages anchor ON anchor.source_id = conversation.source_id
+            AND anchor.conversation_id = conversation.conversation_id
+            AND anchor.message_id = (
+              SELECT candidate.message_id FROM imessage_messages candidate
+              WHERE candidate.source_id = conversation.source_id
+                AND candidate.conversation_id = conversation.conversation_id
+                AND candidate.text_available = 1 AND candidate.text_character_count > 0
+              ORDER BY candidate.sent_at DESC, candidate.source_row_id DESC LIMIT 1
+            )
+          WHERE conversation.source_id = ?
+            AND EXISTS (SELECT 1 FROM imessage_extractions prior
+              WHERE prior.source_id = conversation.source_id
+                AND prior.conversation_id = conversation.conversation_id
+                AND prior.conversation_state_hash = conversation.conversation_state_hash)
+            AND NOT EXISTS (SELECT 1 FROM imessage_extractions current
+              WHERE current.source_id = conversation.source_id
+                AND current.conversation_id = conversation.conversation_id
+                AND current.conversation_state_hash = conversation.conversation_state_hash
+                AND current.prompt_version = ? AND current.schema_version = ?
+                AND current.policy_version = ?)
+        `).all(input.sourceId, input.promptVersion, input.schemaVersion, input.policyVersion);
+        for (const row of rows) enqueueWorkInTransaction(db, {
+          workflow: "imessage_extraction", subjectType: "imessage_conversation",
+          subjectSourceId: input.sourceId, subjectId: row.conversation_id,
+          anchorId: row.message_id, sourceHash: row.content_hash,
+          containerHash: row.conversation_state_hash, reason: "contract_refresh", now: input.now,
+          contractIdentity: `${input.promptVersion}:${input.schemaVersion}:${input.policyVersion}`,
+        });
+        return rows.length;
+      })();
+    } finally {
+      db.close();
+    }
+  }
+
   saveExtraction(input: {
     extractionId: string; sourceId: string; messageId: string; sourceHash: string;
     conversationId: string; conversationStateHash: string; callId: string;
     classification: string; output: Record<string, unknown>; promptVersion: string;
     schemaVersion: string; policyVersion: string; model: string; createdAt: string;
+    call?: ModelCallRecord; usage?: PreparedReasoningUsage; findings?: SemanticFinding[];
+    workId?: string; leaseOwner?: string;
   }): void {
     const db = this.store.open();
     try {
@@ -201,7 +193,40 @@ export class IMessageStore {
             AND task_type = 'subscription_imessage_extraction'
             AND source_hash = ? AND status = 'prepared' AND call_id <> ?
         `).run(input.createdAt, input.sourceHash, input.callId);
+        if (input.call && input.findings && input.workId && input.leaseOwner) {
+          saveFindingsInTransaction(db, input.findings);
+          completeReasoningCallInTransaction(db, {
+            call: input.call, ...(input.usage ? { usage: input.usage } : {}), completedAt: input.createdAt,
+          });
+          completeWorkInTransaction(db, {
+            workId: input.workId, leaseOwner: input.leaseOwner,
+            sourceHash: input.sourceHash, containerHash: input.conversationStateHash,
+            completedAt: input.createdAt,
+          });
+        } else if (input.call || input.findings || input.workId || input.leaseOwner) {
+          throw new Error("transactional Messages extraction completion is incomplete");
+        }
       })();
+    } finally {
+      db.close();
+    }
+  }
+
+  listExtractionsForFindingProjection(): ExtractionRecordForProjection[] {
+    const db = this.store.open();
+    try {
+      return db.query<{
+        extraction_id: string; call_id: string; output_json: string; created_at: string;
+      }, []>(`
+        SELECT extraction_id, call_id, output_json, created_at
+        FROM imessage_extractions ORDER BY created_at, extraction_id
+      `).all().map((row) => ({
+        sourceType: "imessage_extraction",
+        extractionId: row.extraction_id,
+        callId: row.call_id,
+        output: JSON.parse(row.output_json) as Record<string, unknown>,
+        createdAt: row.created_at,
+      }));
     } finally {
       db.close();
     }
@@ -211,19 +236,28 @@ export class IMessageStore {
     triageId: string; sourceId: string; messageId: string; sourceHash: string;
     conversationId: string; conversationStateHash: string; classification: string;
     output: Record<string, unknown>; ruleVersion: string; createdAt: string;
+    workId?: string; leaseOwner?: string;
   }): void {
     const db = this.store.open();
     try {
-      db.query(`
-        INSERT INTO imessage_deterministic_triage (
-          triage_id, source_id, message_id, source_hash, conversation_id,
-          conversation_state_hash, classification, output_json, rule_version, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        input.triageId, input.sourceId, input.messageId, input.sourceHash,
-        input.conversationId, input.conversationStateHash, input.classification,
-        JSON.stringify(input.output), input.ruleVersion, input.createdAt,
-      );
+      db.transaction(() => {
+        db.query(`
+          INSERT INTO imessage_deterministic_triage (
+            triage_id, source_id, message_id, source_hash, conversation_id,
+            conversation_state_hash, classification, output_json, rule_version, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          input.triageId, input.sourceId, input.messageId, input.sourceHash,
+          input.conversationId, input.conversationStateHash, input.classification,
+          JSON.stringify(input.output), input.ruleVersion, input.createdAt,
+        );
+        if (input.workId && input.leaseOwner) completeWorkInTransaction(db, {
+          workId: input.workId, leaseOwner: input.leaseOwner,
+          sourceHash: input.sourceHash, containerHash: input.conversationStateHash,
+          completedAt: input.createdAt,
+        });
+        else if (input.workId || input.leaseOwner) throw new Error("deterministic triage work lease is incomplete");
+      })();
     } finally {
       db.close();
     }
@@ -385,6 +419,23 @@ export class IMessageStore {
         }
         for (const [conversationId, messages] of byConversation) {
           this.refreshConversation(db, input.sourceId, conversationId, messages.at(-1)!.service, input.now);
+          const work = db.query<{
+            message_id: string; content_hash: string; conversation_state_hash: string;
+          }, [string, string]>(`
+            SELECT message.message_id, message.content_hash, conversation.conversation_state_hash
+            FROM imessage_conversations conversation JOIN imessage_messages message
+              ON message.source_id = conversation.source_id
+                AND message.conversation_id = conversation.conversation_id
+            WHERE conversation.source_id = ? AND conversation.conversation_id = ?
+              AND message.text_available = 1 AND message.text_character_count > 0
+            ORDER BY message.sent_at DESC, message.source_row_id DESC LIMIT 1
+          `).get(input.sourceId, conversationId);
+          if (work) enqueueWorkInTransaction(db, {
+            workflow: "imessage_extraction", subjectType: "imessage_conversation",
+            subjectSourceId: input.sourceId, subjectId: conversationId,
+            anchorId: work.message_id, sourceHash: work.content_hash,
+            containerHash: work.conversation_state_hash, reason: "source_delta", now: input.now,
+          });
         }
         db.query(`
           UPDATE imessage_sources SET last_row_id = MAX(last_row_id, ?), updated_at = ?
@@ -463,7 +514,11 @@ export class IMessageStore {
         extractions: count("imessage_extractions") + count("imessage_deterministic_triage"),
         modelExtractions: count("imessage_extractions"),
         deterministicTriaged: count("imessage_deterministic_triage"),
-        pendingConversations: this.extractionCandidates(sourceId, 100_000).length,
+        pendingConversations: db.query<{ count: number }, [string]>(`
+          SELECT COUNT(DISTINCT subject_id) AS count FROM work_items
+          WHERE workflow = 'imessage_extraction' AND subject_source_id = ?
+            AND state IN ('pending', 'leased')
+        `).get(sourceId)?.count ?? 0,
         unavailableText: messages?.unavailable ?? 0, unprocessed: messages?.unprocessed ?? 0,
         ingestionRuns: count("imessage_ingestion_runs"),
         lastRunStatus: lastRun?.status ?? null,

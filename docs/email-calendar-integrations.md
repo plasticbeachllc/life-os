@@ -24,9 +24,12 @@ Gmail ingestion and structured extraction remain separate from task creation:
 ```text
 IMPORTANT Gmail message
   -> deterministic ingestion and hashes
+  -> metadata-only extraction work item
+  -> exclusive bounded lease + exact refetch
   -> bounded subscription-agent extraction
   -> sanitized extraction review
-  -> user selects extraction ID + item index
+  -> deterministic common finding projection
+  -> user selects active finding
   -> yellow task proposal
   -> exact preview and target-hash validation
   -> short-lived approval token
@@ -35,23 +38,31 @@ IMPORTANT Gmail message
 
 ### Proposal construction
 
-`proposeEmailExtractionTask` accepts only an extraction ID and item index. It rejects missing items,
-non-user ownership, and kinds other than `explicit_request`, `open_loop`, or `user_commitment`.
+`proposeFindingTask` accepts only a finding ID. It rejects missing or inactive findings, non-user
+ownership, and kinds other than `explicit_request`, `open_loop`, or `user_commitment`.
 
 Life OS, not the agent, derives:
 
-- task text from the validated extraction statement;
+- task text from the validated finding statement;
 - due date from the structured extraction;
 - a stable `task_*` ID;
 - the fixed target `00 Inbox/Inbox.md`;
-- source and target hashes;
+- immutable finding-content and target hashes;
 - the exact review preview.
 
 The agent cannot supply a path, patch, task body, due date, or task ID.
 
+### Extraction work
+
+Changed Gmail messages enqueue extraction work in the same SQLite transaction as message, thread, and
+immutable-version metadata. Unchanged replay emits nothing. Preparation atomically leases one work
+item and binds its source/container identity into the context manifest. Extraction, common findings,
+model-call completion, and work completion commit together. Work items retain internal identities and
+hashes but never Gmail bodies, excerpts, prompt blobs, or raw errors.
+
 ### Application
 
-`applyEmailTaskProposal` rechecks all important boundaries after approval:
+`applyFindingTaskProposal` rechecks all important boundaries after approval:
 
 - proposal workflow and tool identity;
 - approved lifecycle state;
@@ -59,11 +70,14 @@ The agent cannot supply a path, patch, task body, due date, or task ID.
 - deterministic `create_task` policy decision;
 - vault-root containment;
 - unchanged target hash;
+- active finding status and unchanged finding content hash;
 - task-line and task-ID shape.
 
 It copies the current inbox to the external backup directory, writes a temporary sibling file, renames
 it atomically, records before/after hashes, and creates an undo record. The appended provenance comment
-links the stable task to the extraction without retaining an email body.
+links the stable task to the finding without retaining an email body. Successful application records a
+`converted` finding status in the same SQLite transaction as action and undo metadata; undo appends an
+`active` status event.
 
 ## Calendar
 
@@ -79,8 +93,11 @@ Google Calendar API
   -> compact calendar_state projection
 ```
 
-The API request uses `singleEvents=true`, `orderBy=startTime`, and `showDeleted=true`. Pagination is
-bounded by Google's event-list response and continues until `nextPageToken` is absent.
+The API request uses `singleEvents=true`, `orderBy=startTime`, and `showDeleted=true`. Each invocation
+is bounded by a 30-second wall-clock budget, 10 pages, and a configurable event-instance limit
+(`life-os calendar ingest --limit <n>`, default 500, maximum 5,000). When a budget is reached, LifeOS
+persists the exact Calendar page token and fixed query window, returns a terminal `partial` run, and
+resumes that same window on the next invocation. The cursor is cleared only after `nextPageToken` is absent.
 
 ### Retention
 
@@ -121,13 +138,14 @@ queryable through `life_os_list_compact_state` with `stateType: "calendar"`.
 
 ## MCP Surface
 
-The integration adds three tools:
+Relevant integration and shared tools include:
 
 | Tool | Effect |
 | --- | --- |
 | `life_os_calendar_status` | Metadata-only configured/event/unprocessed counts. |
 | `life_os_ingest_calendar` | Read-only provider ingestion and compact-state rebuild. |
-| `life_os_propose_email_task` | Creates a pending fixed-inbox proposal; does not write. |
+| `life_os_propose_finding_task` | Creates a pending fixed-inbox proposal from one eligible active finding; does not write. |
+| `life_os_work_status` | Sanitized aggregate extraction backlog and oldest pending age. |
 
 Task application continues through the shared tools:
 
@@ -139,22 +157,25 @@ Task application continues through the shared tools:
 
 ## Schema
 
-Schema version 8 adds:
+Schema version 8 originally added:
 
 - `calendar_accounts`
 - `calendar_ingestion_runs`
 - `calendar_events`
 
-Email task proposals reuse the existing runs, proposals, actions, approvals, authorization tokens,
+Finding task proposals reuse the existing runs, proposals, actions, approvals, authorization tokens,
 action results, backups, and undo records.
+
+Schema version 17 adds the shared Gmail/Messages `work_items` queue. Older prototype databases require
+an explicit reset and rebuild; Life OS never deletes them automatically.
 
 ## Verification
 
 The live primary-calendar check completed with five changed events on the first run and five unchanged
 events on the second run. Calendar status reported zero unprocessed events.
 
-The first email-task proposal was approved as an end-to-end test. It appended a Walmart+ decision task,
-created an external backup, recorded extraction provenance, and rebuilt into compact task state without
+The first finding-task proposal was approved as an end-to-end test. It appended a decision task,
+created an external backup, recorded finding provenance, and rebuilt into compact task state without
 validation errors.
 
 Automated coverage includes incremental Calendar replay, compact-state non-retention, fixed task target,
@@ -164,6 +185,5 @@ provenance parsing, and the MCP tool allowlist.
 ## Known Follow-Up Work
 
 - Reconcile events that disappear from the active window without returning as canceled records.
-- Record failed Calendar ingestion runs after a run has started.
-- Add explicit review feedback for proposed email tasks before using acceptance-rate metrics.
+- Add explicit review feedback for proposed finding tasks before using acceptance-rate metrics.
 - Add provider sync tokens only if measured API volume justifies them.

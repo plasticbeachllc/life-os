@@ -4,7 +4,7 @@ import type { IntegrationRegistry } from "../integrations/registry";
 
 export function registerIntegrationTools(server: McpServer, registry: IntegrationRegistry): void {
   for (const integration of registry.list()) {
-    server.registerTool(`life_os_${integration.id}_status`, {
+    server.registerTool(integration.application.statusTool, {
       description: integration.statusDescription,
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false },
@@ -14,7 +14,7 @@ export function registerIntegrationTools(server: McpServer, registry: Integratio
       ? { limit: z.number().int().min(1).max(integration.limit.maximum).default(integration.limit.default)
         .describe(integration.limit.description) }
       : {};
-    server.registerTool(`life_os_ingest_${integration.id}`, {
+    server.registerTool(integration.application.ingestTool, {
       description: integration.ingestDescription,
       inputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false },

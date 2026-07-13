@@ -32,7 +32,7 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
       "life_os_prepare_undo",
       "life_os_preview_email_extraction_context",
       "life_os_preview_imessage_extraction_context",
-      "life_os_propose_email_task",
+      "life_os_propose_finding_task",
       "life_os_rebuild_state",
       "life_os_review_email_extractions",
       "life_os_review_imessage_extractions",
@@ -42,6 +42,7 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
       "life_os_telegram_status",
       "life_os_triage_imessage_service_messages",
       "life_os_undo_action",
+      "life_os_work_status",
     ]);
     for (const provider of ["gmail", "imessage", "calendar", "telegram"]) {
       const status = tools.tools.find((tool) => tool.name === `life_os_${provider}_status`);
@@ -55,6 +56,8 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
     const gmailIngest = tools.tools.find((tool) => tool.name === "life_os_ingest_gmail");
     expect((gmailIngest?.inputSchema.properties as Record<string, Record<string, unknown>>)
       .limit?.maximum).toBe(100);
+    expect(tools.tools.find((tool) => tool.name === "life_os_work_status")?.annotations)
+      .toMatchObject({ readOnlyHint: true, destructiveHint: false });
     const resources = await client.listResources();
     expect(resources.resources.map((resource) => resource.uri).sort()).toEqual([
       "life-os://policy/schemas",
