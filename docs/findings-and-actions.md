@@ -162,6 +162,20 @@ response-needed, response-overdue, responded, resolved, low-confidence, and expl
 immediate-interruption cases. It is the initial behavioral specification for future architecture and UI
 integration.
 
+### Implemented projection freshness
+
+Successful Gmail and Messages extraction commits now trigger a deterministic refresh of
+`finding_attention_state` followed by `chief_of_staff_state`. The refresh happens after the atomic
+extraction/finding/model/work transaction, so a projection error cannot roll back or misclassify
+completed provider work. The submit response contains only a sanitized receipt:
+
+- `completed` with attention and chief-of-staff state versions; or
+- `failed` with the fixed `projection_refresh_failed` category.
+
+Raw errors are never returned. Refresh makes no model calls, proposals, actions, provider mutations, or
+vault writes. Repeating it over unchanged dependencies creates no state churn. If refresh fails, an
+ordinary deterministic state rebuild recovers from the already-validated findings.
+
 ## Evolution of the common finding vocabulary
 
 Extraction should remain provider-local and factual. The architecture branch's existing common

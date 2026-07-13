@@ -14,6 +14,9 @@ import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor 
 import { prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
 import { previewGmailExtractionContext } from "./gmail-extraction-preview";
 import { WorkRepository } from "../work/repository";
+import {
+  refreshAfterExtraction, type PostExtractionRefresher, type PostExtractionRefreshReceipt,
+} from "./post-extraction-refresh";
 
 export interface EmailExtractionItem {
   kind: typeof itemKinds[number];
@@ -76,7 +79,10 @@ export async function prepareSubscriptionEmailExtraction(input: {
     workRepository.complete({
       workId: work.workId, leaseOwner, sourceHash: work.sourceHash, containerHash: work.containerHash,
     });
-    return { cached: true, extractionId: cached.extractionId, output: cached.output };
+    return {
+      cached: true, extractionId: cached.extractionId, output: cached.output,
+      projectionRefresh: refreshAfterExtraction({ store: input.store }),
+    };
   }
 
   const call = prepareReasoningCall({
@@ -116,7 +122,12 @@ export async function submitSubscriptionEmailExtraction(input: {
   store: OperationalStore; accountId: string;
   callId: string; threadStateHash: string; policyVersion: string; output: EmailExtractionOutput;
   inputTokens?: number; outputTokens?: number; cachedTokens?: number;
-}): Promise<{ extractionId: string; output: EmailExtractionOutput }> {
+  projectionRefresher?: PostExtractionRefresher;
+}): Promise<{
+  extractionId: string;
+  output: EmailExtractionOutput;
+  projectionRefresh: PostExtractionRefreshReceipt;
+}> {
   const { call, manifest } = requirePreparedReasoningCall({
     store: input.store, callId: input.callId,
     workflow: "gmail_extraction", taskType: "subscription_email_extraction",
@@ -168,7 +179,10 @@ export async function submitSubscriptionEmailExtraction(input: {
       ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
     }, findings: semanticFindingsForExtraction(extraction), workId, leaseOwner,
   });
-  return { extractionId, output: input.output };
+  return {
+    extractionId, output: input.output,
+    projectionRefresh: (input.projectionRefresher ?? refreshAfterExtraction)({ store: input.store }),
+  };
 }
 
 function findStringField(value: unknown, key: string): string | undefined {

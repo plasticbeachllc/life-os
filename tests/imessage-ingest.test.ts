@@ -436,11 +436,17 @@ test("Messages extraction is bounded, evidence-checked, stale-safe, and sanitize
     }] },
   });
   expect(result.extractionId).toStartWith("extract_");
+  expect(result.projectionRefresh).toEqual({
+    status: "completed", attentionStateVersion: 1, chiefOfStaffStateVersion: 1,
+  });
   expect(store.countRows("imessage_extractions")).toBe(1);
   expect(new WorkRepository(store).status().byState.completed).toBe(1);
   expect(store.countRows("findings")).toBe(1);
   expect(store.countRows("finding_status_events")).toBe(1);
   expect(store.countRows("proposals")).toBe(0);
+  expect(store.getCurrentDerivedState("finding_attention_state")?.content.signal_count).toBe(1);
+  expect(store.getCurrentDerivedState("chief_of_staff_state")?.content.active_attention_signals)
+    .toHaveLength(1);
   const review = new IMessageStore(store).extractionReview("local-messages");
   expect(review).toMatchObject({ total: 1, unresolved: 1 });
   expect(review.byKind).toEqual({ user_commitment: 1 });

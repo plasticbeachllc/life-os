@@ -15,6 +15,7 @@ import {
   prepareSubscriptionEmailExtraction,
   submitSubscriptionEmailExtraction,
 } from "../src/workflows/subscription-email-extraction";
+import { refreshAfterExtraction } from "../src/workflows/post-extraction-refresh";
 
 setDefaultTimeout(15_000);
 
@@ -243,16 +244,30 @@ test("subscription extraction validates evidence and persists no proposal or bod
   const result = await submitSubscriptionEmailExtraction({
     store, accountId: "me", callId, threadStateHash, policyVersion: "sha256:policy",
     inputTokens: 200, outputTokens: 50,
+    projectionRefresher: ({ store: refreshStore }) => refreshAfterExtraction({
+      store: refreshStore,
+      refresher: () => { throw new Error("private projection detail"); },
+    }),
     output: { ...baseOutput, items: [{
       kind: "explicit_request", statement: "Send the checklist", evidenceIds: [evidenceId],
       confidence: 0.95, owner: "user", dueDate: null, ambiguities: ["Friday has no absolute date"],
     }] },
   });
   expect(result.extractionId).toStartWith("extract_");
+  expect(result.projectionRefresh).toEqual({
+    status: "failed", errorCategory: "projection_refresh_failed",
+  });
   expect(store.countRows("gmail_extractions")).toBe(1);
   expect(store.countRows("findings")).toBe(1);
   expect(store.countRows("finding_status_events")).toBe(1);
   expect(store.countRows("proposals")).toBe(0);
+  expect(store.getCurrentDerivedState("finding_attention_state")).toBeUndefined();
+  expect(refreshAfterExtraction({ store })).toEqual({
+    status: "completed", attentionStateVersion: 1, chiefOfStaffStateVersion: 1,
+  });
+  expect(store.getCurrentDerivedState("finding_attention_state")?.content.open_loop_count).toBe(1);
+  expect(store.getCurrentDerivedState("chief_of_staff_state")?.content.active_finding_open_loops)
+    .toHaveLength(1);
   expect(store.getModelCall(callId)?.status).toBe("completed");
   expect(store.countRows("model_calls")).toBe(1);
   expect(new WorkRepository(store).status().byState.completed).toBe(1);

@@ -9,6 +9,9 @@ import { prepareReasoningCall, requirePreparedReasoningCall } from "../orchestra
 import { previewIMessageExtractionContext } from "./imessage-extraction-preview";
 import { refetchIMessage } from "./imessage-refetch";
 import { WorkRepository } from "../work/repository";
+import {
+  refreshAfterExtraction, type PostExtractionRefresher, type PostExtractionRefreshReceipt,
+} from "./post-extraction-refresh";
 
 export const IMESSAGE_EXTRACTION_PROMPT_VERSION = imessagePromptSpec.version;
 export const IMESSAGE_EXTRACTION_SCHEMA_VERSION = "imessage-extraction-schema-v3";
@@ -73,7 +76,10 @@ export async function prepareSubscriptionIMessageExtraction(input: {
     workRepository.complete({
       workId: work.workId, leaseOwner, sourceHash: work.sourceHash, containerHash: work.containerHash,
     });
-    return { cached: true, extractionId: cached.extractionId, output: cached.output };
+    return {
+      cached: true, extractionId: cached.extractionId, output: cached.output,
+      projectionRefresh: refreshAfterExtraction({ store: input.store }),
+    };
   }
 
   const call = prepareReasoningCall({
@@ -101,7 +107,12 @@ export async function submitSubscriptionIMessageExtraction(input: {
   selection: IMessageConversationSelection; callId: string;
   conversationStateHash: string; policyVersion: string; output: IMessageExtractionOutput;
   inputTokens?: number; outputTokens?: number; cachedTokens?: number;
-}): Promise<{ extractionId: string; output: IMessageExtractionOutput }> {
+  projectionRefresher?: PostExtractionRefresher;
+}): Promise<{
+  extractionId: string;
+  output: IMessageExtractionOutput;
+  projectionRefresh: PostExtractionRefreshReceipt;
+}> {
   const { call, manifest } = requirePreparedReasoningCall({
     store: input.store, callId: input.callId,
     workflow: "imessage_extraction", taskType: "subscription_imessage_extraction",
@@ -171,7 +182,10 @@ export async function submitSubscriptionIMessageExtraction(input: {
       ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
     }, findings: semanticFindingsForExtraction(extraction), workId, leaseOwner,
   });
-  return { extractionId, output: input.output };
+  return {
+    extractionId, output: input.output,
+    projectionRefresh: (input.projectionRefresher ?? refreshAfterExtraction)({ store: input.store }),
+  };
 }
 
 function findStringField(value: unknown, key: string): string | undefined {

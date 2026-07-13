@@ -296,7 +296,10 @@ separate optional reasoning overlay and never replace deterministic daily state.
 Gmail and Messages extraction now run from a shared durable work queue. Provider delta commits enqueue
 metadata-only work atomically, unchanged replay emits nothing, and changed source/container identity
 stales older active work. A prepare call holds one bounded lease; extraction, findings, model-call
-completion, and work completion commit together. Inspect the sanitized aggregate backlog with:
+completion, and work completion commit together. After that commit, Life OS deterministically refreshes
+finding attention and chief-of-staff projections and returns a sanitized refresh receipt. A refresh
+failure does not roll back completed extraction work; a later state rebuild safely recovers it. Inspect
+the sanitized aggregate backlog with:
 
 ```bash
 bun run src/cli.ts work status --vault /path/to/vault

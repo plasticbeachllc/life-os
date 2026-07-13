@@ -193,7 +193,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_submit_email_extraction", {
-    description: "Validate, stale-check, and persist structured subscription-agent extraction. Creates no task, proposal, reply, or vault write.",
+    description: "Validate, stale-check, and persist structured subscription-agent extraction, then deterministically refresh compact attention state. Creates no task, proposal, reply, or vault write.",
     inputSchema: {
       callId: z.string().min(1),
       threadStateHash: z.string().startsWith("sha256:"),
@@ -267,7 +267,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_submit_imessage_extraction", {
-    description: "Validate evidence, recheck source and conversation state, and persist a structured Messages extraction. Creates no task, proposal, reply, send, or vault write.",
+    description: "Validate evidence, recheck source and conversation state, persist a structured Messages extraction, and deterministically refresh compact attention state. Creates no task, proposal, reply, send, or vault write.",
     inputSchema: {
       callId: z.string().min(1),
       conversationStateHash: z.string().startsWith("sha256:"),
