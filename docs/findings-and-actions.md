@@ -176,6 +176,25 @@ Raw errors are never returned. Refresh makes no model calls, proposals, actions,
 vault writes. Repeating it over unchanged dependencies creates no state churn. If refresh fails, an
 ordinary deterministic state rebuild recovers from the already-validated findings.
 
+### Implemented sanitized attention review
+
+The domain-local attention review compiler reads one current `finding_attention_state` and returns at
+most 50 priority-ordered `review_queue` items. It reports aggregate counts for every presentation
+channel, but does not expose morning, immediate, or suppressed signal details in the review list.
+
+The compiler requires exactly one current `attention-presentation-v1` decision for every signal and
+rejects missing, duplicate, unknown, malformed, or stale identities. It selects and bounds each useful
+field rather than copying projection objects. Review items may include stable finding IDs needed for
+the existing finding-task proposal, but omit state IDs, task IDs, provider/source identities, hashes,
+headers, addresses, excerpts, and unrecognized fields. Counts report returned and omitted items when
+the queue exceeds its bound.
+
+The accompanying feedback contract supports only `useful`, `incorrect`, `duplicate`,
+`already_handled`, `irrelevant`, `too_late`, and `too_intrusive`. Feedback is bound to the exact visible
+attention ID, channel, reason, and presentation policy version. The caller supplies only attention ID,
+disposition, and timestamp; free-form prose and feedback on suppressed signals are rejected. This slice
+defines and validates records only—no feedback persistence or public CLI/MCP/UI surface exists yet.
+
 ## Evolution of the common finding vocabulary
 
 Extraction should remain provider-local and factual. The architecture branch's existing common

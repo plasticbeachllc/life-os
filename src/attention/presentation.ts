@@ -9,12 +9,15 @@ export type PresentationChannel =
   | "morning_briefing"
   | "immediate_notification";
 
-export type PresentationReason =
-  | "low_confidence"
-  | "validated_imminent_consequence"
-  | "high_priority_daily_attention"
-  | "reviewable_intervention"
-  | "low_value_no_action";
+export const presentationReasons = [
+  "low_confidence",
+  "validated_imminent_consequence",
+  "high_priority_daily_attention",
+  "reviewable_intervention",
+  "low_value_no_action",
+] as const;
+
+export type PresentationReason = typeof presentationReasons[number];
 
 export interface ValidatedInterruptionContext {
   attention_id: string;
