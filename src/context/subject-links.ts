@@ -1,4 +1,6 @@
 import type { DerivedStateRecord, OperationalStore } from "../db/store";
+import { currentSourceEventForContainerInTransaction } from "../events/repository";
+import { appendSourceSubjectLinkInTransaction } from "../events/subject-links";
 import { sha256Value } from "../util/hashing";
 
 export type SubjectLinkBasis = "explicit_config" | "reviewed";
@@ -21,31 +23,43 @@ export class SubjectLinkStore {
 
     const db = this.store.open();
     try {
-      const conversation = currentConversation(db, input.sourceId, input.conversationId);
-      if (!conversation) throw new Error("ingested Messages conversation not found");
-      if (input.participantSetHash && input.participantSetHash !== conversation.participant_set_hash) {
-        throw new Error("Messages conversation participants changed; reload before linking");
-      }
-      const identity = {
-        fromType: "imessage_conversation",
-        fromSourceId: input.sourceId,
-        fromId: input.conversationId,
-        relationship: "concerns",
-        toType: "person",
-        toId: input.personId,
-        sourceHash: conversation.participant_set_hash,
-      } as const;
-      const linkId = `link_${sha256Value(identity).slice("sha256:".length, "sha256:".length + 24)}`;
-      db.query(`
-        INSERT OR IGNORE INTO subject_links (
-          link_id, from_type, from_source_id, from_id, relationship,
-          to_type, to_id, basis, confidence, source_hash, created_at
-        ) VALUES (?, 'imessage_conversation', ?, ?, 'concerns', 'person', ?, ?, 1, ?, ?)
-      `).run(
-        linkId, input.sourceId, input.conversationId, input.personId, input.basis,
-        conversation.participant_set_hash, input.createdAt ?? new Date().toISOString(),
-      );
-      return linkId;
+      return db.transaction(() => {
+        const conversation = currentConversation(db, input.sourceId, input.conversationId);
+        if (!conversation) throw new Error("ingested Messages conversation not found");
+        if (input.participantSetHash && input.participantSetHash !== conversation.participant_set_hash) {
+          throw new Error("Messages conversation participants changed; reload before linking");
+        }
+        const event = currentSourceEventForContainerInTransaction(db, {
+          provider: "imessage", sourceScopeId: input.sourceId, containerId: input.conversationId,
+        });
+        if (!event) throw new Error("current Messages source event not found");
+        const identity = {
+          fromType: "imessage_conversation",
+          fromSourceId: input.sourceId,
+          fromId: input.conversationId,
+          relationship: "concerns",
+          toType: "person",
+          toId: input.personId,
+          sourceHash: conversation.participant_set_hash,
+        } as const;
+        const linkId = `link_${sha256Value(identity).slice("sha256:".length, "sha256:".length + 24)}`;
+        const createdAt = input.createdAt ?? new Date().toISOString();
+        db.query(`
+          INSERT OR IGNORE INTO subject_links (
+            link_id, from_type, from_source_id, from_id, relationship,
+            to_type, to_id, basis, confidence, source_hash, created_at
+          ) VALUES (?, 'imessage_conversation', ?, ?, 'concerns', 'person', ?, ?, 1, ?, ?)
+        `).run(
+          linkId, input.sourceId, input.conversationId, input.personId, input.basis,
+          conversation.participant_set_hash, createdAt,
+        );
+        appendSourceSubjectLinkInTransaction(db, {
+          eventId: event.eventId, subject: { type: "person", id: input.personId },
+          basis: input.basis, validationSourceHash: conversation.participant_set_hash,
+          legacySubjectLinkId: linkId, createdAt,
+        });
+        return linkId;
+      })();
     } finally {
       db.close();
     }

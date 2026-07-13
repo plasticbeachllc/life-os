@@ -42,4 +42,5 @@ test("change tracker does not record unchanged source content", () => {
   expect(tracker.track({ sourceType: "note", sourceId: "p1", content: "one" }).changed).toBe(false);
   expect(tracker.track({ sourceType: "note", sourceId: "p1", content: "two" }).changed).toBe(true);
   expect(db.countRows("change_events")).toBe(2);
+  expect(db.countRows("source_events")).toBe(2);
 });

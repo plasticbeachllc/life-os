@@ -8,6 +8,9 @@ import type {
 import { completeWorkInTransaction, enqueueWorkInTransaction } from "../work/repository";
 import { saveFindingSemanticsInTransaction, saveFindingsInTransaction } from "../findings/store";
 import { completeReasoningCallInTransaction, type PreparedReasoningUsage } from "../orchestration/prepared-reasoning";
+import {
+  appendSourceEventInTransaction, requireCurrentSourceEventIdInTransaction,
+} from "../events/repository";
 
 export function gmailThreadStateHash(messages: NormalizedGmailMessage[]): string {
   return sha256Value([...messages]
@@ -279,6 +282,9 @@ export class GmailStore {
             subjectSourceId: input.accountId, subjectId: row.message_id, anchorId: row.message_id,
             sourceHash: row.content_hash, containerHash: row.thread_state_hash,
             reason: "contract_refresh", now,
+            streamEventId: requireCurrentSourceEventIdInTransaction(db, {
+              provider: "gmail", sourceScopeId: input.accountId, sourceRecordId: row.message_id,
+            }),
             contractIdentity: `${input.promptVersion}:${input.schemaVersion}:${input.policyVersion}`,
           });
         }
@@ -461,17 +467,43 @@ export class GmailStore {
           input.message.normalizedBody.length, input.message.authoredBody.length,
           input.message.quotedBody.length, input.now,
         );
-        enqueueWorkInTransaction(db, {
+        const streamEvent = appendSourceEventInTransaction(db, {
+          provider: "gmail", eventKind: "message", direction: gmailDirection(input.message),
+          sourceScopeId: input.accountId, sourceRecordId: input.message.messageId,
+          containerId: input.message.threadId, sourceVersionHash: input.message.contentHash,
+          occurredAt: new Date(Number(input.message.internalDate)).toISOString(),
+          observedAt: input.now, contentAvailable: input.message.authoredBody.length > 0,
+        });
+        const pending = db.query<{
+          message_id: string; content_hash: string;
+        }, [string, string]>(`
+          SELECT message_id, content_hash FROM gmail_messages
+          WHERE account_id = ? AND thread_id = ?
+            AND (last_extraction_hash IS NULL OR last_extraction_hash <> content_hash)
+          ORDER BY CAST(internal_date AS INTEGER), message_id
+        `).all(input.accountId, input.message.threadId);
+        for (const candidate of pending) enqueueWorkInTransaction(db, {
           workflow: "gmail_extraction", subjectType: "gmail_message",
-          subjectSourceId: input.accountId, subjectId: input.message.messageId,
-          anchorId: input.message.messageId, sourceHash: input.message.contentHash,
+          subjectSourceId: input.accountId, subjectId: candidate.message_id,
+          anchorId: candidate.message_id, sourceHash: candidate.content_hash,
           containerHash: threadStateHash, reason: "source_delta", now: input.now,
+          streamEventId: candidate.message_id === input.message.messageId
+            ? streamEvent.event.eventId
+            : requireCurrentSourceEventIdInTransaction(db, {
+              provider: "gmail", sourceScopeId: input.accountId,
+              sourceRecordId: candidate.message_id,
+            }),
         });
       })();
     } finally {
       db.close();
     }
   }
+}
+
+function gmailDirection(message: NormalizedGmailMessage): "incoming" | "outgoing" | "draft" {
+  if (message.labelIds.includes("DRAFT")) return "draft";
+  return message.labelIds.includes("SENT") ? "outgoing" : "incoming";
 }
 
 function sanitizeReviewItem(value: unknown): Record<string, unknown> {

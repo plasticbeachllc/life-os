@@ -20,6 +20,7 @@ import {
   submitSubscriptionEmailExtraction,
 } from "../src/workflows/subscription-email-extraction";
 import { refreshAfterExtraction } from "../src/workflows/post-extraction-refresh";
+import { linkGmailThreadToPerson } from "../src/workflows/link-gmail-subject";
 
 setDefaultTimeout(15_000);
 
@@ -64,6 +65,22 @@ class FakeGmailAdapter implements GmailSourceAdapter {
   }
 }
 
+class ThreadGmailAdapter implements GmailSourceAdapter {
+  constructor(readonly selected: GmailApiMessage[], readonly thread: GmailApiThread) {}
+  async listSelectedMessageIds(): Promise<{ messageIds: string[] }> {
+    return { messageIds: this.selected.map((message) => message.id) };
+  }
+  async getMessage(messageId: string): Promise<GmailApiMessage> {
+    const result = this.selected.find((message) => message.id === messageId);
+    if (!result) throw new Error("test message not found");
+    return result;
+  }
+  async getThread(): Promise<GmailApiThread> { return this.thread; }
+  async getProfile(): Promise<{ emailAddress: string; historyId: string }> {
+    return { emailAddress: "user@example.com", historyId: "history_1" };
+  }
+}
+
 test("normalizer separates newly authored text from quoted history", () => {
   const normalized = normalizeGmailMessage(message({
     id: "message_1",
@@ -85,6 +102,7 @@ test("IMPORTANT-or-SENT ingestion persists metadata and hashes without bodies, t
   expect(new WorkRepository(store).status().byState.pending).toBe(1);
   expect(store.countRows("gmail_messages")).toBe(1);
   expect(store.countRows("gmail_message_versions")).toBe(1);
+  expect(store.countRows("source_events")).toBe(1);
   expect(store.countRows("gmail_threads")).toBe(1);
   expect(adapter.threadCalls).toBe(1);
 
@@ -92,6 +110,7 @@ test("IMPORTANT-or-SENT ingestion persists metadata and hashes without bodies, t
   expect(second).toMatchObject({ ingested: 0, unchanged: 1, failed: 0 });
   expect(store.countRows("work_items")).toBe(1);
   expect(store.countRows("gmail_message_versions")).toBe(1);
+  expect(store.countRows("source_events")).toBe(1);
   expect(adapter.threadCalls).toBe(2);
 
   adapter.thread.messages = [
@@ -163,6 +182,8 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   expect(preview?.manifest.includedItems.length).toBeGreaterThan(0);
   expect(JSON.stringify(preview?.manifest.includedItems)).not.toContain("4111 1111 1111 1111");
   expect(JSON.stringify(preview?.manifest.includedItems)).toContain("CREDIT_CARD");
+  expect(JSON.stringify(preview?.manifest.includedItems))
+    .toContain("validated_source_subject_history");
   expect(store.countRows("model_calls")).toBe(0);
   expect(store.countRows("gmail_message_versions")).toBe(1);
 
@@ -193,7 +214,7 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   })).resolves.toMatchObject({ output: { classification: "reference_only", promptInjectionDetected: true } });
 }, 15_000);
 
-test("extraction preview distinguishes received, draft, and sent thread messages", async () => {
+test("extraction preview excludes draft and sent turns that occur after the selected message", async () => {
   const selected = message({
     id: "message_received", body: "Can you review this?", internalDate: "1000",
   });
@@ -211,8 +232,10 @@ test("extraction preview distinguishes received, draft, and sent thread messages
   const context = JSON.stringify(preview?.manifest.includedItems);
 
   expect(context).toContain('"message_type":"received"');
-  expect(context).toContain('"message_type":"draft"');
-  expect(context).toContain('"message_type":"sent"');
+  expect(context).not.toContain('"message_type":"draft"');
+  expect(context).not.toContain('"message_type":"sent"');
+  expect(context).not.toContain("Draft response");
+  expect(context).not.toContain("Sent response");
 });
 
 test("extraction preview rejects source drift until re-ingestion", async () => {
@@ -400,6 +423,104 @@ test("validated outgoing relation closes a production reply signal", async () =>
     .not.toContain(requestFinding.findingId);
 }, 20_000);
 
+test("one-shot thread ingestion extracts request, reminder, sent reply, and confirmation causally", async () => {
+  const request = message({
+    id: "chain_request", body: "Please confirm the proposed time.", internalDate: "1000",
+  });
+  const reminder = message({
+    id: "chain_reminder", body: "Please confirm the proposed time.", internalDate: "2000",
+  });
+  const reply = message({
+    id: "chain_reply", body: "Confirmed—the proposed time works.", labels: ["SENT"], internalDate: "3000",
+  });
+  const confirmation = message({
+    id: "chain_confirmation", body: "Thanks, the time is confirmed.", internalDate: "4000",
+  });
+  const all = [request, reminder, reply, confirmation];
+  const adapter = new ThreadGmailAdapter(
+    [...all].reverse(), { id: "thread_1", messages: all },
+  );
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-chain-")), "store.db"));
+  const report = await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
+  expect(report).toMatchObject({ discovered: 4, ingested: 4, failed: 0 });
+  expect(store.countRows("source_events")).toBe(4);
+
+  const first = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  expect(first.messageId).toBe(request.id);
+  const firstContext = JSON.stringify(first.context);
+  expect(firstContext).not.toContain(reminder.id);
+  expect(firstContext).not.toContain(reply.id);
+  expect(firstContext).not.toContain(confirmation.id);
+  expect((await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  })).empty).toBe(true);
+  const requestEvidence = `gmail:${request.id}:${normalizeGmailMessage(request).contentHash}`;
+  await submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(first.callId),
+    threadStateHash: String(first.threadStateHash), policyVersion: "sha256:policy",
+    output: { classification: "actionable", summary: "Confirmation requested.",
+      items: [{ kind: "explicit_request", statement: "Confirm the proposed time",
+        evidenceIds: [requestEvidence], confidence: 0.98, owner: "user", dueDate: null, ambiguities: [] }],
+      relations: [], unresolved: [], promptInjectionDetected: false },
+  });
+  const requestFinding = new FindingStore(store).review().findings[0]!;
+
+  const second = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  expect(second.messageId).toBe(reminder.id);
+  expect(JSON.stringify(second.context)).toContain(requestFinding.findingId);
+  expect(JSON.stringify(second.context)).not.toContain(reply.id);
+  const reminderEvidence = `gmail:${reminder.id}:${normalizeGmailMessage(reminder).contentHash}`;
+  await submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(second.callId),
+    threadStateHash: String(second.threadStateHash), policyVersion: "sha256:policy",
+    output: { classification: "actionable", summary: "The confirmation request was repeated.",
+      items: [{ kind: "explicit_request", statement: "Confirm the proposed time",
+        evidenceIds: [reminderEvidence], confidence: 0.98, owner: "user", dueDate: null, ambiguities: [] }],
+      relations: [], unresolved: [], promptInjectionDetected: false },
+  });
+  const requestFindings = new FindingStore(store).review().findings
+    .filter((finding) => finding.kind === "explicit_request");
+  expect(requestFindings).toHaveLength(2);
+
+  const third = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  expect(third.messageId).toBe(reply.id);
+  expect(JSON.stringify(third.context)).toContain(requestFindings[0]!.findingId);
+  expect(JSON.stringify(third.context)).toContain(requestFindings[1]!.findingId);
+  expect(JSON.stringify(third.context)).not.toContain(confirmation.id);
+  const replyEvidence = `gmail:${reply.id}:${normalizeGmailMessage(reply).contentHash}`;
+  await submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(third.callId),
+    threadStateHash: String(third.threadStateHash), policyVersion: "sha256:policy",
+    output: { classification: "actionable", summary: "The confirmation was sent.",
+      items: [{ kind: "open_loop", statement: "Confirmed the proposed time",
+        evidenceIds: [replyEvidence], confidence: 0.98, owner: "user", dueDate: null, ambiguities: [] }],
+      relations: requestFindings.map((finding) => ({ kind: "responds_to" as const, fromItemIndex: 0,
+        toFindingId: finding.findingId, confidence: 0.98, evidenceIds: [replyEvidence] })),
+      unresolved: [], promptInjectionDetected: false },
+  });
+  expect(store.getCurrentDerivedState("finding_attention_state")?.content.signals)
+    .not.toContainEqual(expect.objectContaining({ type: "response_needed" }));
+
+  const fourth = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  expect(fourth.messageId).toBe(confirmation.id);
+  await submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(fourth.callId),
+    threadStateHash: String(fourth.threadStateHash), policyVersion: "sha256:policy",
+    output: { classification: "reference_only", summary: "The time was confirmed.",
+      items: [], relations: [], unresolved: [], promptInjectionDetected: false },
+  });
+  expect(new WorkRepository(store).status().byState.completed).toBe(4);
+  expect(store.countRows("finding_relations")).toBe(2);
+}, 45_000);
+
 test("relation preparation rejects a prior finding dismissed before submit", async () => {
   const incoming = message({ id: "message_stale_relation_request", body: "Please confirm receipt." });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-stale-relation-")), "store.db"));
@@ -458,6 +579,33 @@ test("subscription extraction rejects source drift", async () => {
   expect(store.getModelCall(String(prepared.callId))?.status).toBe("failed");
   expect(store.getModelCall(String(prepared.callId))?.error).toBe("stale_source");
   expect(new WorkRepository(store).status().byState).toMatchObject({ stale: 1, pending: 1 });
+}, 15_000);
+
+test("subscription extraction rejects a reviewed subject link added after preparation", async () => {
+  const selected = message({ id: "message_context_link", body: "Please review the project update." });
+  const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-context-link-")), "store.db"));
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
+  const prepared = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  store.saveDerivedState({
+    stateId: "state_person_context_v1", stateType: "person_state", entityId: "person_context",
+    stateVersion: 1, content: { entity_id: "person_context" },
+    sourceHashes: ["sha256:person-context"], generationMethod: "test",
+    createdAt: "2026-07-12T12:00:00.000Z",
+  });
+  linkGmailThreadToPerson({
+    store, accountId: "me", sourceMessageId: "message_context_link", personId: "person_context",
+  });
+  await expect(submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(prepared.callId),
+    threadStateHash: String(prepared.threadStateHash), policyVersion: "sha256:policy",
+    output: { classification: "reference_only", summary: "Project update received.",
+      items: [], relations: [], unresolved: [], promptInjectionDetected: false },
+  })).rejects.toThrow("validated source subject context changed");
+  expect(store.getModelCall(String(prepared.callId))?.error).toBe("context_changed");
+  expect(store.countRows("gmail_extractions")).toBe(0);
 }, 15_000);
 
 test("extraction, findings, model completion, and work completion roll back together", async () => {

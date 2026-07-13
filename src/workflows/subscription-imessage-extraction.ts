@@ -18,6 +18,7 @@ import { WorkRepository } from "../work/repository";
 import {
   refreshAfterExtraction, type PostExtractionRefresher, type PostExtractionRefreshReceipt,
 } from "./post-extraction-refresh";
+import { assertSourceSubjectContextCurrent } from "../context/source-subjects";
 
 export const IMESSAGE_EXTRACTION_PROMPT_VERSION = imessagePromptSpec.version;
 export const IMESSAGE_EXTRACTION_SCHEMA_VERSION = "imessage-extraction-schema-v4-relations";
@@ -151,6 +152,7 @@ export async function submitSubscriptionIMessageExtraction(input: {
   }
   try {
     assertContextStatesCurrent(input.store, manifest.includedItems);
+    assertSourceSubjectContextCurrent(input.store, manifest.includedItems);
     assertPriorFindingsCurrent(input.store, priorFindingCandidates(manifest.includedItems));
   } catch (error) {
     failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "context_changed" });

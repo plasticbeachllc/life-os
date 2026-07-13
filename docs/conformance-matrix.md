@@ -7,6 +7,9 @@ required; all other rows run in the normal Bun suite.
 | --- | --- | --- |
 | Fixed provider selection and read-only permissions | `src/adapters/`, integration registry | `config-security`, Gmail, Messages, Calendar, Telegram ingestion tests |
 | Stable normalization, immutable versions, replay | provider normalizers/stores | provider ingestion tests: first, unchanged, edited, unavailable |
+| Unified immutable source events and causal order | `src/events/`, provider stores, shared work queue | `source-events`, `work-queue`, Gmail causal-chain test |
+| Validated cross-provider subject traversal | stream subject repository; reviewed Messages, Gmail, Calendar workflows | `source-subject-links`, `provider-subject-links`, Messages participant-change test |
+| Bounded subject history and stale-context rejection | `src/context/source-subjects.ts`, Gmail/Messages previews and submit | subject-context tests and provider preview tests |
 | Safe cursor and partial failure | ingestion lifecycle/provider stores | `ingestion-run`, Gmail, Calendar, Telegram failure tests |
 | Work invalidation, leases, retry, recovery | `src/work/` | `work-queue`, transactional provider tests |
 | Per-category context budget, ranking, omission | `src/context/` | `context`, provider extraction preview tests |
@@ -29,7 +32,7 @@ required; all other rows run in the normal Bun suite.
 - `git diff --check`
 - `cd ui && bun run check`
 - `cd ui && bun run build`
-- fresh schema-22 database creation and deterministic state rebuild
+- fresh schema-25 database creation and deterministic state rebuild
 - MCP initialize/list-tools smoke test
 - proposal review/authorize/apply/undo smoke test against a disposable vault
 

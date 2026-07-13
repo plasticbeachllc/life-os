@@ -17,6 +17,7 @@ export interface WorkItem {
   anchorId: string;
   sourceHash: string;
   containerHash: string;
+  streamEventId?: string;
   reason: "source_delta" | "contract_refresh";
   invalidationKey: string;
   state: WorkState;
@@ -40,6 +41,7 @@ export interface EnqueueWorkInput {
   anchorId: string;
   sourceHash: string;
   containerHash: string;
+  streamEventId?: string;
   reason: WorkItem["reason"];
   now: string;
   priority?: number;

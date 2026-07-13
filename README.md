@@ -10,6 +10,8 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 ## Current Capabilities
 
 - Deterministic vault health checks, Markdown parsing, source hashing, and delta tracking.
+- Immutable, privacy-minimized source events ordered across Gmail, Messages, Telegram, Calendar, and Obsidian.
+- Reviewed canonical subject links and causal windows spanning explicitly related provider containers.
 - Versioned project, person, task, daily, and chief-of-staff state projections.
 - Token-budgeted context manifests, model routing, caching, and usage instrumentation.
 - Deterministic morning briefings with optional subscription-agent synthesis.
@@ -35,12 +37,16 @@ rewrite journal prose, expose arbitrary shell access, or give a model unrestrict
 ## Architecture
 
 ```text
-Obsidian Markdown                    Gmail API (readonly, IMPORTANT or SENT)
-       |                                      |
-       v                                      v
-deterministic indexing                   deterministic ingestion
-       |                                      |
-       +------------> SQLite <---------------+
+Obsidian + read-only provider adapters
+                  |
+                  v
+       deterministic provider ingestion
+                  |
+                  v
+       unified immutable source events
+                  |
+                  v
+                SQLite
                          |
                  compact derived state
                          |
@@ -58,7 +64,10 @@ deterministic indexing                   deterministic ingestion
 Every model-backed workflow uses a recorded `ContextManifest`. Workflows process changed sources,
 prefer compact state over raw text, and escalate retrieval only when necessary. Prepare/submit
 protocols bind reasoning to immutable source and context hashes. Model output cannot directly write
-the vault or Gmail.
+the vault or providers. Stream-backed work is causal within a provider container and remains concurrent
+across unrelated containers. Cross-provider traversal is available only when both containers have a
+current explicit or reviewed link to the same canonical person, project, or task; content and timing
+never create a link.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
 assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
@@ -174,6 +183,10 @@ op run --env-file ~/.config/life-os/.env -- \
 
 bun run src/cli.ts email status --vault ~/worktable/vault
 bun run src/cli.ts email review-extractions --vault ~/worktable/vault
+bun run src/cli.ts email link-person --message '<source-message-id>' \
+  --person person_example --vault ~/worktable/vault
+bun run src/cli.ts email link-project --message '<source-message-id>' \
+  --project project_example --vault ~/worktable/vault
 ```
 
 Ingestion and extraction are separate. Ingestion stores message/thread metadata and immutable hashes,
@@ -323,7 +336,18 @@ attachments are not retained. Ingest a one-day lookback and 30-day horizon with:
 op run --env-file ~/.config/life-os/.env -- \
   bun run src/cli.ts calendar ingest --vault ~/worktable/vault
 bun run src/cli.ts calendar status --vault ~/worktable/vault
+bun run src/cli.ts calendar link-project --event '<source-event-id>' \
+  --project project_example --vault ~/worktable/vault
+bun run src/cli.ts calendar link-task --event '<source-event-id>' \
+  --task task_example --vault ~/worktable/vault
 ```
+
+Reviewed Gmail links apply to one ingested thread; reviewed Calendar links apply to one ingested primary
+event. These CLI-only operations require an existing canonical subject and return only opaque link and
+canonical subject identity. They do not change Gmail, Calendar, or the vault. Once linked, Gmail and
+Messages extraction receive a bounded metadata-only history of earlier events in containers reviewed as
+concerning the same canonical subject. Adding, revoking, or invalidating a link after preparation makes
+that prepared context stale.
 
 Messages extraction sequence:
 

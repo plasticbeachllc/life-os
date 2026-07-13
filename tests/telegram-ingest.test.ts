@@ -99,6 +99,7 @@ test("allowlisted ingestion stores metadata and immutable hashes without Telegra
   const second = await ingestTelegramChanges(input);
   expect(first).toMatchObject({ discovered: 1, ingested: 1, unchanged: 0, modelCalls: 0 });
   expect(second).toMatchObject({ ingested: 0, unchanged: 1, modelCalls: 0 });
+  expect(store.countRows("source_events")).toBe(1);
   const db = store.open();
   expect(db.query<{ count: number }, []>("SELECT COUNT(*) count FROM telegram_message_versions").get()?.count).toBe(1);
   expect(Object.keys(db.query("SELECT * FROM telegram_messages").get() as object)).not.toContain("text");
@@ -119,6 +120,7 @@ test("edited Telegram source creates a new immutable version", async () => {
   adapter.messages = [{ ...sourceMessage("corrected"), editedAtUnix: 1_750_000_100 }];
   expect(await ingestTelegramChanges(input)).toMatchObject({ ingested: 1 });
   expect(new TelegramStore(store).status("primary").versions).toBe(2);
+  expect(store.countRows("source_events")).toBe(2);
 });
 
 test("ingestion fails closed and records terminal failures", async () => {

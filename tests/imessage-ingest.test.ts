@@ -11,6 +11,8 @@ import { MacOsMessagesAdapter } from "../src/adapters/imessage";
 import { OperationalStore } from "../src/db/store";
 import { imessageDevelopmentContextCandidates } from "../src/context/imessage-development";
 import { SubjectLinkStore } from "../src/context/subject-links";
+import { SourceEventRepository } from "../src/events/repository";
+import { SourceSubjectLinkRepository } from "../src/events/subject-links";
 import { normalizeIMessage } from "../src/imessage/normalizer";
 import { IMessageStore } from "../src/imessage/store";
 import { FindingStore } from "../src/findings/store";
@@ -199,6 +201,7 @@ test("allowlisted ingestion retains hashes and metadata but no message text or p
   expect(store.countRows("imessage_messages")).toBe(2);
   expect(store.countRows("imessage_message_versions")).toBe(2);
   expect(store.countRows("imessage_conversations")).toBe(1);
+  expect(store.countRows("source_events")).toBe(2);
   const db = store.open();
   try {
     const serialized = JSON.stringify(db.query("SELECT * FROM imessage_messages").all());
@@ -220,6 +223,7 @@ test("allowlisted ingestion retains hashes and metadata but no message text or p
   });
   expect(second).toMatchObject({ ingested: 0, unchanged: 2, modelCalls: 0 });
   expect(store.countRows("imessage_message_versions")).toBe(2);
+  expect(store.countRows("source_events")).toBe(2);
 });
 
 test("bounded replay detects an edited source row and creates a new immutable version", async () => {
@@ -236,6 +240,7 @@ test("bounded replay detects an edited source row and creates a new immutable ve
   expect(changed).toMatchObject({ ingested: 1, unchanged: 0, cursorAfter: 10 });
   expect(store.countRows("imessage_messages")).toBe(1);
   expect(store.countRows("imessage_message_versions")).toBe(2);
+  expect(store.countRows("source_events")).toBe(2);
 });
 
 test("ingestion fails closed without an explicit allowlist", async () => {
@@ -296,6 +301,11 @@ test("Messages person links are invalidated when the participant set changes", a
   expect(imessageDevelopmentContextCandidates({
     store, sourceId: "local-messages", conversationId,
   })).toHaveLength(1);
+  expect(store.countRows("source_subject_links")).toBe(1);
+  const streamLinks = new SourceSubjectLinkRepository(store);
+  const linkedEvent = new SourceEventRepository(store).listCurrent({ provider: "imessage", limit: 10 }).at(-1)!;
+  expect(streamLinks.linkedSubjects(linkedEvent.eventId))
+    .toEqual([{ type: "person", id: "person_linked" }]);
 
   adapter.messages.push(sourceMessage({
     rowId: 2, participants: ["+15555550100", "+15555550101"],
@@ -305,6 +315,9 @@ test("Messages person links are invalidated when the participant set changes", a
     store, sourceId: "local-messages", conversationId,
   })).toHaveLength(0);
   expect(store.countRows("subject_links")).toBe(1);
+  expect(store.countRows("source_subject_links")).toBe(1);
+  const changedEvent = new SourceEventRepository(store).listCurrent({ provider: "imessage", limit: 10 }).at(-1)!;
+  expect(streamLinks.linkedSubjects(changedEvent.eventId)).toEqual([]);
 });
 
 test("Messages person linking requires a current person and participant-bound link basis", async () => {
@@ -672,6 +685,8 @@ test("Messages context includes only linked person developments and rejects chan
     trigger: { type: "source_delta", subjectId: conversationId },
   });
   const live = JSON.stringify(preview?.manifest.includedItems);
+  expect(live).toContain("validated_source_subject_history");
+  expect(live).toContain('"provider":"imessage"');
   expect(live).toContain("Alex Morgan");
   expect(live).toContain("Confirm the venue with Alex");
   expect(live).toContain("Coffee with Alex");

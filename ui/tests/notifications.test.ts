@@ -106,7 +106,7 @@ describe("LifeOS notification compiler", () => {
 		new GmailStore(store).upsertAccount({
 			accountId: "me",
 			emailAddress: "owner@example.com",
-			selectionLabelId: "IMPORTANT",
+			selectionLabelId: "IMPORTANT_OR_SENT",
 			now: "2026-07-12T12:00:00.000Z",
 		});
 		const db = store.open();

@@ -11,6 +11,7 @@ interface WorkRow {
   work_id: string; workflow: WorkWorkflow; subject_type: WorkItem["subjectType"];
   subject_source_id: string; subject_id: string; anchor_id: string;
   source_hash: string; container_hash: string; reason: WorkItem["reason"];
+  stream_event_id: string | null;
   invalidation_key: string; state: WorkState; priority: number; attempts: number;
   max_attempts: number; lease_owner: string | null; lease_expires_at: string | null;
   available_at: string; error_category: WorkErrorCategory | null;
@@ -43,12 +44,13 @@ export function enqueueWorkInTransaction(
   db.query(`
     INSERT INTO work_items (
       work_id, workflow, subject_type, subject_source_id, subject_id, anchor_id,
-      source_hash, container_hash, reason, invalidation_key, state, priority,
+      source_hash, container_hash, stream_event_id, reason, invalidation_key, state, priority,
       attempts, max_attempts, available_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, ?, ?)
   `).run(
     workId, input.workflow, input.subjectType, input.subjectSourceId, input.subjectId,
-    input.anchorId, input.sourceHash, input.containerHash, input.reason, invalidationKey,
+    input.anchorId, input.sourceHash, input.containerHash, input.streamEventId ?? null,
+    input.reason, invalidationKey,
     input.priority ?? 0, input.maxAttempts ?? 3, input.now, input.now, input.now,
   );
   return { item: queryById(db, workId)!, created: true };
@@ -96,9 +98,13 @@ export class WorkRepository {
     const db = this.store.open();
     try {
       return toWorkItem(db.query<WorkRow, [WorkWorkflow, string, string]>(`
-        SELECT * FROM work_items WHERE workflow = ? AND subject_source_id = ?
-          AND state = 'pending' AND available_at <= ?
-        ORDER BY priority DESC, created_at, work_id LIMIT 1
+        SELECT candidate.* FROM work_items candidate
+        LEFT JOIN source_events event ON event.event_id = candidate.stream_event_id
+        WHERE candidate.workflow = ? AND candidate.subject_source_id = ?
+          AND candidate.state = 'pending' AND candidate.available_at <= ?
+          AND ${causallyEligibleSql()}
+        ORDER BY candidate.priority DESC, event.occurred_at, event.source_record_hash,
+          candidate.created_at, candidate.work_id LIMIT 1
       `).get(input.workflow, input.subjectSourceId, (input.now ?? new Date()).toISOString()));
     } finally {
       db.close();
@@ -111,9 +117,13 @@ export class WorkRepository {
     const db = this.store.open();
     try {
       return db.query<WorkRow, [WorkWorkflow, string, string, number]>(`
-        SELECT * FROM work_items WHERE workflow = ? AND subject_source_id = ?
-          AND state = 'pending' AND available_at <= ?
-        ORDER BY priority DESC, created_at, work_id LIMIT ?
+        SELECT candidate.* FROM work_items candidate
+        LEFT JOIN source_events event ON event.event_id = candidate.stream_event_id
+        WHERE candidate.workflow = ? AND candidate.subject_source_id = ?
+          AND candidate.state = 'pending' AND candidate.available_at <= ?
+          AND ${causallyEligibleSql()}
+        ORDER BY candidate.priority DESC, event.occurred_at, event.source_record_hash,
+          candidate.created_at, candidate.work_id LIMIT ?
       `).all(
         input.workflow, input.subjectSourceId, (input.now ?? new Date()).toISOString(), input.limit,
       ).map((row) => toWorkItem(row)!);
@@ -272,12 +282,19 @@ export class WorkRepository {
       recoverExpiredInTransaction(db, nowIso);
       const row = input.workId
         ? db.query<WorkRow, [string, string]>(`
-            SELECT * FROM work_items WHERE work_id = ? AND state = 'pending' AND available_at <= ?
+            SELECT candidate.* FROM work_items candidate
+            LEFT JOIN source_events event ON event.event_id = candidate.stream_event_id
+            WHERE candidate.work_id = ? AND candidate.state = 'pending'
+              AND candidate.available_at <= ? AND ${causallyEligibleSql()}
           `).get(input.workId, nowIso)
         : db.query<WorkRow, [WorkWorkflow, string, string]>(`
-            SELECT * FROM work_items WHERE workflow = ? AND subject_source_id = ?
-              AND state = 'pending' AND available_at <= ?
-            ORDER BY priority DESC, created_at, work_id LIMIT 1
+            SELECT candidate.* FROM work_items candidate
+            LEFT JOIN source_events event ON event.event_id = candidate.stream_event_id
+            WHERE candidate.workflow = ? AND candidate.subject_source_id = ?
+              AND candidate.state = 'pending' AND candidate.available_at <= ?
+              AND ${causallyEligibleSql()}
+            ORDER BY candidate.priority DESC, event.occurred_at, event.source_record_hash,
+              candidate.created_at, candidate.work_id LIMIT 1
           `).get(input.workflow!, input.subjectSourceId!, nowIso);
       if (!row) {
         db.exec("COMMIT");
@@ -323,6 +340,7 @@ function workInvalidationKey(input: EnqueueWorkInput): string {
     subjectSourceId: input.subjectSourceId, subjectId: input.subjectId,
     anchorId: input.anchorId, sourceHash: input.sourceHash,
     containerHash: input.containerHash, reason: input.reason,
+    streamEventId: input.streamEventId ?? null,
     contractIdentity: input.contractIdentity ?? null,
   });
 }
@@ -343,6 +361,7 @@ function toWorkItem(row: WorkRow | null | undefined): WorkItem | undefined {
     workId: row.work_id, workflow: row.workflow, subjectType: row.subject_type,
     subjectSourceId: row.subject_source_id, subjectId: row.subject_id,
     anchorId: row.anchor_id, sourceHash: row.source_hash, containerHash: row.container_hash,
+    ...(row.stream_event_id ? { streamEventId: row.stream_event_id } : {}),
     reason: row.reason, invalidationKey: row.invalidation_key, state: row.state,
     priority: row.priority, attempts: row.attempts, maxAttempts: row.max_attempts,
     ...(row.lease_owner ? { leaseOwner: row.lease_owner } : {}),
@@ -352,4 +371,21 @@ function toWorkItem(row: WorkRow | null | undefined): WorkItem | undefined {
     createdAt: row.created_at, updatedAt: row.updated_at,
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
   };
+}
+
+function causallyEligibleSql(): string {
+  return `(candidate.stream_event_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM work_items predecessor
+    JOIN source_events predecessor_event ON predecessor_event.event_id = predecessor.stream_event_id
+    WHERE predecessor.workflow = candidate.workflow
+      AND predecessor.subject_source_id = candidate.subject_source_id
+      AND predecessor.state IN ('pending', 'leased')
+      AND predecessor.work_id <> candidate.work_id
+      AND predecessor_event.provider = event.provider
+      AND predecessor_event.source_scope_hash = event.source_scope_hash
+      AND predecessor_event.container_hash = event.container_hash
+      AND (predecessor_event.occurred_at < event.occurred_at
+        OR (predecessor_event.occurred_at = event.occurred_at
+          AND predecessor_event.source_record_hash < event.source_record_hash))
+  ))`;
 }

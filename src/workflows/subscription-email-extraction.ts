@@ -1,5 +1,6 @@
 import type { GmailSourceAdapter } from "../adapters/gmail";
 import type { ContextCandidate } from "../context/builder";
+import { assertSourceSubjectContextCurrent } from "../context/source-subjects";
 import { persistableContextManifest } from "../context/manifests";
 import type { OperationalStore } from "../db/store";
 import {
@@ -167,6 +168,7 @@ export async function submitSubscriptionEmailExtraction(input: {
     workId, leaseOwner, sourceHash: workSourceHash, containerHash: workContainerHash,
   });
   try {
+    assertSourceSubjectContextCurrent(input.store, manifest.includedItems);
     assertPriorFindingsCurrent(input.store, priorFindingCandidates(manifest.includedItems));
   } catch (error) {
     failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "context_changed" });

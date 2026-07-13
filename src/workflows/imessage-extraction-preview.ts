@@ -12,6 +12,7 @@ import { imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
 import type { WorkItem } from "../work/contract";
 import { WorkRepository } from "../work/repository";
+import { sourceSubjectContextCandidate } from "../context/source-subjects";
 
 export interface IMessageExtractionPreview {
   workId: string;
@@ -128,6 +129,9 @@ export async function previewIMessageExtractionContext(input: {
       relevance: 0.9, impact: 0.8, recency: 1,
       sourceRefs: turns.map((turn) => turn.evidence_id),
     },
+    ...(work.streamEventId ? [sourceSubjectContextCandidate({
+      store: input.store, eventId: work.streamEventId,
+    })] : []),
     ...imessageDevelopmentContextCandidates({
       store: input.store,
       sourceId: input.sourceId,

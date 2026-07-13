@@ -21,6 +21,7 @@ test("calendar ingestion is incremental and creates compact state without descri
   expect(await ingestCalendar({ adapter, store, accountId: "me", now })).toMatchObject({ discovered: 1, changed: 0, unchanged: 1 });
   expect(store.countRows("calendar_events")).toBe(1);
   expect(store.countRows("calendar_event_versions")).toBe(1);
+  expect(store.countRows("source_events")).toBe(1);
   expect(new CalendarStore(store).summary("me")).toMatchObject({
     configured: true, events: 1, versions: 1, unprocessed: 0, lastRunStatus: "completed",
   });
@@ -38,6 +39,7 @@ test("calendar edits create immutable versions", async () => {
   expect(await ingestCalendar({ adapter, store, accountId: "me", now })).toMatchObject({ changed: 1 });
   expect(store.countRows("calendar_events")).toBe(1);
   expect(store.countRows("calendar_event_versions")).toBe(2);
+  expect(store.countRows("source_events")).toBe(2);
 });
 
 test("calendar ingestion records provider failures as terminal", async () => {

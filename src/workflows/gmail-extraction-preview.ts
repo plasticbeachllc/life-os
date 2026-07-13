@@ -10,6 +10,8 @@ import { gmailPromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
 import type { WorkItem } from "../work/contract";
 import { WorkRepository } from "../work/repository";
+import { compareSourceEventOrder } from "../events/repository";
+import { sourceSubjectContextCandidate } from "../context/source-subjects";
 
 export interface GmailExtractionPreview {
   workId: string;
@@ -52,8 +54,10 @@ export async function previewGmailExtractionContext(input: {
   if (normalized.contentHash !== candidate.contentHash) throw new Error("Gmail source hash changed; re-ingest before extraction preview");
   const thread = await input.adapter.getThread(candidate.threadId);
   const normalizedThread = (thread.messages ?? []).map(normalizeGmailMessage);
+  const selectedPosition = gmailEventPosition(normalized);
   const recentThread = normalizedThread
-    .sort((left, right) => Number(left.internalDate) - Number(right.internalDate))
+    .filter((turn) => compareSourceEventOrder(gmailEventPosition(turn), selectedPosition) <= 0)
+    .sort((left, right) => compareSourceEventOrder(gmailEventPosition(left), gmailEventPosition(right)))
     .slice(-5);
   const redactions = await redactSensitiveTexts([
     ...recentThread.map((turn) => turn.authoredBody), normalized.subject ?? "",
@@ -88,6 +92,7 @@ export async function previewGmailExtractionContext(input: {
   const entityCandidates = exactEntityCandidates(input.store, normalized);
   const priorFindings = new FindingStore(input.store).activeRelationCandidatesForContainer({
     sourceType: "gmail_extraction", sourceId: input.accountId, containerId: normalized.threadId,
+    before: { internalDate: normalized.internalDate, messageId: normalized.messageId },
   });
   const candidates: ContextCandidate[] = [
     workContextCandidate(work),
@@ -127,6 +132,9 @@ export async function previewGmailExtractionContext(input: {
       relevance: 0.85, impact: 0.8, recency: 1,
       sourceRefs: turns.flatMap((turn) => [`gmail:${turn.message_id}:${turn.source_hash}`, turn.source_hash]),
     },
+    ...(work.streamEventId ? [sourceSubjectContextCandidate({
+      store: input.store, eventId: work.streamEventId,
+    })] : []),
     ...(entityCandidates.length > 0 ? [{
       id: `entities:${normalized.messageId}`, category: "entity_state" as const, retrievalLevel: 1 as const,
       content: { exact_candidates: entityCandidates },
@@ -190,6 +198,13 @@ function gmailMessageType(message: ReturnType<typeof normalizeGmailMessage>): "d
   if (message.labelIds.includes("DRAFT")) return "draft";
   if (message.labelIds.includes("SENT")) return "sent";
   return "received";
+}
+
+function gmailEventPosition(message: ReturnType<typeof normalizeGmailMessage>) {
+  return {
+    provider: "gmail" as const, sourceRecordId: message.messageId,
+    occurredAt: new Date(Number(message.internalDate)).toISOString(),
+  };
 }
 
 function exactEntityCandidates(store: OperationalStore, message: ReturnType<typeof normalizeGmailMessage>): Array<{

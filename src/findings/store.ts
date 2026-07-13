@@ -114,13 +114,14 @@ export class FindingStore {
   }
 
   activeRelationCandidatesForContainer(input:
-    | { sourceType: "gmail_extraction"; sourceId: string; containerId: string }
+    | { sourceType: "gmail_extraction"; sourceId: string; containerId: string;
+      before?: { internalDate: string; messageId: string } }
     | { sourceType: "imessage_extraction"; sourceId: string; containerId: string }
   ): PriorFindingRelationCandidate[] {
     const db = this.store.open();
     try {
       const rows = input.sourceType === "gmail_extraction"
-        ? db.query<RelationCandidateRow, [string, string]>(`
+        ? db.query<RelationCandidateRow, [string, string, string, string, string, string]>(`
           SELECT finding.finding_id, finding.kind, finding.statement, finding.owner,
             finding.due_date, finding.content_hash
           FROM findings finding
@@ -129,11 +130,17 @@ export class FindingStore {
             AND message.message_id = extraction.message_id
           WHERE finding.source_type = 'gmail_extraction'
             AND extraction.account_id = ? AND message.thread_id = ?
+            AND (? = '' OR CAST(message.internal_date AS INTEGER) < CAST(? AS INTEGER)
+              OR (message.internal_date = ? AND message.message_id < ?))
             AND (SELECT event.status FROM finding_status_events event
               WHERE event.finding_id = finding.finding_id
               ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) = 'active'
           ORDER BY finding.created_at DESC, finding.finding_id LIMIT 20
-        `).all(input.sourceId, input.containerId)
+        `).all(
+          input.sourceId, input.containerId,
+          input.before?.internalDate ?? "", input.before?.internalDate ?? "",
+          input.before?.internalDate ?? "", input.before?.messageId ?? "",
+        )
         : db.query<RelationCandidateRow, [string, string]>(`
           SELECT finding.finding_id, finding.kind, finding.statement, finding.owner,
             finding.due_date, finding.content_hash

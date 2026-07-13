@@ -1,4 +1,4 @@
-export const schemaVersion = 22;
+export const schemaVersion = 25;
 
 export const ddl = [
   `
@@ -82,6 +82,33 @@ export const ddl = [
   )
   `,
   `
+  CREATE TABLE IF NOT EXISTS source_events (
+    stream_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL CHECK(provider IN ('gmail', 'imessage', 'telegram', 'calendar', 'obsidian')),
+    event_kind TEXT NOT NULL CHECK(event_kind IN ('message', 'calendar_event', 'canonical_note')),
+    direction TEXT NOT NULL CHECK(direction IN ('incoming', 'outgoing', 'draft', 'system', 'unknown')),
+    source_scope_hash TEXT NOT NULL,
+    source_record_hash TEXT NOT NULL,
+    container_hash TEXT NOT NULL,
+    source_version_hash TEXT NOT NULL,
+    previous_event_id TEXT REFERENCES source_events(event_id),
+    occurred_at TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    content_available INTEGER NOT NULL CHECK(content_available IN (0, 1)),
+    stream_version TEXT NOT NULL,
+    UNIQUE(provider, source_scope_hash, source_record_hash, source_version_hash)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_source_events_global
+  ON source_events(stream_sequence)
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_source_events_container
+  ON source_events(provider, source_scope_hash, container_hash, occurred_at, source_record_hash, event_id)
+  `,
+  `
   CREATE TABLE IF NOT EXISTS derived_states (
     state_id TEXT PRIMARY KEY,
     state_type TEXT NOT NULL,
@@ -115,6 +142,7 @@ export const ddl = [
     anchor_id TEXT NOT NULL,
     source_hash TEXT NOT NULL,
     container_hash TEXT NOT NULL,
+    stream_event_id TEXT REFERENCES source_events(event_id),
     reason TEXT NOT NULL CHECK(reason IN ('source_delta', 'contract_refresh')),
     invalidation_key TEXT NOT NULL UNIQUE,
     state TEXT NOT NULL CHECK(state IN ('pending', 'leased', 'completed', 'stale', 'failed')),
@@ -143,6 +171,10 @@ export const ddl = [
   ON work_items(workflow, subject_source_id, subject_id, state)
   `,
   `
+  CREATE INDEX IF NOT EXISTS idx_work_items_stream_event
+  ON work_items(stream_event_id, state)
+  `,
+  `
   CREATE TABLE IF NOT EXISTS subject_links (
     link_id TEXT PRIMARY KEY,
     from_type TEXT NOT NULL CHECK(from_type IN ('imessage_conversation')),
@@ -161,6 +193,33 @@ export const ddl = [
   `
   CREATE INDEX IF NOT EXISTS idx_subject_links_from
   ON subject_links(from_type, from_source_id, from_id, relationship)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS source_subject_links (
+    link_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL CHECK(provider IN ('gmail', 'imessage', 'telegram', 'calendar', 'obsidian')),
+    source_scope_hash TEXT NOT NULL,
+    container_hash TEXT NOT NULL,
+    relationship TEXT NOT NULL CHECK(relationship IN ('concerns')),
+    subject_type TEXT NOT NULL CHECK(subject_type IN ('person', 'project', 'task')),
+    subject_id TEXT NOT NULL,
+    basis TEXT NOT NULL CHECK(basis IN ('explicit_config', 'reviewed')),
+    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    validated_event_id TEXT NOT NULL REFERENCES source_events(event_id),
+    validation_hash TEXT NOT NULL,
+    legacy_subject_link_id TEXT REFERENCES subject_links(link_id),
+    created_at TEXT NOT NULL,
+    revoked_at TEXT,
+    UNIQUE(provider, source_scope_hash, container_hash, relationship, subject_type, subject_id, validation_hash)
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_source_subject_links_container
+  ON source_subject_links(provider, source_scope_hash, container_hash, relationship, revoked_at)
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_source_subject_links_subject
+  ON source_subject_links(subject_type, subject_id, relationship, revoked_at)
   `,
   `
   CREATE TABLE IF NOT EXISTS findings (
