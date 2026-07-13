@@ -1,5 +1,5 @@
 export type NotificationKind = "email" | "calendar" | "proposal" | "system" | "task";
-export type NotificationCategory = "for_you" | "activity" | "approvals";
+export type NotificationCategory = "needs_you" | "activity" | "approvals";
 export type NotificationTone = "question" | "receipt" | "proposal" | "update";
 export type NotificationActionKind = "undo" | "resolve" | "review" | "discuss" | "dismiss";
 
@@ -17,6 +17,7 @@ export interface InboxNotification {
 	title: string;
 	summary: string;
 	detail?: string;
+	agentSummary?: { sentences: string[]; actionRequired: boolean };
 	relativeTime: string;
 	primaryAction?: NotificationAction;
 	secondaryAction?: NotificationAction;

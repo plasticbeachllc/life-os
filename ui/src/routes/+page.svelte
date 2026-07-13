@@ -7,7 +7,7 @@
 	import type { InboxNotification } from "$lib/life-os/types";
 	import WorkspaceOverview from "$lib/life-os/WorkspaceOverview.svelte";
 	import { Inbox, MessageCircle, Settings2, Sparkles } from "@lucide/svelte";
-	import { untrack } from "svelte";
+	import { onMount, untrack } from "svelte";
 	import type { PageData } from "./$types";
 
 	let { data }: { data: PageData } = $props();
@@ -17,6 +17,14 @@
 	let notifications = $state<InboxNotification[]>(
 		untrack(() => data.notifications.map((notification: InboxNotification) => ({ ...notification }))),
 	);
+
+	onMount(() => {
+		const releaseSession = () => {
+			void fetch("/api/chat/session", { method: "DELETE", keepalive: true });
+		};
+		window.addEventListener("pagehide", releaseSession);
+		return () => window.removeEventListener("pagehide", releaseSession);
+	});
 
 	function selectNotification(notification: InboxNotification) {
 		selectedNotification = notification;
@@ -44,7 +52,7 @@
 					status: "resolved",
 					tone: "update",
 					title: "Task creation undone",
-					summary: "The automatically created task was removed from the prototype activity stream.",
+					summary: "The automatically created task was removed.",
 				};
 			}
 			return { ...item, status: "resolved" };
@@ -72,7 +80,7 @@
 		<div class="flex items-center gap-2">
 			<div class="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
 				<span class="size-2 rounded-full bg-emerald-500"></span>
-				Prototype · no writes enabled
+				Read-only mode
 			</div>
 			<Button variant="ghost" size="icon" aria-label="Open settings">
 				<Settings2 aria-hidden="true" />

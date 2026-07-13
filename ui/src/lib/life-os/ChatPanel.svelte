@@ -19,10 +19,36 @@
 		onClearContext: () => void;
 	} = $props();
 
-	let messages = $state(untrack(() => [...initialMessages]));
+	type SummaryState = "none" | "pending" | "started";
+	interface Conversation {
+		id: string;
+		title: string;
+		createdAt: string;
+		context: InboxNotification | null;
+		messages: ChatMessage[];
+		summaryState: SummaryState;
+	}
+
+	const homeConversation: Conversation = {
+		id: "conversation_home",
+		title: "New conversation",
+		createdAt: "Started now",
+		context: null,
+		messages: untrack(() => [...initialMessages]),
+		summaryState: "none",
+	};
+	let conversations = $state<Conversation[]>([homeConversation]);
+	let activeConversationId = $state(homeConversation.id);
+	let activeConversation = $derived(conversations.find((item) => item.id === activeConversationId) ?? homeConversation);
+	let messages = $derived(activeConversation.messages);
+	let activeContext = $derived(activeConversation.context);
 	let draft = $state("");
-	let responding = $state(false);
+	let respondingConversationId = $state<string | null>(null);
+	let responding = $derived(respondingConversationId !== null);
 	let connection = $state<"checking" | "connected" | "unavailable">("checking");
+	const pendingText = "Summarizing…";
+	let observedContextId: string | null | undefined;
+	let conversationSequence = 0;
 
 	$effect(() => {
 		let cancelled = false;
@@ -36,34 +62,69 @@
 		return () => { cancelled = true; };
 	});
 
+	$effect(() => {
+		const incoming = context;
+		const incomingId = incoming?.id ?? null;
+		if (observedContextId === undefined) {
+			observedContextId = incomingId;
+			if (incoming) startConversation(incoming);
+			return;
+		}
+		if (incomingId === observedContextId) return;
+		observedContextId = incomingId;
+		startConversation(incoming);
+	});
+
+	$effect(() => {
+		const conversation = activeConversation;
+		if (conversation.summaryState !== "pending" || responding) return;
+		updateConversation(conversation.id, (current) => ({ ...current, summaryState: "started" }));
+		void beginAgentTurn({
+			intent: "summarize_context",
+			notificationId: conversation.context!.id,
+			context: contextPayload(conversation.context!),
+		}, undefined, conversation.id);
+	});
+
 	async function sendMessage() {
 		const body = draft.trim();
 		if (!body || responding) return;
+		draft = "";
+		await beginAgentTurn({
+			message: body,
+			...(activeContext ? { context: contextPayload(activeContext) } : {}),
+		}, body);
+	}
+
+	async function beginAgentTurn(
+		request: Record<string, unknown>,
+		userBody?: string,
+		conversationId = activeConversationId,
+	) {
+		if (responding) return;
 		const createdAt = Date.now();
 		const assistantId = `message_agent_${createdAt}`;
-		messages.push({
-			id: `message_user_${createdAt}`,
-			role: "user",
-			body,
-			createdAt: "Now",
-		});
-		draft = "";
-		messages.push({
+		if (userBody) {
+			appendMessage(conversationId, {
+				id: `message_user_${createdAt}`,
+				role: "user",
+				body: userBody,
+				createdAt: "Now",
+			});
+		}
+		appendMessage(conversationId, {
 			id: assistantId,
 			role: "agent",
-			body: "",
+			body: pendingText,
 			createdAt: "Now",
 		});
-		responding = true;
+		respondingConversationId = conversationId;
 
 		try {
 			const response = await fetch("/api/chat", {
 				method: "POST",
 				headers: { "content-type": "application/json", accept: "application/x-ndjson" },
-				body: JSON.stringify({
-					message: body,
-					...(context ? { context: { title: context.title, summary: context.summary } } : {}),
-				}),
+				body: JSON.stringify({ ...request, conversationId }),
 			});
 			if (!response.ok || !response.body) throw new Error(await responseError(response));
 			connection = "connected";
@@ -78,15 +139,15 @@
 				while (newline >= 0) {
 					const line = buffer.slice(0, newline).trim();
 					buffer = buffer.slice(newline + 1);
-					if (line) applyStreamEvent(assistantId, line);
+					if (line) applyStreamEvent(conversationId, assistantId, line);
 					newline = buffer.indexOf("\n");
 				}
 			}
 		} catch (error) {
 			connection = "unavailable";
-			setAssistantText(assistantId, `I couldn’t connect to the local LifeOS agent. ${error instanceof Error ? error.message : "Please try again."}`);
+			setAssistantText(conversationId, assistantId, `I couldn’t connect to the local LifeOS agent. ${error instanceof Error ? error.message : "Please try again."}`);
 		} finally {
-			responding = false;
+			if (respondingConversationId === conversationId) respondingConversationId = null;
 		}
 	}
 
@@ -97,20 +158,46 @@
 		}
 	}
 
-	function applyStreamEvent(assistantId: string, line: string) {
-		const event = JSON.parse(line) as { type?: string; delta?: string; error?: string };
-		if (event.type === "delta" && event.delta) appendAssistantText(assistantId, event.delta);
+	function applyStreamEvent(conversationId: string, assistantId: string, line: string) {
+		const event = JSON.parse(line) as { type?: string; delta?: string; text?: string; index?: number; error?: string };
+		if (event.type === "message" && event.text) {
+			const current = conversations.find((item) => item.id === conversationId)?.messages
+				.find((message) => message.id === assistantId);
+			if (current?.body === pendingText) setAssistantText(conversationId, assistantId, event.text);
+			else appendMessage(conversationId, {
+				id: `${assistantId}_sentence_${event.index ?? 0}`,
+				role: "agent",
+				body: event.text,
+				createdAt: "Now",
+			});
+			updateConversation(conversationId, (conversation) => ({
+				...conversation,
+				context: conversation.context ? {
+					...conversation.context,
+					agentSummary: {
+						sentences: [...(conversation.context.agentSummary?.sentences ?? []), event.text!].slice(0, 3),
+						actionRequired: conversation.context.agentSummary?.actionRequired
+							?? conversation.context.category !== "activity",
+					},
+				} : null,
+			}));
+		}
+		if (event.type === "delta" && event.delta) {
+			const current = conversations.find((item) => item.id === conversationId)?.messages
+				.find((message) => message.id === assistantId);
+			if (current?.body === pendingText) setAssistantText(conversationId, assistantId, event.delta);
+			else appendAssistantText(conversationId, assistantId, event.delta);
+		}
 		if (event.type === "error") throw new Error(event.error || "LifeOS could not complete this response.");
 	}
 
-	function appendAssistantText(messageId: string, delta: string) {
-		messages = messages.map((message) =>
-			message.id === messageId ? { ...message, body: `${message.body}${delta}` } : message,
-		);
+	function appendAssistantText(conversationId: string, messageId: string, delta: string) {
+		updateMessages(conversationId, (message) =>
+			message.id === messageId ? { ...message, body: `${message.body}${delta}` } : message);
 	}
 
-	function setAssistantText(messageId: string, body: string) {
-		messages = messages.map((message) => message.id === messageId ? { ...message, body } : message);
+	function setAssistantText(conversationId: string, messageId: string, body: string) {
+		updateMessages(conversationId, (message) => message.id === messageId ? { ...message, body } : message);
 	}
 
 	async function responseError(response: Response): Promise<string> {
@@ -122,20 +209,75 @@
 		}
 	}
 
+	function contextPayload(notification: InboxNotification) {
+		return { kind: notification.kind, title: notification.title, summary: notification.summary,
+			...(notification.agentSummary ? { agentSummary: notification.agentSummary.sentences } : {}) };
+	}
+
+	function startConversation(selected: InboxNotification | null) {
+		conversationSequence += 1;
+		const now = new Date();
+		const conversation: Conversation = {
+			id: `conversation_${now.getTime()}_${conversationSequence}`,
+			title: selected?.title ?? "New conversation",
+			createdAt: now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+			context: selected ? { ...selected } : null,
+			messages: selected?.agentSummary
+				? selected.agentSummary.sentences.map((sentence, index) => ({
+					id: `message_cached_${now.getTime()}_${index}`,
+					role: "agent" as const,
+					body: sentence,
+					createdAt: "Cached",
+				}))
+				: selected ? [] : [...initialMessages],
+			summaryState: selected?.agentSummary ? "none" : selected ? "pending" : "none",
+		};
+		conversations = [conversation, ...conversations];
+		activeConversationId = conversation.id;
+		draft = "";
+	}
+
+	function selectConversation(event: Event) {
+		activeConversationId = (event.currentTarget as HTMLSelectElement).value;
+		draft = "";
+	}
+
+	function clearActiveContext() {
+		if (context) onClearContext();
+		else startConversation(null);
+	}
+
+	function updateConversation(id: string, updater: (conversation: Conversation) => Conversation) {
+		conversations = conversations.map((conversation) => conversation.id === id ? updater(conversation) : conversation);
+	}
+
+	function appendMessage(conversationId: string, message: ChatMessage) {
+		updateConversation(conversationId, (conversation) => ({
+			...conversation,
+			messages: [...conversation.messages, message],
+		}));
+	}
+
+	function updateMessages(conversationId: string, updater: (message: ChatMessage) => ChatMessage) {
+		updateConversation(conversationId, (conversation) => ({
+			...conversation,
+			messages: conversation.messages.map(updater),
+		}));
+	}
+
 	function undoReceipt(messageId: string) {
-		messages = messages.map((message) =>
+		updateMessages(activeConversationId, (message) =>
 			message.id === messageId && message.artifact
 				? { ...message, artifact: { ...message.artifact, status: "undone" } }
-				: message,
-		);
+				: message);
 	}
 
 	function reviewProposal(message: ChatMessage) {
 		if (!message.artifact) return;
-		messages.push({
+		appendMessage(activeConversationId, {
 			id: `message_review_${Date.now()}`,
 			role: "agent",
-			body: `“${message.artifact.title}” is an external action. The connected version will open the exact recipient and reply for confirmation before anything is sent.`,
+			body: `“${message.artifact.title}” would affect the outside world. Review the exact recipient and content before approving it; nothing has been sent.`,
 			createdAt: "Now",
 		});
 	}
@@ -147,8 +289,18 @@
 			<div class="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
 				<Sparkles class="size-4" aria-hidden="true" />
 			</div>
-			<div>
-				<h1 id="chat-heading" class="font-semibold">LifeOS</h1>
+			<div class="min-w-0">
+				<h1 id="chat-heading" class="sr-only">LifeOS conversations</h1>
+				<select
+					class="block max-w-52 cursor-pointer truncate border-0 bg-transparent p-0 pr-6 text-sm font-semibold outline-none sm:max-w-72"
+					value={activeConversationId}
+					onchange={selectConversation}
+					aria-label="Conversation history"
+				>
+					{#each conversations as conversation (conversation.id)}
+						<option value={conversation.id}>{conversation.title} · {conversation.createdAt}</option>
+					{/each}
+				</select>
 				<div class="flex items-center gap-1.5 text-xs text-muted-foreground">
 					<span class={`size-1.5 rounded-full ${connection === "connected" ? "bg-emerald-500" : connection === "unavailable" ? "bg-rose-500" : "bg-amber-500"}`}></span>
 					{connection === "connected" ? "Connected through Codex" : connection === "unavailable" ? "Agent unavailable" : "Connecting…"}
@@ -158,13 +310,13 @@
 		<Badge variant="outline">Read only</Badge>
 	</div>
 
-	{#if context}
+	{#if activeContext}
 		<div class="flex items-center gap-3 border-b bg-background px-5 py-3 sm:px-6">
 			<div class="min-w-0 flex-1">
 				<p class="text-xs font-medium text-muted-foreground">Discussing</p>
-				<p class="truncate text-sm font-medium">{context.title}</p>
+				<p class="truncate text-sm font-medium">{activeContext.title}</p>
 			</div>
-			<Button variant="ghost" size="icon-sm" onclick={onClearContext} aria-label="Clear notification context">
+			<Button variant="ghost" size="icon-sm" onclick={clearActiveContext} aria-label="Clear notification context">
 				<X aria-hidden="true" />
 			</Button>
 		</div>
@@ -179,7 +331,7 @@
 					</Avatar>
 					<div class="max-w-[85%] space-y-3 sm:max-w-[75%]">
 						<div
-							class="rounded-2xl px-4 py-3 text-sm leading-6 shadow-xs"
+							class="whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 shadow-xs"
 							class:rounded-tr-sm={message.role === "user"}
 							class:bg-primary={message.role === "user"}
 							class:text-primary-foreground={message.role === "user"}
@@ -245,7 +397,7 @@
 				<Textarea
 					bind:value={draft}
 					onkeydown={handleKeydown}
-					placeholder={responding ? "LifeOS is responding…" : context ? `Ask about “${context.title}”…` : "Message LifeOS…"}
+					placeholder={responding ? "LifeOS is responding…" : activeContext ? `Ask about “${activeContext.title}”…` : "Message LifeOS…"}
 					aria-label="Message LifeOS"
 					class="min-h-16 resize-none border-0 shadow-none focus-visible:ring-0"
 				/>
