@@ -45,6 +45,7 @@ import {
 import { triageIMessageServiceConversations } from "../workflows/imessage-deterministic-triage";
 import { createIntegrationRegistry } from "../integrations/providers";
 import { registerIntegrationTools } from "./ingestion-tools";
+import { WorkRepository } from "../work/repository";
 
 const extractionOutputInput = z.object({
   classification: z.enum(extractionClassifications),
@@ -69,6 +70,16 @@ export function createLifeOsMcpServer(): McpServer {
     const runtime = runtimeContext();
     const report = await runDoctor(runtime);
     return jsonResult(report);
+  });
+
+  server.registerTool("life_os_work_status", {
+    description: "Get sanitized extraction-work counts and oldest pending age. Returns no provider identifiers, source hashes, subjects, addresses, excerpts, or raw errors.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  }, async () => {
+    const { store } = runtimeContext();
+    store.migrate();
+    return jsonResult(new WorkRepository(store).status());
   });
 
   server.registerTool("life_os_rebuild_state", {
@@ -150,7 +161,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_preview_email_extraction_context", {
-    description: "Refetch and hash-verify one unextracted IMPORTANT Gmail message, then return its bounded untrusted extraction context manifest. Makes no model call and creates no proposal.",
+    description: "Refetch and hash-verify one queued IMPORTANT Gmail message, then return its bounded untrusted extraction context manifest. Makes no model call and creates no proposal.",
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false },
   }, async () => {
@@ -164,7 +175,7 @@ export function createLifeOsMcpServer(): McpServer {
       adapter: new GmailRestAdapter(loadGmailAuthConfig(refreshToken)),
       store, accountId: config.gmailAccountId,
     });
-    return jsonResult(preview ?? { message: "No unextracted important messages." });
+    return jsonResult(preview ?? { message: "No queued important messages." });
   });
 
   server.registerTool("life_os_prepare_email_extraction", {
@@ -229,7 +240,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_preview_imessage_extraction_context", {
-    description: "Hash-verify one unextracted Messages source and return bounded, high-risk-redacted, untrusted transient context. Makes no model call and creates no proposal.",
+    description: "Hash-verify one queued Messages source and return bounded, high-risk-redacted, untrusted transient context. Makes no model call and creates no proposal.",
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false },
   }, async () => {
@@ -237,7 +248,7 @@ export function createLifeOsMcpServer(): McpServer {
     const preview = await previewIMessageExtractionContext({
       adapter, store, sourceId: config.imessageSourceId, selection,
     });
-    return jsonResult(preview ?? { message: "No unextracted Messages sources." });
+    return jsonResult(preview ?? { message: "No queued Messages sources." });
   });
 
   server.registerTool("life_os_prepare_imessage_extraction", {

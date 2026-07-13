@@ -1,4 +1,4 @@
-export const schemaVersion = 16;
+export const schemaVersion = 17;
 
 export const ddl = [
   `
@@ -100,6 +100,43 @@ export const ddl = [
   `
   CREATE INDEX IF NOT EXISTS idx_derived_states_current
   ON derived_states(state_type, entity_id, superseded_at)
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS work_items (
+    work_id TEXT PRIMARY KEY,
+    workflow TEXT NOT NULL CHECK(workflow IN ('gmail_extraction', 'imessage_extraction')),
+    subject_type TEXT NOT NULL CHECK(subject_type IN ('gmail_message', 'imessage_conversation')),
+    subject_source_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    anchor_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    container_hash TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK(reason IN ('source_delta', 'contract_refresh')),
+    invalidation_key TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK(state IN ('pending', 'leased', 'completed', 'stale', 'failed')),
+    priority INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 3 CHECK(max_attempts BETWEEN 1 AND 10),
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    available_at TEXT NOT NULL,
+    error_category TEXT CHECK(error_category IN (
+      'provider_transient', 'rate_limited', 'source_unavailable', 'validation',
+      'stale_source', 'internal', 'retry_exhausted'
+    )),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK((state = 'leased') = (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL))
+  )
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_work_items_ready
+  ON work_items(state, available_at, priority DESC, created_at)
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_work_items_subject
+  ON work_items(workflow, subject_source_id, subject_id, state)
   `,
   `
   CREATE TABLE IF NOT EXISTS subject_links (

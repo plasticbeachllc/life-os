@@ -88,3 +88,20 @@ export function completeReasoningCall(input: {
   input.store.recordModelCall(completed);
   return completed;
 }
+
+export function completeReasoningCallInTransaction(
+  db: ReturnType<OperationalStore["open"]>,
+  input: { call: ModelCallRecord; usage?: PreparedReasoningUsage; completedAt: string },
+): void {
+  const result = db.query(`
+    UPDATE model_calls SET input_tokens = ?, output_tokens = ?, cached_tokens = ?,
+      completed_at = ?, status = 'completed', error = NULL
+    WHERE call_id = ? AND status = 'prepared' AND workflow = ? AND task_type = ?
+      AND context_hash = ?
+  `).run(
+    input.usage?.inputTokens ?? null, input.usage?.outputTokens ?? null,
+    input.usage?.cachedTokens ?? null, input.completedAt, input.call.callId,
+    input.call.workflow, input.call.taskType, input.call.contextHash,
+  );
+  if (result.changes !== 1) throw new Error("prepared reasoning call changed before completion");
+}

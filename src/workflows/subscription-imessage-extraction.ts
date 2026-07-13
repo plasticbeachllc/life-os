@@ -1,15 +1,14 @@
 import type { IMessageConversationSelection, IMessageSourceAdapter } from "../adapters/imessage";
 import type { OperationalStore } from "../db/store";
 import { IMessageStore } from "../imessage/store";
-import { projectExtractionFindings } from "../findings/projector";
+import { semanticFindingsForExtraction } from "../findings/projector";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
-import {
-  completeReasoningCall, prepareReasoningCall, requirePreparedReasoningCall,
-} from "../orchestration/prepared-reasoning";
+import { prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
 import { previewIMessageExtractionContext } from "./imessage-extraction-preview";
 import { refetchIMessage } from "./imessage-refetch";
+import { WorkRepository } from "../work/repository";
 
 export const IMESSAGE_EXTRACTION_PROMPT_VERSION = imessagePromptSpec.version;
 export const IMESSAGE_EXTRACTION_SCHEMA_VERSION = "imessage-extraction-schema-v3";
@@ -37,15 +36,45 @@ export async function prepareSubscriptionIMessageExtraction(input: {
   selection: IMessageConversationSelection; model: string; policyVersion: string;
   policyPrompt?: CompiledPolicyPrompt;
 }): Promise<Record<string, unknown>> {
-  const preview = await previewIMessageExtractionContext(input);
-  if (!preview) return { cached: false, empty: true, message: "No unextracted Messages sources." };
   const imessageStore = new IMessageStore(input.store);
+  imessageStore.enqueueExtractionRefreshes({
+    sourceId: input.sourceId, promptVersion: IMESSAGE_EXTRACTION_PROMPT_VERSION,
+    schemaVersion: IMESSAGE_EXTRACTION_SCHEMA_VERSION, policyVersion: input.policyVersion,
+    now: new Date().toISOString(),
+  });
+  const workRepository = new WorkRepository(input.store);
+  const leaseOwner = `prepare_${newId("work")}`;
+  const work = workRepository.claimNext({
+    workflow: "imessage_extraction", subjectSourceId: input.sourceId,
+    leaseOwner, leaseDurationMs: 30 * 60 * 1000,
+  });
+  if (!work) return { cached: false, empty: true, message: "No queued Messages sources." };
+  let preview;
+  try {
+    preview = await previewIMessageExtractionContext({ ...input, workItem: work });
+  } catch (error) {
+    if (/changed|ingest again/i.test(error instanceof Error ? error.message : String(error))) {
+      workRepository.markStale({ workId: work.workId });
+    } else {
+      workRepository.fail({
+        workId: work.workId, leaseOwner, category: "provider_transient", retryable: true,
+        retryDelayMs: 30_000,
+      });
+    }
+    throw error;
+  }
+  if (!preview) throw new Error("claimed Messages work could not be prepared");
   const cached = imessageStore.findExtraction({
     sourceId: input.sourceId, messageId: preview.messageId, sourceHash: preview.sourceHash,
     promptVersion: IMESSAGE_EXTRACTION_PROMPT_VERSION,
     schemaVersion: IMESSAGE_EXTRACTION_SCHEMA_VERSION, policyVersion: input.policyVersion,
   });
-  if (cached) return { cached: true, extractionId: cached.extractionId, output: cached.output };
+  if (cached) {
+    workRepository.complete({
+      workId: work.workId, leaseOwner, sourceHash: work.sourceHash, containerHash: work.containerHash,
+    });
+    return { cached: true, extractionId: cached.extractionId, output: cached.output };
+  }
 
   const call = prepareReasoningCall({
     store: input.store,
@@ -80,28 +109,53 @@ export async function submitSubscriptionIMessageExtraction(input: {
   });
   const prepared = preparedSourceIdentity(manifest.includedItems);
   const preparedPolicyVersion = findStringField(manifest.includedItems, "policy_version");
+  const workId = findStringField(manifest.includedItems, "work_id");
+  const leaseOwner = findStringField(manifest.includedItems, "work_lease_owner");
+  const workSourceHash = findStringField(manifest.includedItems, "work_source_hash");
+  const workContainerHash = findStringField(manifest.includedItems, "work_container_hash");
   if (!prepared || prepared.sourceHash !== call.sourceHash
     || prepared.conversationStateHash !== input.conversationStateHash
     || preparedPolicyVersion !== input.policyVersion) {
     throw new Error("prepared Messages source identity mismatch");
   }
   const imessageStore = new IMessageStore(input.store);
+  if (!workId || !leaseOwner || !workSourceHash || !workContainerHash) {
+    throw new Error("prepared Messages work identity is missing");
+  }
+  const workRepository = new WorkRepository(input.store);
+  workRepository.requireLease({
+    workId, leaseOwner, sourceHash: workSourceHash, containerHash: workContainerHash,
+  });
   if (imessageStore.conversationStateHash(input.sourceId, prepared.conversationId)
     !== input.conversationStateHash) {
+    workRepository.markStale({ workId });
     throw new Error("ingested Messages conversation changed; prepare extraction again");
   }
   assertContextStatesCurrent(input.store, manifest.includedItems);
-  const current = await refetchIMessage({
-    adapter: input.adapter, store: input.store, sourceId: input.sourceId,
-    messageId: prepared.messageId, selection: input.selection,
-  });
+  let current;
+  try {
+    current = await refetchIMessage({
+      adapter: input.adapter, store: input.store, sourceId: input.sourceId,
+      messageId: prepared.messageId, selection: input.selection,
+    });
+  } catch (error) {
+    if (/changed|ingest again/i.test(error instanceof Error ? error.message : String(error))) {
+      workRepository.markStale({ workId });
+    }
+    throw error;
+  }
   if (current.sourceHash !== prepared.sourceHash) {
+    workRepository.markStale({ workId });
     throw new Error("Messages source changed; prepare extraction again");
   }
   validateOutput(input.output, manifest.includedItems, prepared.deltaEvidenceIds);
 
   const completedAt = new Date().toISOString();
   const extractionId = newId("extract");
+  const extraction = {
+    sourceType: "imessage_extraction" as const, extractionId, callId: input.callId,
+    output: input.output as unknown as Record<string, unknown>, createdAt: completedAt,
+  };
   imessageStore.saveExtraction({
     extractionId, sourceId: input.sourceId, messageId: prepared.messageId,
     sourceHash: prepared.sourceHash, conversationId: prepared.conversationId,
@@ -110,23 +164,12 @@ export async function submitSubscriptionIMessageExtraction(input: {
     output: input.output as unknown as Record<string, unknown>,
     promptVersion: IMESSAGE_EXTRACTION_PROMPT_VERSION,
     schemaVersion: IMESSAGE_EXTRACTION_SCHEMA_VERSION,
-    policyVersion: input.policyVersion, model: call.model, createdAt: completedAt,
-  });
-  completeReasoningCall({
-    store: input.store, call,
+    policyVersion: input.policyVersion, model: call.model, createdAt: completedAt, call,
     usage: {
       ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
       ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
       ...(input.cachedTokens !== undefined ? { cachedTokens: input.cachedTokens } : {}),
-    },
-    now: new Date(completedAt),
-  });
-  projectExtractionFindings({
-    store: input.store,
-    extraction: {
-      sourceType: "imessage_extraction", extractionId, callId: input.callId,
-      output: input.output as unknown as Record<string, unknown>, createdAt: completedAt,
-    },
+    }, findings: semanticFindingsForExtraction(extraction), workId, leaseOwner,
   });
   return { extractionId, output: input.output };
 }

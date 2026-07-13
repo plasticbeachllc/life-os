@@ -3,6 +3,7 @@ import type { OperationalStore } from "../db/store";
 import { IMessageStore } from "../imessage/store";
 import { newId } from "../util/ids";
 import { refetchIMessage } from "./imessage-refetch";
+import { WorkRepository } from "../work/repository";
 
 export const IMESSAGE_TRIAGE_RULE_VERSION = "imessage-service-triage-v1";
 
@@ -22,7 +23,10 @@ export async function triageIMessageServiceConversations(input: {
 }): Promise<IMessageTriageReport> {
   input.store.migrate();
   const imessageStore = new IMessageStore(input.store);
-  const candidates = imessageStore.extractionCandidates(input.sourceId, input.limit);
+  const workRepository = new WorkRepository(input.store);
+  const candidates = workRepository.listReady({
+    workflow: "imessage_extraction", subjectSourceId: input.sourceId, limit: input.limit,
+  });
   const report: IMessageTriageReport = {
     scanned: candidates.length, triaged: 0, remainingForModel: 0,
     byRule: {}, modelCalls: 0, proposals: 0, mutations: 0,
@@ -30,21 +34,27 @@ export async function triageIMessageServiceConversations(input: {
   for (const candidate of candidates) {
     const source = await refetchIMessage({
       adapter: input.adapter, store: input.store, sourceId: input.sourceId,
-      messageId: candidate.messageId, selection: input.selection,
+      messageId: candidate.anchorId, selection: input.selection,
     });
     const result = classifyServiceMessage(source.transientText, evidenceId(source.messageId, source.sourceHash));
     if (!result) {
       report.remainingForModel += 1;
       continue;
     }
+    const leaseOwner = `triage_${newId("work")}`;
+    const claimed = workRepository.claimExact({
+      workId: candidate.workId, leaseOwner, leaseDurationMs: 5 * 60 * 1000,
+    });
+    if (!claimed) continue;
     const createdAt = new Date().toISOString();
     imessageStore.saveDeterministicTriage({
       triageId: newId("triage"), sourceId: input.sourceId,
-      messageId: candidate.messageId, sourceHash: candidate.contentHash,
-      conversationId: candidate.conversationId,
-      conversationStateHash: candidate.conversationStateHash,
+      messageId: claimed.anchorId, sourceHash: claimed.sourceHash,
+      conversationId: claimed.subjectId,
+      conversationStateHash: claimed.containerHash,
       classification: result.classification, output: result.output,
       ruleVersion: IMESSAGE_TRIAGE_RULE_VERSION, createdAt,
+      workId: claimed.workId, leaseOwner,
     });
     report.triaged += 1;
     report.byRule[result.rule] = (report.byRule[result.rule] ?? 0) + 1;

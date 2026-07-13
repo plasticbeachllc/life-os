@@ -1240,21 +1240,21 @@ Ownership: state/projection owner; coordinate context contract changes with orch
 
 Goal: unify pending/invalidation/retry semantics after common workflows prove the requirements.
 
-- [ ] Define work item schema and unique invalidation key.
-- [ ] Add lease, expiration, retry category, and bounded attempt behavior.
-- [ ] Emit work from committed source deltas.
-- [ ] Convert extraction selection from provider-specific “next unprocessed” queries to work subjects.
-- [ ] Complete work transactionally with validated findings.
-- [ ] Add recovery for interrupted leases and explicit stale terminal state.
-- [ ] Add sanitized status/metrics.
+- [x] Define work item schema and unique invalidation key.
+- [x] Add lease, expiration, retry category, and bounded attempt behavior.
+- [x] Emit work from committed source deltas.
+- [x] Convert extraction selection from provider-specific “next unprocessed” queries to work subjects.
+- [x] Complete work transactionally with validated findings.
+- [x] Add recovery for interrupted leases and explicit stale terminal state.
+- [x] Add sanitized status/metrics.
 
 Acceptance criteria:
 
-- [ ] Concurrent workers cannot process the same invalidation key twice.
-- [ ] Process termination recovers work after lease expiry.
-- [ ] Changed container/source identity makes old work stale and creates at most one new active item.
-- [ ] Retry never advances a provider cursor or duplicates a finding.
-- [ ] Work rows contain no raw source text or arbitrary executable payload.
+- [x] Concurrent workers cannot process the same invalidation key twice.
+- [x] Process termination recovers work after lease expiry.
+- [x] Changed container/source identity makes old work stale and creates at most one new active item.
+- [x] Retry never advances a provider cursor or duplicates a finding.
+- [x] Work rows contain no raw source text or arbitrary executable payload.
 
 Ownership: one schema and orchestration owner. Do not implement independently per provider.
 
@@ -1475,7 +1475,7 @@ permission surface and preserve explicit provider boundaries.
 The first implemented slice establishes the contract for contextualizing a new Messages development.
 It is intentionally narrower than the complete target architecture:
 
-- Schema version 16 includes `subject_links` for internal Messages-conversation-to-person links only.
+- Schema version 17 includes `subject_links` for internal Messages-conversation-to-person links only.
 - A link is created explicitly with `message link-person`; it is not inferred or exposed as an MCP
   mutation.
 - The command accepts a source conversation only at the CLI boundary, verifies that it is inside the
@@ -1533,7 +1533,7 @@ calls have different operational states.
 The third implemented slice adds immutable common findings while retaining Gmail and Messages
 extraction tables as the canonical provider-specific records.
 
-- Schema version 16 includes `findings` and append-only `finding_status_events` alongside subject links.
+- Schema version 17 includes `findings` and append-only `finding_status_events` alongside subject links.
 - A finding identity is derived deterministically from source type, extraction ID, and item index.
 - Semantic content and evidence are content-hashed; replay with different content under the same source
   identity fails closed.
@@ -1611,8 +1611,8 @@ All task proposals now originate from common findings.
 ## 26. Registered projection contract and reconciliation
 
 The sixth implemented slice replaces ad hoc projection invalidation with one typed contract. Schema
-version 16 adds explicit builder name, builder version, normalized input provenance, and dependency
-hash columns to every derived-state record. Non-projection derived states receive conservative legacy
+version 16 introduced explicit builder name, builder version, normalized input provenance, and dependency
+hash columns to every derived-state record; schema version 17 retains them. Non-projection derived states receive conservative legacy
 metadata at the storage boundary, while registered deterministic builders provide complete identities.
 
 The coordinated registry contains project, person, task, finding-attention, and chief-of-staff builders.
@@ -1635,6 +1635,46 @@ separate `briefing_reasoning_state` overlay and are never copied into determinis
 Reconciliation reads Markdown but does not write it. Tests cover stable replay, complete provenance,
 source and task removal, full/targeted convergence, finding lifecycle invalidation, date rollover, the
 separate recommendation overlay, and byte-for-byte preservation of human-authored journal prose.
+
+## 27. Internal extraction work queue
+
+The seventh implemented slice replaces Gmail and Messages “next unprocessed” queries with one durable
+metadata-only work queue. Schema version 17 adds `work_items` with explicit pending, leased, completed,
+stale, and failed states; bounded attempts; lease expiration; availability time; priority; and a small
+sanitized error-category enum.
+
+The invalidation key hashes workflow, subject type, internal provider/source identity, anchor identity,
+source hash, container hash, reason, and—only for explicit contract refreshes—prompt/schema/policy
+identity. Provider identifiers and immutable hashes remain internal SQLite metadata. Work rows contain
+no message body, source excerpt, prompt blob, arbitrary JSON payload, command, path, patch, URL, or SQL.
+
+Gmail emits work in the same transaction that stores a changed message, immutable version, and thread
+state. Messages emits one item per changed conversation in the same transaction that stores the batch,
+refreshes conversation state, and advances the bounded cursor. A failure to enqueue therefore rolls
+back the matching provider commit and cursor advancement. Unchanged replay inserts no work.
+
+Only one worker can atomically claim an available item. Claims use `BEGIN IMMEDIATE`, a named owner,
+bounded expiration, and an incremented attempt count. Expired leases return to pending until the attempt
+limit, then fail as `retry_exhausted`. A new source or container identity stales older pending or leased
+work for the same subject before inserting the replacement. Explicit retry categories never store raw
+provider errors.
+
+Both subscription extraction prepares claim work before exact refetch. The work ID, lease identity,
+source hash, and container hash are bound into the prepared context manifest. Submission rechecks the
+lease and current provider/container identities. Provider extraction, common findings, prepared model
+call completion, and work completion commit in one SQLite transaction. A competing prepare cannot
+create a second model call while the first lease is active.
+
+Deterministic Messages service triage reads the same ready queue, claims only messages matched by a
+deterministic rule, and commits triage plus work completion atomically. Unmatched work remains available
+for model extraction. Calendar remains outside this first queue slice because it is deterministic and
+has different retry semantics.
+
+`life_os_work_status` and `life-os work status` expose only aggregate state/workflow counts and oldest
+pending age. They return no work IDs, provider IDs, subjects, addresses, excerpts, source hashes, or raw
+errors. Tests cover idempotent enqueue, exclusive claims, changed-source replacement, lease recovery,
+bounded retry, provider replay, transactional extraction/finding completion, cursor safety, and work-row
+non-retention.
 
 ## Appendix A: Example end-to-end flows
 

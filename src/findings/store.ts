@@ -16,6 +16,47 @@ export interface PreparedFindingConversion {
   eventId: string; findingId: string; expectedContentHash: string; taskId: string;
 }
 
+type DatabaseConnection = ReturnType<OperationalStore["open"]>;
+
+export function saveFindingsInTransaction(
+  db: DatabaseConnection, findings: SemanticFinding[],
+): { created: number; unchanged: number } {
+  let created = 0;
+  let unchanged = 0;
+  for (const finding of findings) {
+    const existing = db.query<{ content_hash: string }, [string, string, number]>(`
+      SELECT content_hash FROM findings
+      WHERE source_type = ? AND source_extraction_id = ? AND source_item_index = ?
+    `).get(finding.sourceType, finding.sourceExtractionId, finding.sourceItemIndex);
+    if (existing) {
+      if (existing.content_hash !== finding.contentHash) {
+        throw new Error("immutable finding projection conflicts with existing content");
+      }
+      unchanged += 1;
+      continue;
+    }
+    db.query(`
+      INSERT INTO findings (
+        finding_id, source_type, source_extraction_id, source_item_index,
+        reasoning_call_id, kind, statement, owner, due_date, confidence,
+        ambiguities_json, evidence_json, evidence_count, content_hash, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      finding.findingId, finding.sourceType, finding.sourceExtractionId,
+      finding.sourceItemIndex, finding.reasoningCallId, finding.kind,
+      finding.statement, finding.owner, finding.dueDate, finding.confidence,
+      JSON.stringify(finding.ambiguities), JSON.stringify(finding.evidenceIds),
+      finding.evidenceIds.length, finding.contentHash, finding.createdAt,
+    );
+    db.query(`
+      INSERT INTO finding_status_events (event_id, finding_id, status, created_at)
+      VALUES (?, ?, 'active', ?)
+    `).run(`${finding.findingId}_active`, finding.findingId, finding.createdAt);
+    created += 1;
+  }
+  return { created, unchanged };
+}
+
 export class FindingStore {
   constructor(private readonly store: OperationalStore) {}
 
@@ -23,42 +64,7 @@ export class FindingStore {
     if (findings.length === 0) return { created: 0, unchanged: 0 };
     const db = this.store.open();
     try {
-      return db.transaction(() => {
-        let created = 0;
-        let unchanged = 0;
-        for (const finding of findings) {
-          const existing = db.query<{ content_hash: string }, [string, string, number]>(`
-            SELECT content_hash FROM findings
-            WHERE source_type = ? AND source_extraction_id = ? AND source_item_index = ?
-          `).get(finding.sourceType, finding.sourceExtractionId, finding.sourceItemIndex);
-          if (existing) {
-            if (existing.content_hash !== finding.contentHash) {
-              throw new Error("immutable finding projection conflicts with existing content");
-            }
-            unchanged += 1;
-            continue;
-          }
-          db.query(`
-            INSERT INTO findings (
-              finding_id, source_type, source_extraction_id, source_item_index,
-              reasoning_call_id, kind, statement, owner, due_date, confidence,
-              ambiguities_json, evidence_json, evidence_count, content_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            finding.findingId, finding.sourceType, finding.sourceExtractionId,
-            finding.sourceItemIndex, finding.reasoningCallId, finding.kind,
-            finding.statement, finding.owner, finding.dueDate, finding.confidence,
-            JSON.stringify(finding.ambiguities), JSON.stringify(finding.evidenceIds),
-            finding.evidenceIds.length, finding.contentHash, finding.createdAt,
-          );
-          db.query(`
-            INSERT INTO finding_status_events (event_id, finding_id, status, created_at)
-            VALUES (?, ?, 'active', ?)
-          `).run(`${finding.findingId}_active`, finding.findingId, finding.createdAt);
-          created += 1;
-        }
-        return { created, unchanged };
-      })();
+      return db.transaction(() => saveFindingsInTransaction(db, findings))();
     } finally {
       db.close();
     }
@@ -93,7 +99,6 @@ export class FindingStore {
       db.close();
     }
   }
-
   findBySource(sourceType: SemanticFinding["sourceType"], extractionId: string,
     itemIndex: number): StoredFinding | undefined {
     const db = this.store.open();

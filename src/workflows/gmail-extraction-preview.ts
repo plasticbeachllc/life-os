@@ -7,8 +7,11 @@ import { gmailThreadStateHash } from "../gmail/store";
 import { redactSensitiveTexts } from "../privacy/presidio";
 import { gmailPromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
+import type { WorkItem } from "../work/contract";
+import { WorkRepository } from "../work/repository";
 
 export interface GmailExtractionPreview {
+  workId: string;
   messageId: string;
   threadId: string;
   sourceHash: string;
@@ -23,11 +26,23 @@ export interface GmailExtractionPreview {
 export async function previewGmailExtractionContext(input: {
   adapter: GmailSourceAdapter; store: OperationalStore; accountId: string;
   policyVersion?: string; policyPrompt?: CompiledPolicyPrompt;
+  workItem?: WorkItem;
 }): Promise<GmailExtractionPreview | undefined> {
   input.store.migrate();
   const gmailStore = new GmailStore(input.store);
-  const candidate = gmailStore.extractionCandidates(input.accountId, 1)[0];
-  if (!candidate) return undefined;
+  const work = input.workItem ?? new WorkRepository(input.store).peekNext({
+    workflow: "gmail_extraction", subjectSourceId: input.accountId,
+  });
+  if (!work) return undefined;
+  if (work.workflow !== "gmail_extraction" || work.subjectSourceId !== input.accountId) {
+    throw new Error("Gmail work subject does not match the configured account");
+  }
+  const candidate = gmailStore.messageIdentity(input.accountId, work.anchorId);
+  if (!candidate || candidate.messageId !== work.subjectId
+    || candidate.contentHash !== work.sourceHash
+    || gmailStore.currentThreadHash(input.accountId, candidate.threadId) !== work.containerHash) {
+    throw new Error("Gmail work source changed; re-ingest before extraction preview");
+  }
   const message = await input.adapter.getMessage(candidate.messageId);
   if (!(message.labelIds ?? []).includes("IMPORTANT")) throw new Error("extraction candidate no longer has IMPORTANT label");
   const normalized = normalizeGmailMessage(message);
@@ -55,6 +70,9 @@ export async function previewGmailExtractionContext(input: {
     }));
   const evidenceId = `gmail:${normalized.messageId}:${normalized.contentHash}`;
   const threadStateHash = gmailThreadStateHash(normalizedThread);
+  if (threadStateHash !== work.containerHash) {
+    throw new Error("Gmail work thread changed; re-ingest before extraction preview");
+  }
   const selectedMessagePromptInjectionIndicators = detectPromptInjection([
     boundedText(redactedSubject.text, 1200),
     boundedText(redactedSelected.text, 6000),
@@ -66,6 +84,7 @@ export async function previewGmailExtractionContext(input: {
   ].join("\n"));
   const entityCandidates = exactEntityCandidates(input.store, normalized);
   const candidates: ContextCandidate[] = [
+    workContextCandidate(work),
     {
       id: `gmail-metadata:${normalized.messageId}`, category: "source", retrievalLevel: 0,
       content: {
@@ -117,10 +136,25 @@ export async function previewGmailExtractionContext(input: {
     policyTokens: 450, contingencyTokens: 350,
   });
   return {
+    workId: work.workId,
     messageId: normalized.messageId, threadId: normalized.threadId,
     sourceHash: normalized.contentHash, threadStateHash,
     manifest, promptInjectionIndicators, selectedMessagePromptInjectionIndicators,
     modelCalls: 0, retainedBody: false,
+  };
+}
+
+function workContextCandidate(work: WorkItem): ContextCandidate {
+  const content = {
+    work_id: work.workId,
+    ...(work.leaseOwner ? { work_lease_owner: work.leaseOwner } : {}),
+    work_source_hash: work.sourceHash,
+    work_container_hash: work.containerHash,
+  };
+  return {
+    id: `work:${work.workId}`, category: "policy", retrievalLevel: 0,
+    content, tokenEstimate: 80, relevance: 1, impact: 1,
+    sourceRefs: [work.workId, work.invalidationKey],
   };
 }
 

@@ -1,8 +1,11 @@
-import type { OperationalStore } from "../db/store";
+import type { ModelCallRecord, OperationalStore } from "../db/store";
 import type { NormalizedGmailMessage } from "./normalizer";
 import { gmailNormalizerVersion } from "./normalizer";
 import { sha256Value } from "../util/hashing";
-import type { ExtractionRecordForProjection } from "../findings/contract";
+import type { ExtractionRecordForProjection, SemanticFinding } from "../findings/contract";
+import { completeWorkInTransaction, enqueueWorkInTransaction } from "../work/repository";
+import { saveFindingsInTransaction } from "../findings/store";
+import { completeReasoningCallInTransaction, type PreparedReasoningUsage } from "../orchestration/prepared-reasoning";
 
 export function gmailThreadStateHash(messages: NormalizedGmailMessage[]): string {
   return sha256Value([...messages]
@@ -85,6 +88,26 @@ export class GmailStore {
       return db.query<{ thread_state_hash: string }, [string, string]>(
         "SELECT thread_state_hash FROM gmail_threads WHERE account_id = ? AND thread_id = ?",
       ).get(accountId, threadId)?.thread_state_hash;
+    } finally {
+      db.close();
+    }
+  }
+
+  messageIdentity(accountId: string, messageId: string): {
+    messageId: string; threadId: string; contentHash: string; internalDate: string;
+  } | undefined {
+    const db = this.store.open();
+    try {
+      const row = db.query<{
+        message_id: string; thread_id: string; content_hash: string; internal_date: string;
+      }, [string, string]>(`
+        SELECT message_id, thread_id, content_hash, internal_date FROM gmail_messages
+        WHERE account_id = ? AND message_id = ? AND selected_important = 1
+      `).get(accountId, messageId);
+      return row ? {
+        messageId: row.message_id, threadId: row.thread_id,
+        contentHash: row.content_hash, internalDate: row.internal_date,
+      } : undefined;
     } finally {
       db.close();
     }
@@ -221,33 +244,14 @@ export class GmailStore {
     }
   }
 
-  extractionCandidates(accountId: string, limit: number): Array<{
-    messageId: string; threadId: string; contentHash: string; internalDate: string;
-  }> {
-    const db = this.store.open();
-    try {
-      return db.query<{
-        message_id: string; thread_id: string; content_hash: string; internal_date: string;
-      }, [string, number]>(
-        `SELECT message_id, thread_id, content_hash, internal_date FROM gmail_messages
-         WHERE account_id = ? AND selected_important = 1 AND last_extraction_hash IS NULL
-         ORDER BY CAST(internal_date AS INTEGER) DESC LIMIT ?`,
-      ).all(accountId, limit).map((row) => ({
-        messageId: row.message_id, threadId: row.thread_id,
-        contentHash: row.content_hash, internalDate: row.internal_date,
-      }));
-    } finally {
-      db.close();
-    }
-  }
-
   invalidateExtractionVersion(input: {
     accountId: string; promptVersion: string; schemaVersion: string; policyVersion: string;
   }): number {
     const db = this.store.open();
     try {
-      return db.query(
-        `UPDATE gmail_messages SET last_extraction_hash = NULL, ingestion_state = 'ingested'
+      return db.transaction(() => {
+        const changed = db.query(
+          `UPDATE gmail_messages SET last_extraction_hash = NULL, ingestion_state = 'ingested'
          WHERE account_id = ? AND last_extraction_hash IS NOT NULL AND NOT EXISTS (
            SELECT 1 FROM gmail_extractions ge
            WHERE ge.account_id = gmail_messages.account_id
@@ -255,7 +259,29 @@ export class GmailStore {
              AND ge.source_hash = gmail_messages.content_hash
              AND ge.prompt_version = ? AND ge.schema_version = ? AND ge.policy_version = ?
          )`,
-      ).run(input.accountId, input.promptVersion, input.schemaVersion, input.policyVersion).changes;
+        ).run(input.accountId, input.promptVersion, input.schemaVersion, input.policyVersion).changes;
+        if (changed > 0) {
+          const rows = db.query<{
+            message_id: string; thread_id: string; content_hash: string; thread_state_hash: string;
+          }, [string]>(`
+            SELECT message.message_id, message.thread_id, message.content_hash, thread.thread_state_hash
+            FROM gmail_messages message JOIN gmail_threads thread
+              ON thread.account_id = message.account_id AND thread.thread_id = message.thread_id
+            WHERE message.account_id = ? AND message.last_extraction_hash IS NULL
+              AND EXISTS (SELECT 1 FROM gmail_extractions prior
+                WHERE prior.account_id = message.account_id AND prior.message_id = message.message_id)
+          `).all(input.accountId);
+          const now = new Date().toISOString();
+          for (const row of rows) enqueueWorkInTransaction(db, {
+            workflow: "gmail_extraction", subjectType: "gmail_message",
+            subjectSourceId: input.accountId, subjectId: row.message_id, anchorId: row.message_id,
+            sourceHash: row.content_hash, containerHash: row.thread_state_hash,
+            reason: "contract_refresh", now,
+            contractIdentity: `${input.promptVersion}:${input.schemaVersion}:${input.policyVersion}`,
+          });
+        }
+        return changed;
+      })();
     } finally {
       db.close();
     }
@@ -286,6 +312,8 @@ export class GmailStore {
     threadStateHash: string; callId: string; classification: string;
     output: Record<string, unknown>; promptVersion: string; schemaVersion: string;
     policyVersion: string; model: string; createdAt: string;
+    call?: ModelCallRecord; usage?: PreparedReasoningUsage; findings?: SemanticFinding[];
+    workId?: string; leaseOwner?: string;
   }): void {
     const db = this.store.open();
     try {
@@ -312,6 +340,19 @@ export class GmailStore {
            WHERE workflow = 'gmail_extraction' AND task_type = 'subscription_email_extraction'
              AND source_hash = ? AND status = 'prepared' AND call_id <> ?`,
         ).run(input.createdAt, input.sourceHash, input.callId);
+        if (input.call && input.findings && input.workId && input.leaseOwner) {
+          saveFindingsInTransaction(db, input.findings);
+          completeReasoningCallInTransaction(db, {
+            call: input.call, ...(input.usage ? { usage: input.usage } : {}), completedAt: input.createdAt,
+          });
+          completeWorkInTransaction(db, {
+            workId: input.workId, leaseOwner: input.leaseOwner,
+            sourceHash: input.sourceHash, containerHash: input.threadStateHash,
+            completedAt: input.createdAt,
+          });
+        } else if (input.call || input.findings || input.workId || input.leaseOwner) {
+          throw new Error("transactional Gmail extraction completion is incomplete");
+        }
       })();
     } finally {
       db.close();
@@ -412,6 +453,12 @@ export class GmailStore {
           input.message.normalizedBody.length, input.message.authoredBody.length,
           input.message.quotedBody.length, input.now,
         );
+        enqueueWorkInTransaction(db, {
+          workflow: "gmail_extraction", subjectType: "gmail_message",
+          subjectSourceId: input.accountId, subjectId: input.message.messageId,
+          anchorId: input.message.messageId, sourceHash: input.message.contentHash,
+          containerHash: threadStateHash, reason: "source_delta", now: input.now,
+        });
       })();
     } finally {
       db.close();
