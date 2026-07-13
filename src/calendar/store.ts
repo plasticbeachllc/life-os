@@ -1,4 +1,5 @@
 import type { OperationalStore } from "../db/store";
+import { appendSourceEventInTransaction } from "../events/repository";
 
 export interface StoredCalendarEvent {
   eventId: string; status: string; summary: string; location?: string;
@@ -89,6 +90,13 @@ export class CalendarStore {
             input.event.status, input.event.summary, input.event.location ?? null,
             input.event.startAt, input.event.endAt, input.event.allDay ? 1 : 0,
             input.updated ?? null, calendarNormalizerVersion, input.now);
+        appendSourceEventInTransaction(db, {
+          provider: "calendar", eventKind: "calendar_event", direction: "system",
+          sourceScopeId: input.accountId,
+          sourceRecordId: `${input.calendarId}:${input.event.eventId}`,
+          containerId: input.calendarId, sourceVersionHash: input.event.contentHash,
+          occurredAt: input.event.startAt, observedAt: input.now, contentAvailable: true,
+        });
       })();
     } finally { db.close(); }
   }

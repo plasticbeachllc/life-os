@@ -1,6 +1,7 @@
 import type { OperationalStore } from "../db/store";
 import type { NormalizedTelegramMessage } from "./normalizer";
 import { telegramNormalizerVersion } from "./normalizer";
+import { appendSourceEventInTransaction } from "../events/repository";
 
 export class TelegramStore {
   constructor(private readonly store: OperationalStore) {}
@@ -83,6 +84,13 @@ export class TelegramStore {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
               .run(input.sourceId, message.messageId, message.contentHash, message.textHash,
                 message.textAvailable ? 1 : 0, message.characterCount, telegramNormalizerVersion, input.now);
+            appendSourceEventInTransaction(db, {
+              provider: "telegram", eventKind: "message", direction: message.direction,
+              sourceScopeId: input.sourceId, sourceRecordId: message.messageId,
+              containerId: message.chatId, sourceVersionHash: message.contentHash,
+              occurredAt: message.sentAt, observedAt: input.now,
+              contentAvailable: message.textAvailable,
+            });
             ingested += 1;
           }
           const priorCursor = db.query<{ last_source_message_id: string }, [string, string]>(

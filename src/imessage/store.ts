@@ -8,6 +8,9 @@ import type {
 import { completeWorkInTransaction, enqueueWorkInTransaction } from "../work/repository";
 import { saveFindingSemanticsInTransaction, saveFindingsInTransaction } from "../findings/store";
 import { completeReasoningCallInTransaction, type PreparedReasoningUsage } from "../orchestration/prepared-reasoning";
+import {
+  appendSourceEventInTransaction, requireCurrentSourceEventIdInTransaction,
+} from "../events/repository";
 
 export class IMessageStore {
   constructor(private readonly store: OperationalStore) {}
@@ -157,6 +160,9 @@ export class IMessageStore {
           subjectSourceId: input.sourceId, subjectId: row.conversation_id,
           anchorId: row.message_id, sourceHash: row.content_hash,
           containerHash: row.conversation_state_hash, reason: "contract_refresh", now: input.now,
+          streamEventId: requireCurrentSourceEventIdInTransaction(db, {
+            provider: "imessage", sourceScopeId: input.sourceId, sourceRecordId: row.message_id,
+          }),
           contractIdentity: `${input.promptVersion}:${input.schemaVersion}:${input.policyVersion}`,
         });
         return rows.length;
@@ -420,6 +426,13 @@ export class IMessageStore {
             imessageNormalizerVersion, message.normalizedText.length,
             message.textAvailable ? 1 : 0, input.now,
           );
+          appendSourceEventInTransaction(db, {
+            provider: "imessage", eventKind: "message", direction: message.direction,
+            sourceScopeId: input.sourceId, sourceRecordId: message.messageId,
+            containerId: message.conversationId, sourceVersionHash: message.contentHash,
+            occurredAt: message.sentAt, observedAt: input.now,
+            contentAvailable: message.textAvailable,
+          });
           byConversation.set(message.conversationId, [
             ...(byConversation.get(message.conversationId) ?? []), message,
           ]);
@@ -443,6 +456,10 @@ export class IMessageStore {
             subjectSourceId: input.sourceId, subjectId: conversationId,
             anchorId: work.message_id, sourceHash: work.content_hash,
             containerHash: work.conversation_state_hash, reason: "source_delta", now: input.now,
+            streamEventId: requireCurrentSourceEventIdInTransaction(db, {
+              provider: "imessage", sourceScopeId: input.sourceId,
+              sourceRecordId: work.message_id,
+            }),
           });
         }
         db.query(`

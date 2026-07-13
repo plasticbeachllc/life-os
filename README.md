@@ -10,6 +10,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 ## Current Capabilities
 
 - Deterministic vault health checks, Markdown parsing, source hashing, and delta tracking.
+- Immutable, privacy-minimized source events ordered across Gmail, Messages, Telegram, Calendar, and Obsidian.
 - Versioned project, person, task, daily, and chief-of-staff state projections.
 - Token-budgeted context manifests, model routing, caching, and usage instrumentation.
 - Deterministic morning briefings with optional subscription-agent synthesis.
@@ -35,12 +36,16 @@ rewrite journal prose, expose arbitrary shell access, or give a model unrestrict
 ## Architecture
 
 ```text
-Obsidian Markdown                    Gmail API (readonly, IMPORTANT or SENT)
-       |                                      |
-       v                                      v
-deterministic indexing                   deterministic ingestion
-       |                                      |
-       +------------> SQLite <---------------+
+Obsidian + read-only provider adapters
+                  |
+                  v
+       deterministic provider ingestion
+                  |
+                  v
+       unified immutable source events
+                  |
+                  v
+                SQLite
                          |
                  compact derived state
                          |
@@ -58,7 +63,8 @@ deterministic indexing                   deterministic ingestion
 Every model-backed workflow uses a recorded `ContextManifest`. Workflows process changed sources,
 prefer compact state over raw text, and escalate retrieval only when necessary. Prepare/submit
 protocols bind reasoning to immutable source and context hashes. Model output cannot directly write
-the vault or Gmail.
+the vault or providers. Stream-backed work is causal within a provider container and remains concurrent
+across unrelated containers.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
 assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the

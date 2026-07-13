@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { OperationalStore } from "../src/db/store";
 import type { EnqueueWorkInput } from "../src/work/contract";
 import { WorkRepository } from "../src/work/repository";
+import { SourceEventRepository } from "../src/events/repository";
+import { sha256Text } from "../src/util/hashing";
 
 test("work enqueue is idempotent and a lease has one concurrent owner", () => {
   const store = database("claim");
@@ -120,6 +122,63 @@ test("retry categories are bounded and status retains no work identities", () =>
   } finally {
     db.close();
   }
+});
+
+test("stream-backed work serializes one causal container while other containers remain concurrent", () => {
+  const store = database("causal-stream");
+  const events = new SourceEventRepository(store);
+  const later = events.append({
+    provider: "gmail", eventKind: "message", direction: "outgoing",
+    sourceScopeId: "account", sourceRecordId: "later", containerId: "thread-a",
+    sourceVersionHash: sha256Text("later"), occurredAt: "2026-07-12T09:02:00.000Z",
+    observedAt: "2026-07-12T09:03:00.000Z", contentAvailable: true,
+  }).event;
+  const earlier = events.append({
+    provider: "gmail", eventKind: "message", direction: "incoming",
+    sourceScopeId: "account", sourceRecordId: "earlier", containerId: "thread-a",
+    sourceVersionHash: sha256Text("earlier"), occurredAt: "2026-07-12T09:01:00.000Z",
+    observedAt: "2026-07-12T09:03:00.000Z", contentAvailable: true,
+  }).event;
+  const parallel = events.append({
+    provider: "gmail", eventKind: "message", direction: "incoming",
+    sourceScopeId: "account", sourceRecordId: "parallel", containerId: "thread-b",
+    sourceVersionHash: sha256Text("parallel"), occurredAt: "2026-07-12T09:01:30.000Z",
+    observedAt: "2026-07-12T09:03:00.000Z", contentAvailable: true,
+  }).event;
+  const repository = new WorkRepository(store);
+  for (const [suffix, event] of [["later", later], ["earlier", earlier], ["parallel", parallel]] as const) {
+    repository.enqueue({
+      ...workInput(), subjectId: `message_${suffix}`, anchorId: `message_${suffix}`,
+      sourceHash: event.sourceVersionHash, containerHash: `sha256:${suffix}`,
+      streamEventId: event.eventId,
+    });
+  }
+
+  const first = repository.claimNext({
+    workflow: "gmail_extraction", subjectSourceId: "account_internal",
+    leaseOwner: "worker_a", leaseDurationMs: 60_000,
+    now: new Date("2026-07-12T09:04:00.000Z"),
+  })!;
+  const concurrent = repository.claimNext({
+    workflow: "gmail_extraction", subjectSourceId: "account_internal",
+    leaseOwner: "worker_b", leaseDurationMs: 60_000,
+    now: new Date("2026-07-12T09:04:00.000Z"),
+  })!;
+  expect(first.streamEventId).toBe(earlier.eventId);
+  expect(concurrent.streamEventId).toBe(parallel.eventId);
+  expect(repository.listReady({
+    workflow: "gmail_extraction", subjectSourceId: "account_internal", limit: 10,
+    now: new Date("2026-07-12T09:04:00.000Z"),
+  })).toEqual([]);
+  repository.complete({
+    workId: first.workId, leaseOwner: "worker_a",
+    sourceHash: first.sourceHash, containerHash: first.containerHash,
+    completedAt: "2026-07-12T09:04:30.000Z",
+  });
+  expect(repository.peekNext({
+    workflow: "gmail_extraction", subjectSourceId: "account_internal",
+    now: new Date("2026-07-12T09:04:30.000Z"),
+  })?.streamEventId).toBe(later.eventId);
 });
 
 function database(name: string): OperationalStore {

@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 import { ddl, schemaVersion } from "./schema";
+import { appendSourceEventInTransaction } from "../events/repository";
 import type { EffectPlan, EffectType } from "../effects/contract";
 
 export interface RunRecord {
@@ -914,15 +915,23 @@ export class OperationalStore {
   }): void {
     const db = this.open();
     try {
-      db.query(
-        `INSERT OR IGNORE INTO change_events (
-          change_id, source_type, source_id, content_hash, previous_hash,
-          relevant_section_hashes_json, changed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        input.changeId, input.sourceType, input.sourceId, input.contentHash,
-        input.previousHash ?? null, JSON.stringify(input.relevantSectionHashes), input.changedAt,
-      );
+      db.transaction(() => {
+        db.query(
+          `INSERT OR IGNORE INTO change_events (
+            change_id, source_type, source_id, content_hash, previous_hash,
+            relevant_section_hashes_json, changed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          input.changeId, input.sourceType, input.sourceId, input.contentHash,
+          input.previousHash ?? null, JSON.stringify(input.relevantSectionHashes), input.changedAt,
+        );
+        appendSourceEventInTransaction(db, {
+          provider: "obsidian", eventKind: "canonical_note", direction: "system",
+          sourceScopeId: "canonical-vault", sourceRecordId: `${input.sourceType}:${input.sourceId}`,
+          containerId: input.sourceType, sourceVersionHash: input.contentHash,
+          occurredAt: input.changedAt, observedAt: input.changedAt, contentAvailable: true,
+        });
+      })();
     } finally {
       db.close();
     }
@@ -1000,6 +1009,7 @@ export class OperationalStore {
       "file_versions",
       "workflow_state",
       "change_events",
+      "source_events",
       "derived_states",
       "work_items",
       "subject_links",

@@ -1132,7 +1132,8 @@ them rather than replacing them wholesale.
 | `src/adapters/` | Provider boundary | Preserve narrow adapters and exact fixed queries |
 | Provider stores | Source/version persistence | Preserve provider retention; compose shared repositories |
 | `src/integrations/` | Provider registration | Extend safe status/ingest metadata; do not generalize mutation |
-| `change_events` | Source deltas | Normalize identity semantics before adding work queue |
+| `change_events` | Canonical Markdown deltas | Project atomically into the unified `source_events` stream |
+| `source_events` | Provider-neutral immutable event stream | Preserve hashed identity, version lineage, global order, and causal container order without source text |
 | Gmail/Messages extraction workflows | Prepared reasoning | Extract common coordinator, retain provider hooks |
 | `src/context/` | Context builder | Add explicit live-versus-audit manifest types and builder identity |
 | `src/orchestration/` | Reasoning lifecycle | Center prepare/submit state; make direct adapter a transport option |
@@ -1496,6 +1497,8 @@ The following decisions are made by this specification:
 6. The internal work queue is narrow and introduced after workflow consolidation.
 7. Effects are typed and code-registered; there is no generic mutation interface.
 8. Read-only application registration may be generated; mutation registration remains explicit.
+9. Provider stores and canonical Markdown deltas atomically project into a distinct unified source event
+   stream; `change_events` remains the Markdown-specific delta log.
 
 Open questions to resolve through ADRs and measured implementation experience:
 
@@ -1503,8 +1506,6 @@ Open questions to resolve through ADRs and measured implementation experience:
   records until the domain model is proven?
 - Which reasoning preparation facts require durable minimal storage, versus reconstruction from source
   identities?
-- Does the existing `change_events` table evolve into a universal source delta log, or should providers
-  project into a new normalized delta table?
 - Is a durable work queue justified by backlog and recovery needs, or is a deterministic query-backed
   queue sufficient initially?
 - Which task proposal types can safely share a finding-based planner without erasing provider-specific

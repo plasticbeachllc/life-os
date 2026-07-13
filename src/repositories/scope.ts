@@ -8,12 +8,17 @@ import {
 import type { ModelCallRecord } from "../db/store";
 import type { EnqueueWorkInput } from "../work/contract";
 import { completeWorkInTransaction, enqueueWorkInTransaction } from "../work/repository";
+import type { AppendSourceEventInput } from "../events/contract";
+import { appendSourceEventInTransaction } from "../events/repository";
 
 export interface SqliteStore {
   open(): Database;
 }
 
 export interface TransactionRepositories {
+  events: {
+    append(input: AppendSourceEventInput): ReturnType<typeof appendSourceEventInTransaction>;
+  };
   findings: {
     save(findings: SemanticFinding[]): { created: number; unchanged: number };
   };
@@ -36,6 +41,7 @@ export function withRepositoryTransaction<Result>(
 ): Result {
   const db = store.open();
   const repositories: TransactionRepositories = {
+    events: { append: (input) => appendSourceEventInTransaction(db, input) },
     findings: { save: (findings) => saveFindingsInTransaction(db, findings) },
     work: {
       enqueue: (input) => enqueueWorkInTransaction(db, input),

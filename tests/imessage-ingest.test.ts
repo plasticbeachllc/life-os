@@ -199,6 +199,7 @@ test("allowlisted ingestion retains hashes and metadata but no message text or p
   expect(store.countRows("imessage_messages")).toBe(2);
   expect(store.countRows("imessage_message_versions")).toBe(2);
   expect(store.countRows("imessage_conversations")).toBe(1);
+  expect(store.countRows("source_events")).toBe(2);
   const db = store.open();
   try {
     const serialized = JSON.stringify(db.query("SELECT * FROM imessage_messages").all());
@@ -220,6 +221,7 @@ test("allowlisted ingestion retains hashes and metadata but no message text or p
   });
   expect(second).toMatchObject({ ingested: 0, unchanged: 2, modelCalls: 0 });
   expect(store.countRows("imessage_message_versions")).toBe(2);
+  expect(store.countRows("source_events")).toBe(2);
 });
 
 test("bounded replay detects an edited source row and creates a new immutable version", async () => {
@@ -236,6 +238,7 @@ test("bounded replay detects an edited source row and creates a new immutable ve
   expect(changed).toMatchObject({ ingested: 1, unchanged: 0, cursorAfter: 10 });
   expect(store.countRows("imessage_messages")).toBe(1);
   expect(store.countRows("imessage_message_versions")).toBe(2);
+  expect(store.countRows("source_events")).toBe(2);
 });
 
 test("ingestion fails closed without an explicit allowlist", async () => {
