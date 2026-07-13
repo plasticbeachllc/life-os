@@ -11,6 +11,9 @@ test("feedback requires JSON from the exact browser origin", () => {
 		origin: "https://life-os.local", "sec-fetch-site": "same-origin",
 		"content-type": "application/json",
 	}), url)).toBe(true);
+	expect(isSameOriginFeedbackRequest(request({
+		origin: "https://life-os.local", "content-type": "application/json",
+	}), url)).toBe(true);
 	const rejected: Array<Record<string, string>> = [
 		{ origin: "https://evil.example", "sec-fetch-site": "cross-site", "content-type": "application/json" },
 		{ origin: "https://life-os.local", "sec-fetch-site": "cross-site", "content-type": "application/json" },

@@ -11,6 +11,7 @@ export class SubjectLinkStore {
     conversationId: string;
     personId: string;
     basis: SubjectLinkBasis;
+    participantSetHash?: string;
     createdAt?: string;
   }): string {
     requireInternalConversationId(input.conversationId);
@@ -20,11 +21,11 @@ export class SubjectLinkStore {
 
     const db = this.store.open();
     try {
-      const conversation = db.query<{ participant_set_hash: string }, [string, string]>(`
-        SELECT participant_set_hash FROM imessage_conversations
-        WHERE source_id = ? AND conversation_id = ?
-      `).get(input.sourceId, input.conversationId);
+      const conversation = currentConversation(db, input.sourceId, input.conversationId);
       if (!conversation) throw new Error("ingested Messages conversation not found");
+      if (input.participantSetHash && input.participantSetHash !== conversation.participant_set_hash) {
+        throw new Error("Messages conversation participants changed; reload before linking");
+      }
       const identity = {
         fromType: "imessage_conversation",
         fromSourceId: input.sourceId,
@@ -48,6 +49,18 @@ export class SubjectLinkStore {
     } finally {
       db.close();
     }
+  }
+
+  currentIMessageConversationParticipantSetHash(input: {
+    sourceId: string; conversationId: string;
+  }): string {
+    requireInternalConversationId(input.conversationId);
+    const db = this.store.open();
+    try {
+      const conversation = currentConversation(db, input.sourceId, input.conversationId);
+      if (!conversation) throw new Error("ingested Messages conversation not found");
+      return conversation.participant_set_hash;
+    } finally { db.close(); }
   }
 
   linkedPeopleForIMessageConversation(input: {
@@ -80,6 +93,15 @@ export class SubjectLinkStore {
       return state ? [state] : [];
     });
   }
+}
+
+function currentConversation(db: ReturnType<OperationalStore["open"]>, sourceId: string, conversationId: string): {
+  participant_set_hash: string;
+} | undefined {
+  return db.query<{ participant_set_hash: string }, [string, string]>(`
+    SELECT participant_set_hash FROM imessage_conversations
+    WHERE source_id = ? AND conversation_id = ?
+  `).get(sourceId, conversationId) ?? undefined;
 }
 
 function requireInternalConversationId(value: string): void {

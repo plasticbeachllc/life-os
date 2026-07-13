@@ -10,6 +10,7 @@ import type {
 import { MacOsMessagesAdapter } from "../src/adapters/imessage";
 import { OperationalStore } from "../src/db/store";
 import { imessageDevelopmentContextCandidates } from "../src/context/imessage-development";
+import { SubjectLinkStore } from "../src/context/subject-links";
 import { normalizeIMessage } from "../src/imessage/normalizer";
 import { IMessageStore } from "../src/imessage/store";
 import { ingestIMessageChanges } from "../src/workflows/imessage-ingest";
@@ -303,6 +304,39 @@ test("Messages person links are invalidated when the participant set changes", a
     store, sourceId: "local-messages", conversationId,
   })).toHaveLength(0);
   expect(store.countRows("subject_links")).toBe(1);
+});
+
+test("Messages person linking requires a current person and participant-bound link basis", async () => {
+  const adapter = new FakeMessagesAdapter([
+    sourceMessage({ rowId: 1, participants: ["+15555550100"] }),
+  ]);
+  const store = testStore();
+  const selection = { mode: "all_except" as const, conversationIds: [] };
+  await ingestIMessageChanges({ adapter, store, sourceId: "local-messages", selection, limit: 100 });
+  expect(() => linkIMessageConversationToPerson({
+    store, sourceId: "local-messages", sourceConversationId: "chat-allowed",
+    personId: "person_missing", selection,
+  })).toThrow("current canonical person state not found");
+
+  saveState(store, {
+    stateId: "state_person_bound_v1", stateType: "person_state", entityId: "person_bound",
+    stateVersion: 1, sourceHashes: ["sha256:person-bound-v1"],
+    content: { entity_id: "person_bound", display_name: "Bound Person", aliases: [] },
+  });
+  const conversationId = normalizeIMessage(adapter.messages[0]!).conversationId;
+  const links = new SubjectLinkStore(store);
+  const basis = links.currentIMessageConversationParticipantSetHash({
+    sourceId: "local-messages", conversationId,
+  });
+  adapter.messages.push(sourceMessage({
+    rowId: 2, participants: ["+15555550100", "+15555550101"],
+  }));
+  await ingestIMessageChanges({ adapter, store, sourceId: "local-messages", selection, limit: 100 });
+  expect(() => links.linkIMessageConversationToPerson({
+    sourceId: "local-messages", conversationId, personId: "person_bound",
+    basis: "reviewed", participantSetHash: basis,
+  })).toThrow("participants changed");
+  expect(store.countRows("subject_links")).toBe(0);
 });
 
 test("deterministic service triage avoids model work and feeds focused sanitized views", async () => {

@@ -13,11 +13,20 @@ export function linkIMessageConversationToPerson(input: {
 }): { linked: true; linkId: string; personId: string } {
   input.store.migrate();
   assertSelected(input.sourceConversationId, input.selection);
-  const linkId = new SubjectLinkStore(input.store).linkIMessageConversationToPerson({
+  if (!input.store.getCurrentDerivedState("person_state", input.personId)) {
+    throw new Error("current canonical person state not found");
+  }
+  const conversationId = internalIMessageConversationId(input.sourceConversationId);
+  const links = new SubjectLinkStore(input.store);
+  const participantSetHash = links.currentIMessageConversationParticipantSetHash({
+    sourceId: input.sourceId, conversationId,
+  });
+  const linkId = links.linkIMessageConversationToPerson({
     sourceId: input.sourceId,
-    conversationId: internalIMessageConversationId(input.sourceConversationId),
+    conversationId,
     personId: input.personId,
     basis: input.basis ?? "reviewed",
+    participantSetHash,
   });
   return { linked: true, linkId, personId: input.personId };
 }
