@@ -491,7 +491,7 @@ function printUsage(): void {
   life-os message link-person --conversation <source-id> --person <person-id> --vault <path>
   life-os message preview-extraction --vault <path>
   life-os message review-extractions --vault <path>
-  life-os calendar ingest --vault <path>
+  life-os calendar ingest --vault <path> [--limit <n>]
   life-os calendar status --vault <path>
   life-os message triage --vault <path> [--limit <n>]
   life-os findings review --vault <path>

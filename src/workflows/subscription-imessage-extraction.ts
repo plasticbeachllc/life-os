@@ -5,7 +5,7 @@ import { semanticFindingsForExtraction } from "../findings/projector";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, imessagePromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
-import { prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
+import { failPreparedCallAndMarkWorkStale, prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
 import { previewIMessageExtractionContext } from "./imessage-extraction-preview";
 import { refetchIMessage } from "./imessage-refetch";
 import { WorkRepository } from "../work/repository";
@@ -128,10 +128,15 @@ export async function submitSubscriptionIMessageExtraction(input: {
   });
   if (imessageStore.conversationStateHash(input.sourceId, prepared.conversationId)
     !== input.conversationStateHash) {
-    workRepository.markStale({ workId });
+    failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "stale_source" });
     throw new Error("ingested Messages conversation changed; prepare extraction again");
   }
-  assertContextStatesCurrent(input.store, manifest.includedItems);
+  try {
+    assertContextStatesCurrent(input.store, manifest.includedItems);
+  } catch (error) {
+    failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "context_changed" });
+    throw error;
+  }
   let current;
   try {
     current = await refetchIMessage({
@@ -140,12 +145,12 @@ export async function submitSubscriptionIMessageExtraction(input: {
     });
   } catch (error) {
     if (/changed|ingest again/i.test(error instanceof Error ? error.message : String(error))) {
-      workRepository.markStale({ workId });
+      failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "stale_source" });
     }
     throw error;
   }
   if (current.sourceHash !== prepared.sourceHash) {
-    workRepository.markStale({ workId });
+    failPreparedCallAndMarkWorkStale({ store: input.store, call, workId, category: "stale_source" });
     throw new Error("Messages source changed; prepare extraction again");
   }
   validateOutput(input.output, manifest.includedItems, prepared.deltaEvidenceIds);

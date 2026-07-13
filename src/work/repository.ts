@@ -69,6 +69,17 @@ export function completeWorkInTransaction(db: DatabaseConnection, input: {
   if (result.changes !== 1) throw new Error("work lease is stale or does not match the completed source");
 }
 
+/** Mark a queued or leased item stale without leaving a lease behind. */
+export function markWorkStaleInTransaction(db: DatabaseConnection, input: {
+  workId: string; updatedAt: string;
+}): boolean {
+  return db.query(`
+    UPDATE work_items SET state = 'stale', lease_owner = NULL, lease_expires_at = NULL,
+      error_category = 'stale_source', updated_at = ?
+    WHERE work_id = ? AND state IN ('pending', 'leased')
+  `).run(input.updatedAt, input.workId).changes === 1;
+}
+
 export class WorkRepository {
   constructor(private readonly store: OperationalStore) {}
 
@@ -163,11 +174,7 @@ export class WorkRepository {
     const db = this.store.open();
     try {
       const updatedAt = input.updatedAt ?? new Date().toISOString();
-      return db.query(`
-        UPDATE work_items SET state = 'stale', lease_owner = NULL, lease_expires_at = NULL,
-          error_category = 'stale_source', updated_at = ?
-        WHERE work_id = ? AND state IN ('pending', 'leased')
-      `).run(updatedAt, input.workId).changes === 1;
+      return markWorkStaleInTransaction(db, { workId: input.workId, updatedAt });
     } finally {
       db.close();
     }

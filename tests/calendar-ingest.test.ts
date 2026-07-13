@@ -59,3 +59,31 @@ test("calendar ingestion records primary-calendar failures as terminal", async (
     configured: false, ingestionRuns: 1, lastRunStatus: "failed",
   });
 });
+
+test("calendar ingestion bounds pages and resumes the exact saved window", async () => {
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-calendar-bounded-")), "store.db"));
+  const calls: Array<{ pageToken?: string; timeMin: string; timeMax: string; maxResults?: number }> = [];
+  const adapter: CalendarSourceAdapter = {
+    getPrimaryCalendar: async () => ({ id: "primary" }),
+    listEvents: async (input) => {
+      calls.push(input);
+      if (!input.pageToken) return { events: [{ id: "event_1", start: { dateTime: "2026-07-13T09:00:00Z" }, end: { dateTime: "2026-07-13T10:00:00Z" } }], nextPageToken: "page_2" };
+      return { events: [{ id: "event_2", start: { dateTime: "2026-07-14T09:00:00Z" }, end: { dateTime: "2026-07-14T10:00:00Z" } }] };
+    },
+  };
+  const first = await ingestCalendar({ adapter, store, accountId: "me", now: new Date("2026-07-12T12:00:00Z"), maxPages: 1, maxEvents: 1 });
+  expect(first).toMatchObject({ partial: true, resumed: false, discovered: 1 });
+  expect(new CalendarStore(store).summary("me").lastRunStatus).toBe("partial");
+  const second = await ingestCalendar({ adapter, store, accountId: "me", now: new Date("2026-07-20T12:00:00Z"), maxPages: 1, maxEvents: 1 });
+  expect(second).toMatchObject({ partial: false, resumed: true, discovered: 1 });
+  expect(calls[1]).toMatchObject({ pageToken: "page_2", timeMin: calls[0]!.timeMin, timeMax: calls[0]!.timeMax, maxResults: 1 });
+  expect(store.countRows("calendar_events")).toBe(2);
+});
+
+test("calendar ingestion records normalization failures after the run has started", async () => {
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-calendar-normalization-failure-")), "store.db"));
+  const adapter = new FakeCalendar();
+  adapter.events = [{ id: "", summary: "Broken", location: "", start: { dateTime: "2026-07-13T09:00:00Z" }, end: { dateTime: "2026-07-13T10:00:00Z" } }];
+  await expect(ingestCalendar({ adapter, store, accountId: "me" })).rejects.toThrow("stable ID");
+  expect(new CalendarStore(store).summary("me")).toMatchObject({ ingestionRuns: 1, lastRunStatus: "failed" });
+});

@@ -6,7 +6,7 @@ import { newId } from "../util/ids";
 import { morningPromptSpec } from "../orchestration/prompt-contracts";
 import { promptContext, renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
 import {
-  completeReasoningCall, prepareReasoningCall, requirePreparedReasoningCall,
+  completeReasoningCall, failReasoningCall, prepareReasoningCall, requirePreparedReasoningCall,
 } from "../orchestration/prepared-reasoning";
 
 export interface SubscriptionRecommendation {
@@ -77,7 +77,12 @@ export function submitSubscriptionMorningReasoning(input: {
     workflow: "morning_briefing", taskType: "subscription_synthesis",
     notFoundMessage: "prepared subscription reasoning call not found",
   });
-  assertMorningContextStatesCurrent(input.store, manifest.includedItems);
+  try {
+    assertMorningContextStatesCurrent(input.store, manifest.includedItems);
+  } catch (error) {
+    failReasoningCall({ store: input.store, call, category: "context_changed" });
+    throw error;
+  }
   validateRecommendations(input.recommendations);
   const allowed = new Set(morningEvidenceDescriptors(manifest.includedItems).map((item) => item.id));
   for (const recommendation of input.recommendations) {

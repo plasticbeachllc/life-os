@@ -2,6 +2,7 @@ import type { ContextManifest } from "../context/builder";
 import type { PersistableContextManifest } from "../context/manifests";
 import type { ModelCallRecord, OperationalStore } from "../db/store";
 import { newId } from "../util/ids";
+import { markWorkStaleInTransaction } from "../work/repository";
 
 export interface PreparedReasoningIdentity {
   workflow: string;
@@ -95,6 +96,38 @@ export function failReasoningCall(input: {
   };
   input.store.recordModelCall(failed);
   return failed;
+}
+
+export function failReasoningCallInTransaction(
+  db: ReturnType<OperationalStore["open"]>,
+  input: { call: ModelCallRecord; category: ReasoningErrorCategory; completedAt: string },
+): void {
+  const result = db.query(`
+    UPDATE model_calls SET completed_at = ?, status = 'failed', error = ?
+    WHERE call_id = ? AND status = 'prepared' AND workflow = ? AND task_type = ?
+      AND context_hash = ?
+  `).run(input.completedAt, input.category, input.call.callId, input.call.workflow,
+    input.call.taskType, input.call.contextHash);
+  if (result.changes !== 1) throw new Error("prepared reasoning call changed before failure recording");
+}
+
+/**
+ * Source/context drift makes both the prepared call and its leased work terminal.
+ * Keeping this in one transaction prevents a revivable model call or stranded lease.
+ */
+export function failPreparedCallAndMarkWorkStale(input: {
+  store: OperationalStore; call: ModelCallRecord; workId: string;
+  category: Extract<ReasoningErrorCategory, "stale_source" | "context_changed" | "policy_changed">;
+  now?: Date;
+}): void {
+  const db = input.store.open();
+  const completedAt = (input.now ?? new Date()).toISOString();
+  try {
+    db.transaction(() => {
+      failReasoningCallInTransaction(db, { call: input.call, category: input.category, completedAt });
+      markWorkStaleInTransaction(db, { workId: input.workId, updatedAt: completedAt });
+    })();
+  } finally { db.close(); }
 }
 
 export function completeReasoningCall(input: {

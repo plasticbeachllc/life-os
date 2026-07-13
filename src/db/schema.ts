@@ -1,4 +1,4 @@
-export const schemaVersion = 19;
+export const schemaVersion = 20;
 
 export const ddl = [
   `
@@ -595,6 +595,16 @@ export const ddl = [
     changed_count INTEGER NOT NULL DEFAULT 0,
     unchanged_count INTEGER NOT NULL DEFAULT 0,
     error TEXT
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS calendar_ingestion_cursors (
+    account_id TEXT PRIMARY KEY,
+    calendar_id TEXT NOT NULL,
+    time_min TEXT NOT NULL,
+    time_max TEXT NOT NULL,
+    next_page_token TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   )
   `,
   `

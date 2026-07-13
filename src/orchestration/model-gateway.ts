@@ -36,8 +36,8 @@ export interface ModelCallInput {
   cache?: {
     schemaVersion: string;
     policyVersion: string;
-    redactionVersion?: string;
-    builderVersion?: string;
+    redactionVersion: string;
+    builderVersion: string;
     expiresAt?: string;
   };
 }
@@ -52,8 +52,8 @@ export class ModelGateway {
       workflow: input.workflow, promptVersion: input.promptVersion, model: input.model,
       sourceHash: input.sourceHash, contextHash: input.manifest.contextHash,
       schemaVersion: input.cache.schemaVersion, policyVersion: input.cache.policyVersion,
-      ...(input.cache.redactionVersion ? { redactionVersion: input.cache.redactionVersion } : {}),
-      ...(input.cache.builderVersion ? { builderVersion: input.cache.builderVersion } : {}),
+      redactionVersion: input.cache.redactionVersion,
+      builderVersion: input.cache.builderVersion,
     }) : undefined;
     this.store.recordModelCall({
       callId, ...(input.runId ? { runId: input.runId } : {}), workflow: input.workflow,

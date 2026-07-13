@@ -287,6 +287,8 @@ function buildSummaryCandidates(input: {
       contextHash: manifest.contextHash,
       schemaVersion: UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION,
       policyVersion: UI_NOTIFICATION_SUMMARY_POLICY_VERSION,
+      redactionVersion: "stock-presidio-v1",
+      builderVersion: "ui-notification-summary-v1",
     });
     const actionRequired = notification.category !== "activity";
     const cachedSummary = parseCachedSummary(input.store.getModelCache(cacheKey)?.output, actionRequired);

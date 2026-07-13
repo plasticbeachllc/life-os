@@ -93,8 +93,11 @@ Google Calendar API
   -> compact calendar_state projection
 ```
 
-The API request uses `singleEvents=true`, `orderBy=startTime`, and `showDeleted=true`. Pagination is
-bounded by Google's event-list response and continues until `nextPageToken` is absent.
+The API request uses `singleEvents=true`, `orderBy=startTime`, and `showDeleted=true`. Each invocation
+is bounded by a 30-second wall-clock budget, 10 pages, and a configurable event-instance limit
+(`life-os calendar ingest --limit <n>`, default 500, maximum 5,000). When a budget is reached, LifeOS
+persists the exact Calendar page token and fixed query window, returns a terminal `partial` run, and
+resumes that same window on the next invocation. The cursor is cleared only after `nextPageToken` is absent.
 
 ### Retention
 
@@ -182,6 +185,5 @@ provenance parsing, and the MCP tool allowlist.
 ## Known Follow-Up Work
 
 - Reconcile events that disappear from the active window without returning as canceled records.
-- Record failed Calendar ingestion runs after a run has started.
 - Add explicit review feedback for proposed finding tasks before using acceptance-rate metrics.
 - Add provider sync tokens only if measured API volume justifies them.

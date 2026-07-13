@@ -527,7 +527,8 @@ test("Messages extraction submission rejects provider drift after prepare", asyn
   })).rejects.toThrow("ingest again");
   expect(store.countRows("imessage_extractions")).toBe(0);
   expect(store.countRows("findings")).toBe(0);
-  expect(store.getModelCall(String(prepared.callId))?.status).toBe("prepared");
+  expect(store.getModelCall(String(prepared.callId))?.status).toBe("failed");
+  expect(store.getModelCall(String(prepared.callId))?.error).toBe("stale_source");
   expect(new IMessageStore(store).cursor("local-messages")).toBe(40);
   expect(new WorkRepository(store).status().byState.stale).toBe(1);
 }, 15_000);

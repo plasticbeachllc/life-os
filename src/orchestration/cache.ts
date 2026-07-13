@@ -8,8 +8,8 @@ export interface ModelCacheKeyInput {
   contextHash: string;
   schemaVersion: string;
   policyVersion: string;
-  redactionVersion?: string;
-  builderVersion?: string;
+  redactionVersion: string;
+  builderVersion: string;
 }
 
 export function modelCacheKey(input: ModelCacheKeyInput): string {

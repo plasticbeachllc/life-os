@@ -14,7 +14,7 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(19);
+  expect(store.getSchemaVersion()).toBe(20);
   expect(store.countRows("schema_migrations")).toBe(1);
 });
 
@@ -29,7 +29,7 @@ test("rejects an incompatible prototype database with an explicit reset instruct
 
   const store = new OperationalStore(path);
   expect(() => store.migrate()).toThrow(
-    "prototype database schema 7 is incompatible with 19; delete the operational database and rebuild",
+    "prototype database schema 7 is incompatible with 20; delete the operational database and rebuild",
   );
   expect(store.getSchemaVersion()).toBe(7);
 });
