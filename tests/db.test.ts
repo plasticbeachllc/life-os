@@ -68,3 +68,14 @@ test("records runs, actions, and action results", () => {
   expect(store.countRows("actions")).toBe(1);
   expect(store.countRows("action_results")).toBe(1);
 });
+
+test("concurrent processes can verify the same current schema", async () => {
+  const databasePath = join(mkdtempSync(join(tmpdir(), "life-os-db-concurrent-")), "store.db");
+  new OperationalStore(databasePath).migrate();
+  const script = `import { OperationalStore } from ${JSON.stringify(join(import.meta.dir, "../src/db/store.ts"))}; new OperationalStore(${JSON.stringify(databasePath)}).migrate();`;
+  const processes = Array.from({ length: 4 }, () => Bun.spawn(["bun", "-e", script], {
+    stdout: "pipe", stderr: "pipe",
+  }));
+  const exits = await Promise.all(processes.map((process) => process.exited));
+  expect(exits).toEqual([0, 0, 0, 0]);
+});

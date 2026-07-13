@@ -37,7 +37,8 @@ const categoryBudgetKey = {
   policy: "policyTokens",
 } as const;
 
-export function buildContext(candidates: ContextCandidate[], budget: ContextBudget): ContextManifest {
+export function buildContext(candidates: ContextCandidate[], budget: ContextBudget,
+  options: { now?: Date } = {}): ContextManifest {
   validateBudget(budget);
   const rankingVersion = "decision-value-v1";
   const ranked = [...candidates].sort((left, right) => score(right) - score(left) || left.id.localeCompare(right.id));
@@ -70,7 +71,7 @@ export function buildContext(candidates: ContextCandidate[], budget: ContextBudg
   })));
   return {
     manifestId: newId("manifest"), includedItems, omittedItems, tokenBudget: budget,
-    retrievalLevels, rankingVersion, contextHash, createdAt: new Date().toISOString(),
+    retrievalLevels, rankingVersion, contextHash, createdAt: (options.now ?? new Date()).toISOString(),
   };
 }
 

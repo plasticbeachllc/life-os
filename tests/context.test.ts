@@ -37,4 +37,15 @@ test("router avoids a model when deterministic resolution is available", () => {
 test("cache keys are stable across object construction", () => {
   const input = { workflow: "extract", promptVersion: "v1", model: "small", sourceHash: "s", contextHash: "c", schemaVersion: "2", policyVersion: "p" };
   expect(modelCacheKey(input)).toBe(modelCacheKey({ ...input }));
+  for (const field of ["workflow", "promptVersion", "model", "sourceHash", "contextHash",
+    "schemaVersion", "policyVersion", "redactionVersion", "builderVersion"] as const) {
+    expect(modelCacheKey({ ...input, redactionVersion: "r1", builderVersion: "b1",
+      [field]: `${String((input as Record<string, string>)[field] ?? "v")}-changed` }))
+      .not.toBe(modelCacheKey({ ...input, redactionVersion: "r1", builderVersion: "b1" }));
+  }
+});
+
+test("context manifests use an injected clock", () => {
+  expect(buildContext([], budget, { now: new Date("2026-01-02T03:04:05.000Z") }).createdAt)
+    .toBe("2026-01-02T03:04:05.000Z");
 });

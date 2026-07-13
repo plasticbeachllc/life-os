@@ -17,6 +17,12 @@ export interface PreparedReasoningUsage {
   cachedTokens?: number;
 }
 
+export type ReasoningRunState = "prepared" | "completed" | "failed" | "superseded";
+export type ReasoningErrorCategory = "invalid_output" | "stale_source" | "policy_changed"
+  | "context_changed" | "expired" | "provider_unavailable" | "internal_failure";
+
+export const defaultPreparedCallTtlMs = 30 * 60 * 1000;
+
 export function prepareReasoningCall(input: {
   store: OperationalStore;
   identity: PreparedReasoningIdentity;
@@ -58,17 +64,37 @@ export function requirePreparedReasoningCall(input: {
   workflow: string;
   taskType: string;
   notFoundMessage: string;
+  now?: Date;
+  maxAgeMs?: number;
 }): { call: ModelCallRecord; manifest: { includedItems: unknown[]; contextHash: string } } {
   const call = input.store.getModelCall(input.callId);
   if (!call || call.status !== "prepared"
     || call.workflow !== input.workflow || call.taskType !== input.taskType) {
     throw new Error(input.notFoundMessage);
   }
+  const now = input.now ?? new Date();
+  const maxAgeMs = input.maxAgeMs ?? defaultPreparedCallTtlMs;
+  if (maxAgeMs <= 0 || now.getTime() - new Date(call.startedAt).getTime() > maxAgeMs) {
+    throw new Error("prepared reasoning call has expired");
+  }
   const manifest = input.store.getContextManifestForCall(input.callId);
   if (!manifest || manifest.contextHash !== call.contextHash) {
     throw new Error("context manifest mismatch");
   }
   return { call, manifest };
+}
+
+export function failReasoningCall(input: {
+  store: OperationalStore; call: ModelCallRecord; category: ReasoningErrorCategory;
+  now?: Date;
+}): ModelCallRecord {
+  if (input.call.status !== "prepared") throw new Error("only a prepared reasoning call can fail");
+  const failed: ModelCallRecord = {
+    ...input.call, status: "failed", error: input.category,
+    completedAt: (input.now ?? new Date()).toISOString(),
+  };
+  input.store.recordModelCall(failed);
+  return failed;
 }
 
 export function completeReasoningCall(input: {

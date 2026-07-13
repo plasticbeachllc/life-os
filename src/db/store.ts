@@ -138,6 +138,7 @@ export class OperationalStore {
   open(): Database {
     mkdirSync(dirname(this.databasePath), { recursive: true });
     const db = new Database(this.databasePath);
+    db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA foreign_keys = ON");
     return db;
   }
@@ -145,7 +146,8 @@ export class OperationalStore {
   migrate(): void {
     const db = this.open();
     try {
-      db.transaction(() => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
         const hasMigrations = Boolean(db.query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
         ).get());
@@ -162,7 +164,11 @@ export class OperationalStore {
         for (const statement of ddl) db.exec(statement);
         db.query("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
           .run(schemaVersion, new Date().toISOString());
-      })();
+        db.exec("COMMIT");
+      } catch (error) {
+        if (db.inTransaction) db.exec("ROLLBACK");
+        throw error;
+      }
     } finally {
       db.close();
     }

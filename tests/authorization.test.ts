@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -120,4 +120,29 @@ test("red proposals can never receive an authorization token", async () => {
     executorVersion: "frontmatter-patch-v1", permissionClass: "red", createdAt,
   });
   expect(prepareProposalAuthorization({ ...context, proposalId: proposal.proposalId })).rejects.toThrow("red action");
+});
+
+test("authorization fails closed for absent, denied, and changed policy", async () => {
+  const absent = fixture();
+  const absentProposal = (await proposeMetadataNormalization(absent)).created[0]!;
+  unlinkSync(absent.vault.path("90 System/AI/permissions.toml"));
+  await expect(prepareProposalAuthorization({ ...absent, proposalId: absentProposal.proposalId }))
+    .rejects.toThrow();
+
+  const denied = fixture();
+  const deniedProposal = (await proposeMetadataNormalization(denied)).created[0]!;
+  write(denied.vault.path("90 System/AI/permissions.toml"),
+    `[actions.create_task]\nenabled = true\nmode = "proposal"\n`);
+  await expect(prepareProposalAuthorization({ ...denied, proposalId: deniedProposal.proposalId }))
+    .rejects.toThrow("does not permit");
+
+  const changed = fixture();
+  const changedProposal = (await proposeMetadataNormalization(changed)).created[0]!;
+  const token = await prepareProposalAuthorization({ ...changed, proposalId: changedProposal.proposalId });
+  write(changed.vault.path("90 System/AI/permissions.toml"),
+    `[actions.create_task]\nenabled = true\nmode = "proposal"\n`);
+  await expect(applyProposalWithAuthorization({
+    ...changed, token: token.token, proposalId: changedProposal.proposalId,
+    actionId: changedProposal.actionId,
+  })).rejects.toThrow("does not permit");
 });

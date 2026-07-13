@@ -1148,24 +1148,27 @@ them rather than replacing them wholesale.
 This plan minimizes risky simultaneous edits. Each phase should merge independently and preserve
 current behavior unless its acceptance criteria explicitly state otherwise.
 
+Roadmap status: complete. See `docs/roadmap-completion.md` for local/live sign-off and
+`docs/conformance-matrix.md` for executable evidence.
+
 ### Phase 0: architectural contracts and characterization
 
 Goal: make current behavior measurable before refactoring.
 
-- [ ] Add architecture decision records for source identity, reasoning lifecycle, findings, projections,
+- [x] Add architecture decision records for source identity, reasoning lifecycle, findings, projections,
   and effects.
-- [ ] Characterize current Gmail and Messages prepare/submit behavior with cross-workflow tests.
-- [ ] Record current retention and sanitized output fixtures.
-- [ ] Record current cache and invalidation inputs per workflow.
-- [ ] Document current reasoning states (`prepared`, `completed`, `failed`) and gaps.
-- [ ] Add injected-clock helpers where tests currently depend on wall time.
+- [x] Characterize current Gmail and Messages prepare/submit behavior with cross-workflow tests.
+- [x] Record current retention and sanitized output fixtures.
+- [x] Record current cache and invalidation inputs per workflow.
+- [x] Document current reasoning states (`prepared`, `completed`, `failed`) and gaps.
+- [x] Add injected-clock helpers where tests currently depend on wall time.
 
 Acceptance criteria:
 
-- [ ] No production behavior or schema change.
-- [ ] Tests prove stale source/container, prompt version, policy version, invalid evidence, and injection
+- [x] No production behavior or schema change.
+- [x] Tests prove stale source/container, prompt version, policy version, invalid evidence, and injection
   consistency rejection for both extraction workflows.
-- [ ] Tests prove unchanged replay causes zero duplicate extraction/model work.
+- [x] Tests prove unchanged replay causes zero duplicate extraction/model work.
 
 Ownership: orchestration test owner; no concurrent schema/MCP/CLI edits.
 
@@ -1173,26 +1176,26 @@ Ownership: orchestration test owner; no concurrent schema/MCP/CLI edits.
 
 Goal: remove duplicated lifecycle bookkeeping while keeping provider-specific behavior.
 
-- [ ] Define transport-independent reasoning run states and sanitized error categories.
-- [ ] Define separate `LiveContextManifest` and `PersistableContextManifest` types.
-- [ ] Implement the generic prepared-workflow coordinator.
-- [ ] Move model-call status, manifest persistence, prompt/policy identity checks, and usage completion into
+- [x] Define transport-independent reasoning run states and sanitized error categories.
+- [x] Define separate `LiveContextManifest` and `PersistableContextManifest` types.
+- [x] Implement the generic prepared-workflow coordinator.
+- [x] Move model-call status, manifest persistence, prompt/policy identity checks, and usage completion into
   the coordinator.
-- [ ] Keep exact refetch, source selection, evidence construction, and retention sanitizers in provider
+- [x] Keep exact refetch, source selection, evidence construction, and retention sanitizers in provider
   definitions.
-- [ ] Migrate Gmail extraction.
-- [ ] Migrate Messages extraction.
-- [ ] Migrate morning reasoning after extraction parity is proven.
-- [ ] Decide whether `ModelGateway` becomes a transport implementation or a lower-level audit service;
+- [x] Migrate Gmail extraction.
+- [x] Migrate Messages extraction.
+- [x] Migrate morning reasoning after extraction parity is proven.
+- [x] Decide whether `ModelGateway` becomes a transport implementation or a lower-level audit service;
   remove competing lifecycle ownership.
 
 Acceptance criteria:
 
-- [ ] Deliberate MCP and CLI removals are documented in the prototype changelog.
-- [ ] Gmail and Messages retain their distinct delta/evidence validation.
-- [ ] Persisted manifests contain no transient source text.
-- [ ] All prepare/submit invalidation tests pass across workflows.
-- [ ] No new model transport or API key is introduced.
+- [x] Deliberate MCP and CLI removals are documented in the prototype changelog.
+- [x] Gmail and Messages retain their distinct delta/evidence validation.
+- [x] Persisted manifests contain no transient source text.
+- [x] All prepare/submit invalidation tests pass across workflows.
+- [x] No new model transport or API key is introduced.
 
 Ownership: one orchestration owner for `src/orchestration/` and shared tests. Provider agents may prepare
 definitions but should not concurrently modify the coordinator.
@@ -1201,24 +1204,24 @@ definitions but should not concurrently modify the coordinator.
 
 Goal: let downstream state operate on semantic records rather than provider tables.
 
-- [ ] Finalize finding enums and normalization rules from existing prompt contracts.
-- [ ] Add the coordinated finding and status-event schema.
-- [ ] Implement deterministic provider-extraction-to-finding projectors.
-- [ ] Backfill existing Gmail and Messages extractions without model calls.
-- [ ] Preserve links to provider extraction and reasoning call internally.
-- [ ] Add sanitized review queries that operate on findings.
-- [ ] Support dismiss, supersede, and convert as explicit lifecycle events.
-- [ ] Generalize fixed-inbox task proposal from eligible extraction items to eligible findings while
+- [x] Finalize finding enums and normalization rules from existing prompt contracts.
+- [x] Add the coordinated finding and status-event schema.
+- [x] Implement deterministic provider-extraction-to-finding projectors.
+- [x] Backfill existing Gmail and Messages extractions without model calls.
+- [x] Preserve links to provider extraction and reasoning call internally.
+- [x] Add sanitized review queries that operate on findings.
+- [x] Support dismiss, supersede, and convert as explicit lifecycle events.
+- [x] Generalize fixed-inbox task proposal from eligible extraction items to eligible findings while
   retaining deterministic text/target/ID derivation.
 
 Acceptance criteria:
 
-- [ ] Provider-specific retention tests still pass.
-- [ ] Backfill is idempotent and resumable.
-- [ ] Equivalent provider extraction replays create no duplicate findings.
-- [ ] Every finding has valid evidence and at least one delta source where required.
-- [ ] Finding review leaks no provider IDs, hashes, addresses, headers, or excerpts.
-- [ ] Finding creation alone creates no proposal or mutation.
+- [x] Provider-specific retention tests still pass.
+- [x] Backfill is idempotent and resumable.
+- [x] Equivalent provider extraction replays create no duplicate findings.
+- [x] Every finding has valid evidence and at least one delta source where required.
+- [x] Finding review leaks no provider IDs, hashes, addresses, headers, or excerpts.
+- [x] Finding creation alone creates no proposal or mutation.
 
 Ownership: one schema owner; coordinate proposal changes with the policy/effect owner.
 
@@ -1370,49 +1373,49 @@ Every integration or shared-lifecycle change must cover the applicable cases bel
 
 ### 17.1 Provider and ingestion
 
-- [ ] Exact permission scope and configured selection.
-- [ ] Fixed query/path boundaries; rejection of arbitrary inputs.
-- [ ] Deterministic normalization and stable hashes.
-- [ ] First ingest, unchanged replay, changed source, deletion/unavailability.
-- [ ] Container/thread/conversation invalidation.
-- [ ] Partial provider failure and safe cursor behavior.
-- [ ] No forbidden body or provider payload retention.
-- [ ] Sanitized status and error categories.
+- [x] Exact permission scope and configured selection.
+- [x] Fixed query/path boundaries; rejection of arbitrary inputs.
+- [x] Deterministic normalization and stable hashes.
+- [x] First ingest, unchanged replay, changed source, deletion/unavailability.
+- [x] Container/thread/conversation invalidation.
+- [x] Partial provider failure and safe cursor behavior.
+- [x] No forbidden body or provider payload retention.
+- [x] Sanitized status and error categories.
 
 ### 17.2 Context and reasoning
 
-- [ ] Per-category and total token budgets.
-- [ ] Stable ranking and deduplication.
-- [ ] Included/omitted audit manifest and omission reasons.
-- [ ] Live context is not persisted by audit recording.
-- [ ] Prompt, schema, policy, source, container, context, redaction, and builder version invalidation.
-- [ ] Prompt injection treatment and deterministic flag consistency.
-- [ ] Evidence allowlist, delta evidence, enum, bound, and schema rejection.
-- [ ] Prepared-call expiry and stale submission.
-- [ ] Cached output revalidation and invalid-cache eviction.
-- [ ] Zero model work for unchanged inputs.
+- [x] Per-category and total token budgets.
+- [x] Stable ranking and deduplication.
+- [x] Included/omitted audit manifest and omission reasons.
+- [x] Live context is not persisted by audit recording.
+- [x] Prompt, schema, policy, source, container, context, redaction, and builder version invalidation.
+- [x] Prompt injection treatment and deterministic flag consistency.
+- [x] Evidence allowlist, delta evidence, enum, bound, and schema rejection.
+- [x] Prepared-call expiry and stale submission.
+- [x] Cached output revalidation and invalid-cache eviction.
+- [x] Zero model work for unchanged inputs.
 
 ### 17.3 Findings and projections
 
-- [ ] Idempotent extraction-to-finding projection and backfill.
-- [ ] Immutable finding plus explicit status events.
-- [ ] Supersession and dismissal effects on current state.
-- [ ] Stable projection rebuild and provenance.
-- [ ] No model call during deterministic rebuild.
-- [ ] Bounded recursive compression.
-- [ ] No automatic proposal or mutation.
+- [x] Idempotent extraction-to-finding projection and backfill.
+- [x] Immutable finding plus explicit status events.
+- [x] Supersession and dismissal effects on current state.
+- [x] Stable projection rebuild and provenance.
+- [x] No model call during deterministic rebuild.
+- [x] Bounded recursive compression (depth zero; projections never summarize projections recursively).
+- [x] No automatic proposal or mutation.
 
 ### 17.4 Proposal and effects
 
-- [ ] Eligible and ineligible finding kinds/owners.
-- [ ] Deterministic plan text, target, ID, due date, and preview.
-- [ ] Policy absent, denied, changed, and permitted-with-approval cases.
-- [ ] Short-lived single-use token bound to exact action and hashes.
-- [ ] Stale source and stale target rejection at authorization and apply.
-- [ ] Atomic application, backup, audit, and stable provenance.
-- [ ] Duplicate apply rejection.
-- [ ] Undo success and changed-target rejection.
-- [ ] Sanitized MCP, CLI, and UI output.
+- [x] Eligible and ineligible finding kinds/owners.
+- [x] Deterministic plan text, target, ID, due date, and preview.
+- [x] Policy absent, denied, changed, and permitted-with-approval cases.
+- [x] Short-lived single-use token bound to exact action and hashes.
+- [x] Stale source and stale target rejection at authorization and apply.
+- [x] Atomic application, backup, audit, and stable provenance.
+- [x] Duplicate apply rejection.
+- [x] Undo success and changed-target rejection.
+- [x] Sanitized MCP, CLI, and UI output.
 
 ### 17.5 Required handoff checks
 
