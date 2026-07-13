@@ -11,24 +11,18 @@ export async function runRegisteredIntegrationCommand(input: {
   if (!new Set(["status", "ingest"]).has(subcommand ?? "")) return undefined;
   const flags = parseFlags(rest);
   rejectUnknownFlags(flags, integration.limit ? ["vault", "limit"] : ["vault"]);
-  // loadConfig consumes LIFE_OS_VAULT; preserve the existing --vault override without
-  // allowing registrations to inject arbitrary runtime arguments.
-  const previousVault = Bun.env.LIFE_OS_VAULT_PATH;
-  if (flags.vault) Bun.env.LIFE_OS_VAULT_PATH = flags.vault;
-  try {
-    if (subcommand === "status") {
-      (input.write ?? console.log)(JSON.stringify(await integration.status(), null, 2));
-      return 0;
-    }
-    const result = await integration.ingest({
-      ...(integration.limit ? { limit: parseLimit(flags.limit, integration.limit) } : {}),
-    });
-    (input.write ?? console.log)(JSON.stringify(result, null, 2));
-    return result.counts.failed > 0 ? 1 : 0;
-  } finally {
-    if (previousVault === undefined) delete Bun.env.LIFE_OS_VAULT_PATH;
-    else Bun.env.LIFE_OS_VAULT_PATH = previousVault;
+  if (subcommand === "status") {
+    (input.write ?? console.log)(JSON.stringify(await integration.status({
+      ...(flags.vault ? { vaultPath: flags.vault } : {}),
+    }), null, 2));
+    return 0;
   }
+  const result = await integration.ingest({
+    ...(integration.limit ? { limit: parseLimit(flags.limit, integration.limit) } : {}),
+    ...(flags.vault ? { vaultPath: flags.vault } : {}),
+  });
+  (input.write ?? console.log)(JSON.stringify(result, null, 2));
+  return result.counts.failed > 0 ? 1 : 0;
 }
 
 function parseFlags(args: string[]): Record<string, string> {

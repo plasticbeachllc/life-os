@@ -1361,7 +1361,8 @@ provider identity. Browser proposal previews reuse the MCP-validated effect cont
 plans to safe effect summaries. Recent actions expose result and undo state under opaque IDs.
 
 Feedback is append-only and accepts only opaque UI subjects with closed finding-usefulness or
-proposal-acceptance outcomes. Chat retains an exact enabled read-only MCP allowlist, a read-only
+proposal-acceptance outcomes. The endpoint requires exact same-origin JSON and a short-lived random token
+bound to the HttpOnly session plus the exact subject ID/kind emitted in that workspace snapshot. Chat retains an exact enabled read-only MCP allowlist, a read-only
 sandbox, no shell or network, and an explicit deny list containing every authorization and mutation
 tool. Workspace modes cover loading, empty, stale, partial, failed, setup-required, and live states.
 

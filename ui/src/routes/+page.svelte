@@ -90,7 +90,7 @@
 
 	<main class="grid min-h-0 flex-1 md:grid-cols-[minmax(320px,42%)_minmax(0,58%)]">
 		<div class:hidden={activeMobilePanel !== "inbox"} class="min-h-0 flex-col md:flex md:border-r">
-			<WorkspaceOverview workspace={data.workspace} />
+			<WorkspaceOverview workspace={data.workspace} feedbackToken={data.feedbackToken} />
 			<div class="min-h-0 flex-1"><NotificationInbox
 				{notifications}
 				selectedId={selectedNotification?.id ?? null}

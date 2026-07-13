@@ -2,7 +2,7 @@
 	import { Badge } from "$lib/components/ui/badge";
 	import type { WorkspaceSnapshot } from "./types";
 
-	let { workspace }: { workspace: WorkspaceSnapshot } = $props();
+	let { workspace, feedbackToken }: { workspace: WorkspaceSnapshot; feedbackToken: string } = $props();
 	const labels = { reply: "Replies", open_loop: "Open loops", date: "Dates", relationship: "People", project: "Projects" };
 	let feedbackState = $state<"idle" | "saving" | "saved" | "failed">("idle");
 
@@ -10,7 +10,7 @@
 		feedbackState = "saving";
 		try {
 			const response = await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" },
-				body: JSON.stringify({ subjectKind, subjectUiId, outcome }) });
+				body: JSON.stringify({ subjectKind, subjectUiId, outcome, csrfToken: feedbackToken }) });
 			feedbackState = response.ok ? "saved" : "failed";
 		} catch { feedbackState = "failed"; }
 	}

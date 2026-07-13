@@ -69,6 +69,22 @@ export const disabledLifeOsTools = [
 	"life_os_submit_morning_reasoning",
 ] as const;
 
+export function lifeOsToolConfiguration(): {
+	readonly enabled: readonly string[]; readonly disabled: readonly string[];
+} {
+	return { enabled: readOnlyLifeOsTools, disabled: disabledLifeOsTools };
+}
+
+export function lifeOsMcpConfigurationArguments(command: string, args: string[]): string[] {
+	const tools = lifeOsToolConfiguration();
+	return [
+		"-c", `mcp_servers.life-os.command=${JSON.stringify(command)}`,
+		"-c", `mcp_servers.life-os.args=${JSON.stringify(args)}`,
+		"-c", `mcp_servers.life-os.enabled_tools=${JSON.stringify(tools.enabled)}`,
+		"-c", `mcp_servers.life-os.disabled_tools=${JSON.stringify(tools.disabled)}`,
+	];
+}
+
 const developerInstructions = `You are LifeOS, the user's calm, practical chief-of-staff interface.
 Lead with what matters and the next useful step. Use concise, natural language and explain technical state only when
 it helps the user. Clearly distinguish what you know, infer, and cannot verify. When the user must decide something,
@@ -193,10 +209,7 @@ export class CodexAppServerClient {
 			codex,
 			"app-server",
 			"--stdio",
-			"-c", `mcp_servers.life-os.command=${JSON.stringify(op)}`,
-			"-c", `mcp_servers.life-os.args=${JSON.stringify(mcpArgs)}`,
-			"-c", `mcp_servers.life-os.enabled_tools=${JSON.stringify(readOnlyLifeOsTools)}`,
-			"-c", `mcp_servers.life-os.disabled_tools=${JSON.stringify(disabledLifeOsTools)}`,
+			...lifeOsMcpConfigurationArguments(op, mcpArgs),
 			"-c", "features.shell_tool=false",
 			"-c", "features.multi_agent=false",
 			"-c", "tools.web_search=false",

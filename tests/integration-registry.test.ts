@@ -55,13 +55,19 @@ test("integration registry preserves registration order and rejects duplicate pr
 
 test("registered CLI status and ingestion expose only bounded generated operations", async () => {
   let receivedLimit: number | undefined;
+  let receivedVault: string | undefined;
   const gmail = {
     ...integration("gmail"),
     application: { ...integration("gmail").application, cliCommand: "email" },
   };
   gmail.limit = { default: 25, maximum: 100, description: "bounded" };
-  gmail.ingest = async ({ limit }) => {
+  gmail.status = ({ vaultPath } = {}) => {
+    receivedVault = vaultPath;
+    return integration("gmail").status();
+  };
+  gmail.ingest = async ({ limit, vaultPath }) => {
     receivedLimit = limit;
+    receivedVault = vaultPath;
     return { provider: "gmail", sourceId: "source", runId: "run_test",
       counts: { discovered: 0, changed: 0, unchanged: 0, failed: 0, unavailableContent: 0 },
       modelCalls: 0, details: {} };
@@ -69,10 +75,12 @@ test("registered CLI status and ingestion expose only bounded generated operatio
   const registry = new IntegrationRegistry().register(gmail);
   const output: string[] = [];
   expect(await runRegisteredIntegrationCommand({
-    command: "email", rest: ["ingest", "--limit", "80"], registry,
+    command: "email", rest: ["ingest", "--limit", "80", "--vault", "/explicit/vault"], registry,
     write: (value) => output.push(value),
   })).toBe(0);
   expect(receivedLimit).toBe(80);
+  expect(receivedVault).toBe("/explicit/vault");
+  expect(Bun.env.LIFE_OS_VAULT_PATH).not.toBe("/explicit/vault");
   expect(JSON.parse(output[0]!).provider).toBe("gmail");
   await expect(runRegisteredIntegrationCommand({
     command: "email", rest: ["ingest", "--limit", "101"], registry,
@@ -83,4 +91,9 @@ test("registered CLI status and ingestion expose only bounded generated operatio
   expect(await runRegisteredIntegrationCommand({
     command: "email", rest: ["auth"], registry,
   })).toBeUndefined();
+  expect(await runRegisteredIntegrationCommand({
+    command: "email", rest: ["status", "--vault", "/status/vault"], registry,
+    write: (value) => output.push(value),
+  })).toBe(0);
+  expect(receivedVault).toBe("/status/vault");
 });

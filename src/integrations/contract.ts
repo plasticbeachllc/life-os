@@ -52,6 +52,6 @@ export interface IngestIntegration<StatusDetails = unknown, ReportDetails = unkn
   statusDescription: string;
   ingestDescription: string;
   limit?: IngestionLimit;
-  status(): IntegrationStatus<StatusDetails> | Promise<IntegrationStatus<StatusDetails>>;
-  ingest(input: { limit?: number }): Promise<IntegrationIngestionResult<ReportDetails>>;
+  status(input?: { vaultPath?: string }): IntegrationStatus<StatusDetails> | Promise<IntegrationStatus<StatusDetails>>;
+  ingest(input: { limit?: number; vaultPath?: string }): Promise<IntegrationIngestionResult<ReportDetails>>;
 }
