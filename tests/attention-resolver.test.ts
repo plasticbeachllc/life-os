@@ -3,6 +3,9 @@ import { expect, test } from "bun:test";
 import { resolveAttention } from "../src/attention/resolver";
 import type { DerivedStateRecord } from "../src/db/store";
 import type { ActiveFindingProjectionInput } from "../src/findings/store";
+import type {
+  ValidatedCommunicationContext, ValidatedFindingRelation,
+} from "../src/attention/contract";
 
 test("attention resolver derives bounded signals and suppresses already tracked commitments", () => {
   const resolution = resolveAttention({
@@ -35,6 +38,7 @@ test("attention resolver derives bounded signals and suppresses already tracked 
   expect(resolution.suppressed).toEqual({
     tracked_commitments: 1,
     low_confidence_findings: 1,
+    missing_communication_context: 0,
     unsupported_findings: 1,
   });
 
@@ -89,6 +93,120 @@ test("attention resolution is stable across input order and avoids fuzzy semanti
     .toBe("waiting_on_other");
 });
 
+test("validated communication context derives reply attention and a later response relation suppresses it", () => {
+  const request = finding(
+    "finding_request", "explicit_request", "Confirm whether the revised time works", "user", null,
+  );
+  const reply = finding(
+    "finding_reply", "open_loop", "Confirmed that the revised time works", "user", null,
+  );
+  const context = communicationContext(request.findingId, {
+    direction: "incoming", responseExpectation: "required", responseState: "awaiting_response",
+  });
+  const pending = resolveAttention({
+    now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [request], tasks: [],
+    communicationContexts: [context],
+  });
+
+  expect(pending.signals).toEqual([
+    expect.objectContaining({
+      type: "response_needed", summary: request.statement,
+      suggested_interventions: [expect.objectContaining({
+        kind: "draft_reply", permission_class: "prepare", readiness: "unsupported",
+      })],
+    }),
+  ]);
+  expect(pending.suppressed.missing_communication_context).toBe(0);
+
+  const responded = resolveAttention({
+    now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [request, reply], tasks: [],
+    communicationContexts: [context],
+    relations: [relation("relation_reply", "responds_to", reply.findingId, request.findingId)],
+  });
+  expect(responded.signals).toEqual([]);
+});
+
+test("only validated incoming required-response context can create response attention", () => {
+  const overdue = finding(
+    "finding_overdue_response", "explicit_request", "Send confirmation", "user", "2026-07-10",
+  );
+  const valid = resolveAttention({
+    now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [overdue], tasks: [],
+    communicationContexts: [communicationContext(overdue.findingId, {
+      direction: "incoming", responseExpectation: "required", responseState: "awaiting_response",
+    })],
+  });
+  expect(valid.signals[0]).toMatchObject({
+    type: "response_overdue", impact: "high", urgency: "today",
+  });
+
+  for (const context of [
+    communicationContext(overdue.findingId, {
+      direction: "outgoing", responseExpectation: "required", responseState: "awaiting_response",
+    }),
+    communicationContext(overdue.findingId, {
+      direction: "incoming", responseExpectation: "optional", responseState: "awaiting_response",
+    }),
+    communicationContext(overdue.findingId, {
+      direction: "incoming", responseExpectation: "required", responseState: "responded",
+    }),
+  ]) {
+    expect(resolveAttention({
+      now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [overdue], tasks: [],
+      communicationContexts: [context],
+    }).signals).toEqual([]);
+  }
+});
+
+test("validated resolution relations replace risk attention with a reviewable resolution signal", () => {
+  const commitment = finding(
+    "finding_commitment", "user_commitment", "File the annual report", "user", "2026-07-10",
+  );
+  const completion = finding(
+    "finding_completion", "project_update", "The annual report was filed", "shared", null,
+  );
+  const resolution = resolveAttention({
+    now: new Date("2026-07-12T09:00:00.000Z"),
+    activeFindings: [commitment, completion],
+    tasks: [task("task_report", "File the annual report", "2026-07-10")],
+    relations: [relation(
+      "relation_resolution", "resolves", completion.findingId, commitment.findingId,
+    )],
+  });
+
+  expect(resolution.signals).toEqual([
+    expect.objectContaining({
+      type: "commitment_resolved", summary: commitment.statement,
+      finding_ids: [commitment.findingId, completion.findingId].sort(),
+      subject_refs: [{ type: "task", id: "task_report" }],
+      suggested_interventions: [
+        expect.objectContaining({ kind: "review_resolution", readiness: "ready" }),
+        expect.objectContaining({ kind: "complete_task", readiness: "unsupported" }),
+      ],
+    }),
+  ]);
+  expect(resolution.signals.some((signal) => signal.type === "commitment_at_risk")).toBe(false);
+});
+
+test("semantic compatibility inputs reject stale references and incomplete validation identity", () => {
+  const request = finding("finding_request", "explicit_request", "Please reply", "user", null);
+  expect(() => resolveAttention({
+    now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [request], tasks: [],
+    communicationContexts: [communicationContext("finding_missing", {
+      direction: "incoming", responseExpectation: "required", responseState: "awaiting_response",
+    })],
+  })).toThrow("non-active finding");
+  expect(() => resolveAttention({
+    now: new Date("2026-07-12T09:00:00.000Z"), activeFindings: [request], tasks: [],
+    communicationContexts: [{
+      ...communicationContext(request.findingId, {
+        direction: "incoming", responseExpectation: "required", responseState: "awaiting_response",
+      }),
+      content_hash: "not-a-hash",
+    }],
+  })).toThrow("validation identity is incomplete");
+});
+
 function finding(
   findingId: string,
   kind: string,
@@ -109,5 +227,33 @@ function task(taskId: string, description: string, dueDate: string | null): Deri
     content: { task_id: taskId, description, due_date: dueDate, status: "open" },
     sourceHashes: [`sha256:${taskId}`], generationMethod: "test",
     createdAt: "2026-07-12T08:00:00.000Z",
+  };
+}
+
+function communicationContext(findingId: string, input: {
+  direction: ValidatedCommunicationContext["direction"];
+  responseExpectation: ValidatedCommunicationContext["response_expectation"];
+  responseState: ValidatedCommunicationContext["response_state"];
+}): ValidatedCommunicationContext {
+  return {
+    finding_id: findingId, direction: input.direction,
+    response_expectation: input.responseExpectation, response_state: input.responseState,
+    validator: { method: "deterministic", version: "test-v1" },
+    content_hash: `sha256:context-${findingId}-${input.direction}-${input.responseState}`,
+  };
+}
+
+function relation(
+  relationId: string,
+  kind: ValidatedFindingRelation["kind"],
+  fromFindingId: string,
+  toFindingId: string,
+): ValidatedFindingRelation {
+  return {
+    relation_id: relationId, kind,
+    from_finding_id: fromFindingId, to_finding_id: toFindingId,
+    confidence: 0.95,
+    validator: { method: "deterministic", version: "test-v1" },
+    content_hash: `sha256:${relationId}`,
   };
 }

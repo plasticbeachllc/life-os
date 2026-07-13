@@ -28,6 +28,7 @@ export interface FindingAttentionState {
   suppressed: {
     tracked_commitments: number;
     low_confidence_findings: number;
+    missing_communication_context: number;
     unsupported_findings: number;
   };
 }

@@ -118,10 +118,24 @@ inert structured options; only the already-supported finding task proposal is ma
 follow-up and task-date update interventions are explicitly `unsupported` until narrow workflows and
 effect plans exist.
 
-The resolver intentionally does **not** derive `response_needed` or `commitment_resolved`. The current
-common finding contract lacks reliable message-direction/response semantics and explicit resolution
-links. Adding those signals now would turn guesses into state; they remain corpus-driven follow-up
-work.
+The pure resolver also supports compatibility inputs for the next architecture revision:
+
+- a validated communication context supplies direction, response expectation, response state,
+  validator version, and content hash;
+- a validated finding relation connects two distinct active findings through `responds_to`, `resolves`,
+  or `supersedes`, with confidence, validator version, and content hash;
+- an incoming, required, awaiting-response context derives `response_needed` or `response_overdue`;
+- a validated response relation suppresses reply attention;
+- a validated resolution relation replaces commitment risk with `commitment_resolved` and offers
+  review plus an explicitly unsupported task-completion intervention when a matching task exists;
+- stale finding references, duplicate identities, self-relations, and incomplete validator identities
+  fail closed.
+
+The current `finding_attention_state` builder does **not** supply these compatibility inputs because the
+common finding store does not yet persist their final architecture-owned representation. Production
+therefore continues to avoid response and automatic-resolution claims. Once the architecture branch
+defines that representation, its content hashes and validator versions must become explicit projection
+inputs before these signals are enabled.
 
 ## Evolution of the common finding vocabulary
 

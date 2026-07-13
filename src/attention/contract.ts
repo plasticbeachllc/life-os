@@ -4,6 +4,9 @@ export const attentionSignalTypes = [
   "commitment_at_risk",
   "deadline_not_tracked",
   "duplicate_commitment",
+  "response_needed",
+  "response_overdue",
+  "commitment_resolved",
 ] as const;
 
 export type AttentionSignalType = typeof attentionSignalTypes[number];
@@ -12,7 +15,10 @@ export const interventionKinds = [
   "create_task",
   "update_task_date",
   "draft_follow_up",
+  "draft_reply",
   "review_duplicates",
+  "review_resolution",
+  "complete_task",
 ] as const;
 
 export type InterventionKind = typeof interventionKinds[number];
@@ -20,6 +26,25 @@ export type InterventionKind = typeof interventionKinds[number];
 export interface AttentionSubjectRef {
   type: "task";
   id: string;
+}
+
+export interface ValidatedCommunicationContext {
+  finding_id: string;
+  direction: "incoming" | "outgoing" | "system" | "unknown";
+  response_expectation: "required" | "optional" | "none" | "unknown";
+  response_state: "awaiting_response" | "responded" | "resolved" | "unknown";
+  validator: { method: "deterministic" | "validated_reasoning"; version: string };
+  content_hash: string;
+}
+
+export interface ValidatedFindingRelation {
+  relation_id: string;
+  kind: "responds_to" | "resolves" | "supersedes";
+  from_finding_id: string;
+  to_finding_id: string;
+  confidence: number;
+  validator: { method: "deterministic" | "validated_reasoning"; version: string };
+  content_hash: string;
 }
 
 export interface SuggestedIntervention {

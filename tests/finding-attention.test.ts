@@ -105,7 +105,10 @@ test("a matching canonical task invalidates and resolves untracked commitment at
   expect(resolved.content).toMatchObject({
     signal_count: 0,
     signals: [],
-    suppressed: { tracked_commitments: 1, low_confidence_findings: 0, unsupported_findings: 2 },
+    suppressed: {
+      tracked_commitments: 1, low_confidence_findings: 0,
+      missing_communication_context: 1, unsupported_findings: 1,
+    },
   });
   expect(resolved.inputProvenance).toContainEqual({
     type: "task_state", id: "task_renewal", hash: "sha256:task-renewal",

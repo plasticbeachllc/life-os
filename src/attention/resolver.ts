@@ -3,9 +3,11 @@ import type { ActiveFindingProjectionInput } from "../findings/store";
 import { sha256Value } from "../util/hashing";
 import type {
   AttentionSignal, AttentionSignalType, SuggestedIntervention,
+  ValidatedCommunicationContext, ValidatedFindingRelation,
 } from "./contract";
 
 const commitmentKinds = new Set(["user_commitment", "other_commitment"]);
+const responseKinds = new Set(["explicit_request", "open_loop"]);
 export const MIN_ATTENTION_CONFIDENCE = 0.75;
 
 export interface AttentionResolution {
@@ -13,6 +15,7 @@ export interface AttentionResolution {
   suppressed: {
     tracked_commitments: number;
     low_confidence_findings: number;
+    missing_communication_context: number;
     unsupported_findings: number;
   };
 }
@@ -28,14 +31,69 @@ export function resolveAttention(input: {
   activeFindings: ActiveFindingProjectionInput[];
   tasks: DerivedStateRecord[];
   now: Date;
+  communicationContexts?: ValidatedCommunicationContext[];
+  relations?: ValidatedFindingRelation[];
 }): AttentionResolution {
   const date = input.now.toISOString().slice(0, 10);
   const tasks = input.tasks.map(taskInput).filter((task) => task.status === "open");
-  const supported = input.activeFindings.filter((finding) => commitmentKinds.has(finding.kind));
-  const actionable = supported.filter((finding) => finding.confidence >= MIN_ATTENTION_CONFIDENCE);
+  const findingById = new Map(input.activeFindings.map((finding) => [finding.findingId, finding]));
+  const communicationContexts = indexCommunicationContexts(input.communicationContexts ?? [], findingById);
+  const relations = validateRelations(input.relations ?? [], findingById);
+  const responseTargetIds = new Set(relations
+    .filter((relation) => relation.kind === "responds_to")
+    .map((relation) => relation.to_finding_id));
+  const resolutionRelations = relations.filter((relation) =>
+    ["resolves", "supersedes"].includes(relation.kind)
+    && commitmentKinds.has(findingById.get(relation.to_finding_id)!.kind));
+  const resolvedTargetIds = new Set(resolutionRelations.map((relation) => relation.to_finding_id));
+  const commitments = input.activeFindings.filter((finding) => commitmentKinds.has(finding.kind));
+  const actionable = commitments.filter((finding) =>
+    finding.confidence >= MIN_ATTENTION_CONFIDENCE && !resolvedTargetIds.has(finding.findingId));
   const groups = groupFindings(actionable);
   const signals: AttentionSignal[] = [];
   let trackedCommitments = 0;
+
+  for (const [targetId, targetRelations] of groupRelationsByTarget(resolutionRelations)) {
+    const target = findingById.get(targetId)!;
+    const sources = [...new Set(targetRelations.map((relation) => relation.from_finding_id))]
+      .map((findingId) => findingById.get(findingId)!)
+      .sort((left, right) => left.findingId.localeCompare(right.findingId));
+    const matchingTasks = tasks.filter((task) => normalize(task.description) === normalize(target.statement));
+    signals.push(signal({
+      type: "commitment_resolved", findings: [target, ...sources], tasks: matchingTasks,
+      title: "Commitment may be resolved", summary: target.statement,
+      impact: "medium", urgency: "soon",
+      confidence: Math.min(...targetRelations.map((relation) => relation.confidence)),
+      explanation: targetRelations.some((relation) => relation.kind === "supersedes")
+        ? "A validated relation says a newer finding supersedes this active commitment."
+        : "A validated relation says another finding resolves this active commitment.",
+      interventions: [
+        reviewResolution(),
+        ...(matchingTasks.length > 0 ? [completeTask()] : []),
+      ],
+    }));
+  }
+
+  for (const finding of input.activeFindings) {
+    if (!responseKinds.has(finding.kind) || finding.owner !== "user"
+      || finding.confidence < MIN_ATTENTION_CONFIDENCE) continue;
+    const context = communicationContexts.get(finding.findingId);
+    if (!context || context.direction !== "incoming"
+      || context.response_expectation !== "required"
+      || context.response_state !== "awaiting_response"
+      || responseTargetIds.has(finding.findingId)) continue;
+    const overdue = finding.dueDate !== null && finding.dueDate < date;
+    signals.push(signal({
+      type: overdue ? "response_overdue" : "response_needed",
+      findings: [finding], tasks: [],
+      title: overdue ? "Response is overdue" : "Response is needed",
+      summary: finding.statement,
+      impact: overdue ? "high" : "medium",
+      urgency: overdue || finding.dueDate === date ? "today" : "soon",
+      explanation: "Validated incoming communication context requires a response and records no response yet.",
+      interventions: [draftReply()],
+    }));
+  }
 
   for (const group of groups) {
     const finding = group[0]!;
@@ -107,10 +165,28 @@ export function resolveAttention(input: {
     signals,
     suppressed: {
       tracked_commitments: trackedCommitments,
-      low_confidence_findings: supported.length - actionable.length,
-      unsupported_findings: input.activeFindings.length - supported.length,
+      low_confidence_findings: input.activeFindings.filter((finding) =>
+        (commitmentKinds.has(finding.kind) || responseKinds.has(finding.kind))
+        && finding.confidence < MIN_ATTENTION_CONFIDENCE).length,
+      missing_communication_context: input.activeFindings.filter((finding) =>
+        responseKinds.has(finding.kind) && finding.owner === "user"
+        && finding.confidence >= MIN_ATTENTION_CONFIDENCE
+        && !communicationContexts.has(finding.findingId)).length,
+      unsupported_findings: input.activeFindings.filter((finding) =>
+        !commitmentKinds.has(finding.kind) && !responseKinds.has(finding.kind)
+        && !relations.some((relation) => relation.from_finding_id === finding.findingId)).length,
     },
   };
+}
+
+function groupRelationsByTarget(
+  relations: ValidatedFindingRelation[],
+): Map<string, ValidatedFindingRelation[]> {
+  const groups = new Map<string, ValidatedFindingRelation[]>();
+  for (const relation of relations) {
+    groups.set(relation.to_finding_id, [...(groups.get(relation.to_finding_id) ?? []), relation]);
+  }
+  return new Map([...groups.entries()].sort(([left], [right]) => left.localeCompare(right)));
 }
 
 function compareSignals(left: AttentionSignal, right: AttentionSignal): number {
@@ -120,6 +196,50 @@ function compareSignals(left: AttentionSignal, right: AttentionSignal): number {
     || impact[left.impact] - impact[right.impact]
     || left.type.localeCompare(right.type)
     || left.attention_id.localeCompare(right.attention_id);
+}
+
+function indexCommunicationContexts(
+  contexts: ValidatedCommunicationContext[],
+  findings: Map<string, ActiveFindingProjectionInput>,
+): Map<string, ValidatedCommunicationContext> {
+  const result = new Map<string, ValidatedCommunicationContext>();
+  for (const context of contexts) {
+    if (!findings.has(context.finding_id)) {
+      throw new Error("communication context references a non-active finding");
+    }
+    if (result.has(context.finding_id)) {
+      throw new Error("duplicate communication context for finding");
+    }
+    if (!context.validator.version || !/^sha256:/.test(context.content_hash)) {
+      throw new Error("communication context validation identity is incomplete");
+    }
+    result.set(context.finding_id, context);
+  }
+  return result;
+}
+
+function validateRelations(
+  relations: ValidatedFindingRelation[],
+  findings: Map<string, ActiveFindingProjectionInput>,
+): ValidatedFindingRelation[] {
+  const relationIds = new Set<string>();
+  const result: ValidatedFindingRelation[] = [];
+  for (const relation of relations) {
+    if (!relation.relation_id || relationIds.has(relation.relation_id)) {
+      throw new Error("finding relation identity must be unique");
+    }
+    if (relation.from_finding_id === relation.to_finding_id
+      || !findings.has(relation.from_finding_id) || !findings.has(relation.to_finding_id)) {
+      throw new Error("finding relation must connect distinct active findings");
+    }
+    if (relation.confidence < 0 || relation.confidence > 1
+      || !relation.validator.version || !/^sha256:/.test(relation.content_hash)) {
+      throw new Error("finding relation validation identity is incomplete");
+    }
+    relationIds.add(relation.relation_id);
+    if (relation.confidence >= MIN_ATTENTION_CONFIDENCE) result.push(relation);
+  }
+  return result;
 }
 
 function groupFindings(findings: ActiveFindingProjectionInput[]): ActiveFindingProjectionInput[][] {
@@ -154,6 +274,7 @@ function signal(input: {
   summary: string;
   impact: AttentionSignal["impact"];
   urgency: AttentionSignal["urgency"];
+  confidence?: number;
   explanation: string;
   interventions: SuggestedIntervention[];
 }): AttentionSignal {
@@ -168,7 +289,7 @@ function signal(input: {
     type: input.type, title: input.title, summary: input.summary,
     finding_ids: findingIds, subject_refs: subjectRefs,
     owner: owner(input.findings[0]!.owner),
-    confidence: Math.min(...input.findings.map((finding) => finding.confidence)),
+    confidence: Math.min(input.confidence ?? 1, ...input.findings.map((finding) => finding.confidence)),
     impact: input.impact, urgency: input.urgency,
     due_date: input.findings.map((finding) => finding.dueDate).find((date) => date !== null) ?? null,
     explanation: input.explanation,
@@ -212,11 +333,38 @@ function draftFollowUp(): SuggestedIntervention {
   };
 }
 
+function draftReply(): SuggestedIntervention {
+  return {
+    kind: "draft_reply", rationale: "Prepare a reviewable response without sending anything.",
+    expected_benefit: "The user can respond with less effort while retaining control of the message.",
+    consequence_of_delay: "The incoming request may remain unanswered.",
+    permission_class: "prepare", readiness: "unsupported", reversible: true,
+  };
+}
+
 function reviewDuplicates(): SuggestedIntervention {
   return {
     kind: "review_duplicates", rationale: "Confirm whether the records describe one obligation.",
     expected_benefit: "Avoid duplicate tasks and repeated attention.",
     consequence_of_delay: null,
     permission_class: "read", readiness: "ready", reversible: true,
+  };
+}
+
+function reviewResolution(): SuggestedIntervention {
+  return {
+    kind: "review_resolution", rationale: "Confirm the validated relationship before closing canonical state.",
+    expected_benefit: "Resolved work can leave active attention without silently rewriting history.",
+    consequence_of_delay: "The resolved commitment may continue to appear active.",
+    permission_class: "read", readiness: "ready", reversible: true,
+  };
+}
+
+function completeTask(): SuggestedIntervention {
+  return {
+    kind: "complete_task", rationale: "Align the matching canonical task with validated resolution evidence.",
+    expected_benefit: "Completed work stops participating in open-task planning.",
+    consequence_of_delay: "The task may continue to appear open.",
+    permission_class: "yellow", readiness: "unsupported", reversible: true,
   };
 }
