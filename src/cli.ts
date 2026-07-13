@@ -3,7 +3,6 @@
 import { ObsidianVault } from "./adapters/obsidian";
 import { GmailRestAdapter } from "./adapters/gmail";
 import { MacOsMessagesAdapter } from "./adapters/imessage";
-import { GoogleCalendarRestAdapter } from "./adapters/calendar";
 import { loadConfig, loadGmailAuthConfig, loadGmailClientConfig } from "./config";
 import { OperationalStore } from "./db/store";
 import type { ProposalRecord } from "./db/store";
@@ -17,30 +16,23 @@ import { proposeTaskIdNormalization } from "./workflows/normalize-task-ids";
 import { formatMorningBriefing, generateMorningBriefing, type MorningBriefing } from "./workflows/morning-briefing";
 import { efficiencyReport } from "./workflows/efficiency-metrics";
 import { rebuildState, type StateRebuildReport } from "./workflows/rebuild-state";
-import { ingestImportantGmail } from "./workflows/gmail-ingest";
 import { MacOsKeychainGmailCredentialStore } from "./gmail/keychain";
 import { authorizeGmailDesktop } from "./workflows/gmail-auth";
 import { GmailStore } from "./gmail/store";
 import { currentEmailExtractionIdentity } from "./gmail/extraction-contract";
 import { previewGmailExtractionContext } from "./workflows/gmail-extraction-preview";
 import { IMessageStore } from "./imessage/store";
-import { ingestIMessageChanges } from "./workflows/imessage-ingest";
 import { previewIMessageExtractionContext } from "./workflows/imessage-extraction-preview";
 import { triageIMessageServiceConversations } from "./workflows/imessage-deterministic-triage";
 import { linkIMessageConversationToPerson } from "./workflows/link-imessage-person";
-import { ingestCalendar } from "./workflows/calendar-ingest";
-import { CalendarStore } from "./calendar/store";
-import { TdLibTelegramAdapter } from "./adapters/telegram";
-import { loadTelegramTdLibConfig } from "./config";
-import { NativeTdJsonClient } from "./telegram/tdjson-client";
-import { TelegramStore } from "./telegram/store";
-import { ingestTelegramChanges } from "./workflows/telegram-ingest";
 import { FindingStore } from "./findings/store";
 import { rebuildFindingAttentionState } from "./state/finding-attention";
 import { rebuildChiefOfStaffState } from "./state/chief-of-staff";
 import { applyEffectProposal } from "./tools/apply-proposal";
 import { reviewEffectProposal } from "./effects/registry";
 import { WorkRepository } from "./work/repository";
+import { createIntegrationRegistry } from "./integrations/providers";
+import { runRegisteredIntegrationCommand } from "./cli/integration-commands";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -51,6 +43,11 @@ const symbols: Record<Severity, string> = {
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
+
+  const integrationExit = await runRegisteredIntegrationCommand({
+    command, rest, registry: createIntegrationRegistry(),
+  });
+  if (integrationExit !== undefined) return integrationExit;
 
   if (command === "doctor") {
     const args = parseFlags(rest);
@@ -333,16 +330,6 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "email") {
     const [subcommand, ...emailRest] = rest;
-    if (subcommand === "status") {
-      const args = parseFlags(emailRest);
-      const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-      const store = new OperationalStore(config.databasePath);
-      store.migrate();
-      console.log(JSON.stringify(new GmailStore(store).inspectionSummary(
-        config.gmailAccountId, currentEmailExtractionIdentity,
-      ), null, 2));
-      return 0;
-    }
     if (subcommand === "review-extractions") {
       const args = parseFlags(emailRest);
       const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
@@ -363,27 +350,6 @@ async function main(argv: string[]): Promise<number> {
       });
       console.log(`Authorized Google read-only integrations for ${result.emailAddress}. Refresh token stored in ${result.storedIn}.`);
       return 0;
-    }
-    if (subcommand === "ingest") {
-      const args = parseFlags(emailRest);
-      const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-      if (!config.gmailEnabled) throw new Error("Gmail ingestion is disabled; set LIFE_OS_GMAIL_ENABLED=true");
-      const limit = Number(args.flags.limit ?? "50");
-      if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
-        throw new Error("--limit must be an integer between 1 and 5000");
-      }
-      const credentialStore = new MacOsKeychainGmailCredentialStore();
-      const refreshToken = Bun.env.GMAIL_REFRESH_TOKEN
-        ?? credentialStore.getRefreshToken(config.gmailAccountId);
-      if (!refreshToken) throw new Error("No Gmail refresh token found; run life-os email auth first");
-      const report = await ingestImportantGmail({
-        adapter: new GmailRestAdapter(loadGmailAuthConfig(refreshToken)),
-        store: new OperationalStore(config.databasePath),
-        accountId: config.gmailAccountId,
-        limit,
-      });
-      console.log(JSON.stringify(report, null, 2));
-      return report.failed > 0 ? 1 : 0;
     }
     if (subcommand === "preview-extraction") {
       const args = parseFlags(emailRest);
@@ -425,19 +391,6 @@ async function main(argv: string[]): Promise<number> {
       console.log(JSON.stringify(result, null, 2));
       return 0;
     }
-    if (subcommand === "status") {
-      const store = new OperationalStore(config.databasePath);
-      store.migrate();
-      const access = await adapter.checkAccess();
-      console.log(JSON.stringify({
-        enabled: config.imessageEnabled,
-        access,
-        selectionMode: config.imessageSelectionMode,
-        configuredConversationIds: config.imessageConversationIds.length,
-        ...new IMessageStore(store).inspectionSummary(config.imessageSourceId),
-      }, null, 2));
-      return access.ok ? 0 : 1;
-    }
     if (subcommand === "conversations") {
       const access = await adapter.checkAccess();
       if (!access.ok) throw new Error(access.reason ?? "Messages database is unavailable");
@@ -449,22 +402,6 @@ async function main(argv: string[]): Promise<number> {
         participantCount: conversation.participants.length,
         latestSourceRowId: conversation.latestSourceRowId,
       })), null, 2));
-      return 0;
-    }
-    if (subcommand === "ingest") {
-      if (!config.imessageEnabled) {
-        throw new Error("iMessage ingestion is disabled; set LIFE_OS_IMESSAGE_ENABLED=true");
-      }
-      const report = await ingestIMessageChanges({
-        adapter, store: new OperationalStore(config.databasePath),
-        sourceId: config.imessageSourceId,
-        selection: {
-          mode: config.imessageSelectionMode,
-          conversationIds: config.imessageConversationIds,
-        },
-        limit: parseLimit(args.flags.limit, 500, 5000),
-      });
-      console.log(JSON.stringify(report, null, 2));
       return 0;
     }
     if (subcommand === "preview-extraction") {
@@ -501,53 +438,6 @@ async function main(argv: string[]): Promise<number> {
       });
       console.log(JSON.stringify(report, null, 2));
       return 0;
-    }
-  }
-
-  if (command === "calendar") {
-    const [subcommand, ...calendarRest] = rest;
-    const args = parseFlags(calendarRest);
-    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-    const store = new OperationalStore(config.databasePath); store.migrate();
-    if (subcommand === "status") {
-      console.log(JSON.stringify(new CalendarStore(store).summary(config.gmailAccountId), null, 2));
-      return 0;
-    }
-    if (subcommand === "ingest") {
-      if (!config.calendarEnabled) throw new Error("Calendar ingestion is disabled; set LIFE_OS_CALENDAR_ENABLED=true");
-      const refreshToken = Bun.env.GMAIL_REFRESH_TOKEN
-        ?? new MacOsKeychainGmailCredentialStore().getRefreshToken(config.gmailAccountId);
-      if (!refreshToken) throw new Error("Google refresh token unavailable; run email auth first");
-      const report = await ingestCalendar({ adapter: new GoogleCalendarRestAdapter(loadGmailAuthConfig(refreshToken)),
-        store, accountId: config.gmailAccountId });
-      console.log(JSON.stringify(report, null, 2)); return 0;
-    }
-  }
-
-  if (command === "telegram") {
-    const [subcommand, ...telegramRest] = rest;
-    const args = parseFlags(telegramRest);
-    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-    const store = new OperationalStore(config.databasePath); store.migrate();
-    if (subcommand === "status") {
-      console.log(JSON.stringify(new TelegramStore(store).status(config.telegramSourceId), null, 2));
-      return 0;
-    }
-    if (subcommand === "ingest") {
-      if (!config.telegramEnabled) throw new Error("Telegram ingestion is disabled; set LIFE_OS_TELEGRAM_ENABLED=true");
-      if (config.telegramChatIds.length === 0) throw new Error("Telegram ingestion requires LIFE_OS_TELEGRAM_CHAT_IDS");
-      const limitPerChat = Number(args.flags.limit ?? "50");
-      if (!Number.isInteger(limitPerChat) || limitPerChat < 1 || limitPerChat > 100) {
-        throw new Error("--limit must be an integer between 1 and 100");
-      }
-      const client = new NativeTdJsonClient({ ...loadTelegramTdLibConfig(),
-        databaseDirectory: config.telegramDatabaseDirectory });
-      try {
-        const report = await ingestTelegramChanges({ adapter: new TdLibTelegramAdapter(client), store,
-          sourceId: config.telegramSourceId, chatIds: config.telegramChatIds, limitPerChat });
-        console.log(JSON.stringify(report, null, 2));
-        return 0;
-      } finally { client.close(); }
     }
   }
 

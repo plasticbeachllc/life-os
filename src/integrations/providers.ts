@@ -33,6 +33,7 @@ export function createIntegrationRegistry(): IntegrationRegistry {
   return new IntegrationRegistry()
     .register({
       id: "gmail", capabilities: messageExtractionCapabilities,
+      application: { cliCommand: "email", statusTool: "life_os_gmail_status", ingestTool: "life_os_ingest_gmail" },
       statusDescription: "Return sanitized Gmail integration status and capabilities.",
       ingestDescription: "Incrementally ingest metadata and hashes for IMPORTANT Gmail messages using gmail.readonly. Never sends, labels, archives, or deletes email.",
       limit: { default: 50, maximum: 100, description: "Maximum IMPORTANT messages to inspect." },
@@ -53,17 +54,20 @@ export function createIntegrationRegistry(): IntegrationRegistry {
     })
     .register({
       id: "imessage", capabilities: messageExtractionCapabilities,
+      application: { cliCommand: "message", statusTool: "life_os_imessage_status", ingestTool: "life_os_ingest_imessage" },
       statusDescription: "Return sanitized Messages integration status and capabilities.",
       ingestDescription: "Incrementally ingest metadata and hashes from the configured Messages selection. Never sends or modifies messages.",
       limit: { default: 500, maximum: 5000, description: "Maximum Messages rows to inspect." },
-      status: () => {
+      status: async () => {
         const config = loadConfig(); const store = operationalStore(config.databasePath);
+        const access = await new MacOsMessagesAdapter(config.imessageDatabasePath).checkAccess();
         const { cursor: _cursor, ...summary } = new IMessageStore(store)
           .inspectionSummary(config.imessageSourceId);
         return status("imessage", "primary", config.imessageEnabled,
           messageExtractionCapabilities, {
             selectionMode: config.imessageSelectionMode,
             configuredConversationIds: config.imessageConversationIds.length,
+            access,
             ...summary,
           });
       },
@@ -84,6 +88,7 @@ export function createIntegrationRegistry(): IntegrationRegistry {
     })
     .register({
       id: "calendar", capabilities: ingestionOnlyCapabilities,
+      application: { cliCommand: "calendar", statusTool: "life_os_calendar_status", ingestTool: "life_os_ingest_calendar" },
       statusDescription: "Return sanitized Google Calendar integration status and capabilities.",
       ingestDescription: "Incrementally ingest the primary Google Calendar using calendar.readonly. Never writes Google Calendar.",
       status: () => {
@@ -104,6 +109,7 @@ export function createIntegrationRegistry(): IntegrationRegistry {
     })
     .register({
       id: "telegram", capabilities: ingestionOnlyCapabilities,
+      application: { cliCommand: "telegram", statusTool: "life_os_telegram_status", ingestTool: "life_os_ingest_telegram" },
       statusDescription: "Return sanitized Telegram integration status and capabilities.",
       ingestDescription: "Incrementally ingest metadata and hashes from explicitly allowlisted Telegram chats. Never sends or modifies messages.",
       limit: { default: 50, maximum: 100, description: "Bounded TDLib history page size per chat." },

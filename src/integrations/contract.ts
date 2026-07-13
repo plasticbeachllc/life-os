@@ -39,8 +39,15 @@ export interface IngestionLimit {
   description: string;
 }
 
+export interface IntegrationApplicationRegistration {
+  readonly cliCommand: string;
+  readonly statusTool: `life_os_${string}_status`;
+  readonly ingestTool: `life_os_ingest_${string}`;
+}
+
 export interface IngestIntegration<StatusDetails = unknown, ReportDetails = unknown> {
   id: IngestProviderId;
+  application: IntegrationApplicationRegistration;
   capabilities: IntegrationCapabilities;
   statusDescription: string;
   ingestDescription: string;

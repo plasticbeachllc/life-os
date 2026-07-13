@@ -1298,21 +1298,32 @@ Ownership: single policy/effect owner; no parallel authorization edits.
 
 Goal: reduce large coordination hotspots after domain contracts stabilize.
 
-- [ ] Extract narrow repository interfaces from `OperationalStore` without changing the database.
-- [ ] Introduce transaction-scoped repository composition.
-- [ ] Extend integration registrations with safe CLI/MCP status and ingestion metadata.
-- [ ] Generate repetitive read-only status/ingestion registration.
-- [ ] Keep mutation, authorization, credentials, and exact refetch tools explicit.
+- [x] Extract narrow repository interfaces from `OperationalStore` without changing the database.
+- [x] Introduce transaction-scoped repository composition.
+- [x] Extend integration registrations with safe CLI/MCP status and ingestion metadata.
+- [x] Generate repetitive read-only status/ingestion registration.
+- [x] Keep mutation, authorization, credentials, and exact refetch tools explicit.
 - [ ] Split MCP tool implementations into domain modules while preserving one allowlist.
 - [ ] Split CLI handlers into domain modules while preserving documented commands.
 
 Acceptance criteria:
 
-- [ ] No circular dependency from provider stores into MCP/CLI.
-- [ ] All current tool names and annotations remain exact unless deliberately migrated.
-- [ ] MCP allowlist tests detect additions/removals.
-- [ ] Generated registrations cannot expose mutation-capable handlers.
-- [ ] Store splitting does not create multiple SQLite connections inside one required transaction.
+- [x] No circular dependency from provider stores into MCP/CLI.
+- [x] All current tool names and annotations remain exact unless deliberately migrated.
+- [x] MCP allowlist tests detect additions/removals.
+- [x] Generated registrations cannot expose mutation-capable handlers.
+- [x] Store splitting does not create multiple SQLite connections inside one required transaction.
+
+The first Phase 6 slice adds immutable application metadata to each integration registration and uses
+it to generate the four provider status/ingestion pairs for both MCP and CLI. Registration validates
+the exact derived MCP names, unique CLI command ownership, and `providerMutation: false`. Generated
+CLI handlers accept only `--vault` and the registration's bounded `--limit`; credentials, transient
+refetch, extraction, linking, triage, policy, authorization, and mutation remain explicit handlers.
+
+`withRepositoryTransaction` composes narrow findings, work, and prepared-reasoning repositories over
+one unexposed SQLite connection and one transaction. Coordinators receive domain methods rather than
+raw SQL access, and an exception rolls the entire cross-domain operation back. This is additive code
+organization only; schema version 18 is unchanged.
 
 Ownership: application-surface owner; coordinate `src/mcp/server.ts` and `src/cli.ts` as shared files.
 
