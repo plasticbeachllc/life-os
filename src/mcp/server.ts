@@ -9,17 +9,9 @@ import { GmailRestAdapter } from "../adapters/gmail";
 import { MacOsMessagesAdapter } from "../adapters/imessage";
 import { loadConfig, loadGmailAuthConfig } from "../config";
 import { OperationalStore } from "../db/store";
-import type { ProposalRecord } from "../db/store";
 import { loadPolicy } from "../policy/loader";
 import { compilePolicyPrompt } from "../orchestration/prompt-spec";
 import { extractionClassifications, extractionItemKinds, extractionOwners } from "../orchestration/prompt-contracts";
-import {
-  consumeUndoAuthorization,
-  prepareProposalAuthorization,
-  prepareUndoAuthorization,
-} from "../policy/authorization";
-import { applyProposalWithAuthorization } from "../tools/apply-proposal";
-import { undoAction } from "../tools/undo-action";
 import { runDoctor } from "../workflows/doctor";
 import { generateMorningBriefing } from "../workflows/morning-briefing";
 import { rebuildState } from "../workflows/rebuild-state";
@@ -31,7 +23,6 @@ import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { MacOsKeychainGmailCredentialStore } from "../gmail/keychain";
 import { previewGmailExtractionContext } from "../workflows/gmail-extraction-preview";
-import { proposeFindingTask } from "../workflows/finding-task-proposal";
 import {
   prepareSubscriptionEmailExtraction,
   submitSubscriptionEmailExtraction,
@@ -46,7 +37,7 @@ import { triageIMessageServiceConversations } from "../workflows/imessage-determ
 import { createIntegrationRegistry } from "../integrations/providers";
 import { registerIntegrationTools } from "./ingestion-tools";
 import { WorkRepository } from "../work/repository";
-import { reviewEffectProposal } from "../effects/registry";
+import { registerProposalTools } from "./proposal-tools";
 
 const extractionOutputInput = z.object({
   classification: z.enum(extractionClassifications),
@@ -62,6 +53,7 @@ const extractionOutputInput = z.object({
 export function createLifeOsMcpServer(): McpServer {
   const server = new McpServer({ name: "life-os", version: "0.1.0" });
   registerIntegrationTools(server, createIntegrationRegistry());
+  registerProposalTools(server);
 
   server.registerTool("life_os_doctor", {
     description: "Inspect Life OS vault and operational-state health without changing vault files.",
@@ -127,17 +119,6 @@ export function createLifeOsMcpServer(): McpServer {
     return jsonResult({ stateType, count: records.length, records });
   });
 
-  server.registerTool("life_os_list_pending_proposals", {
-    description: "List pending or approved Life OS proposals in a sanitized review form. Does not approve or apply anything.",
-    inputSchema: {},
-    annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async () => {
-    const { store } = runtimeContext();
-    store.migrate();
-    const proposals = store.listPendingProposals().map(sanitizeProposal);
-    return jsonResult({ count: proposals.length, proposals });
-  });
-
   server.registerTool("life_os_review_email_extractions", {
     description: "Review sanitized structured Gmail extraction results and aggregate classifications. Returns no Gmail IDs, headers, hashes, subjects, addresses, or source text.",
     inputSchema: {},
@@ -149,16 +130,6 @@ export function createLifeOsMcpServer(): McpServer {
     return jsonResult(new GmailStore(store).extractionReview(
       config.gmailAccountId, currentEmailExtractionIdentity,
     ));
-  });
-
-  server.registerTool("life_os_propose_finding_task", {
-    description: "Create one approval-gated fixed-inbox task proposal from an active user-owned actionable finding. The caller cannot supply task text, due date, ID, or path; this does not write the vault.",
-    inputSchema: { findingId: z.string().startsWith("finding_") },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, async ({ findingId }) => {
-    const { vault, store } = runtimeContext();
-    const proposal = await proposeFindingTask({ findingId, vault, store });
-    return jsonResult(sanitizeProposal(proposal));
   });
 
   server.registerTool("life_os_preview_email_extraction_context", {
@@ -293,65 +264,6 @@ export function createLifeOsMcpServer(): McpServer {
     }));
   });
 
-  server.registerTool("life_os_get_proposal", {
-    description: "Get one proposal's sanitized review details and exact preview. Does not approve or apply it.",
-    inputSchema: { proposalId: z.string().min(1) },
-    annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async ({ proposalId }) => {
-    const { store } = runtimeContext();
-    store.migrate();
-    const proposal = store.getProposal(proposalId);
-    if (!proposal) throw new Error(`proposal not found: ${proposalId}`);
-    return jsonResult(sanitizeProposal(proposal));
-  });
-
-  server.registerTool("life_os_prepare_proposal_approval", {
-    description: "Revalidate one exact proposal and issue a short-lived, single-use confirmation token bound to its action and target hash. Does not apply the proposal.",
-    inputSchema: { proposalId: z.string().min(1) },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-  }, async ({ proposalId }) => {
-    const { vault, store } = runtimeContext();
-    store.migrate();
-    return jsonResult(await prepareProposalAuthorization({ proposalId, vault, store }));
-  });
-
-  server.registerTool("life_os_apply_approved_proposal", {
-    description: "Apply only the exact proposal/action authorized by a short-lived confirmation token. Accepts no path, patch, or arbitrary action arguments.",
-    inputSchema: {
-      proposalId: z.string().min(1), actionId: z.string().min(1), confirmationToken: z.string().min(1),
-    },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
-  }, async ({ proposalId, actionId, confirmationToken }) => {
-    const config = loadConfig();
-    const vault = new ObsidianVault(config.vaultPath);
-    const store = new OperationalStore(config.databasePath);
-    store.migrate();
-    return jsonResult(await applyProposalWithAuthorization({
-      token: confirmationToken, proposalId, actionId, vault, store, backupRoot: config.backupPath,
-    }));
-  });
-
-  server.registerTool("life_os_prepare_undo", {
-    description: "Revalidate an applied action's current target and issue a short-lived, single-use undo token. Does not modify the vault.",
-    inputSchema: { actionId: z.string().min(1) },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-  }, async ({ actionId }) => {
-    const { vault, store } = runtimeContext();
-    store.migrate();
-    return jsonResult(await prepareUndoAuthorization({ actionId, vault, store }));
-  });
-
-  server.registerTool("life_os_undo_action", {
-    description: "Undo only the exact action authorized by a short-lived confirmation token, if the target still matches the applied hash.",
-    inputSchema: { actionId: z.string().min(1), confirmationToken: z.string().min(1) },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
-  }, async ({ actionId, confirmationToken }) => {
-    const { vault, store } = runtimeContext();
-    store.migrate();
-    await consumeUndoAuthorization({ token: confirmationToken, actionId, vault, store });
-    return jsonResult(await undoAction({ actionId, vault, store }));
-  });
-
   server.registerTool("life_os_prepare_morning_reasoning", {
     description: "Prepare an audited, token-budgeted compact context manifest for reasoning by the subscription-authenticated host agent. Call life_os_submit_morning_reasoning after reasoning.",
     inputSchema: {
@@ -429,20 +341,6 @@ An empty recommendation list is correct when compact state contains nothing requ
   }));
 
   return server;
-}
-
-function sanitizeProposal(proposal: ProposalRecord): Record<string, unknown> {
-  const review = reviewEffectProposal(proposal);
-  return {
-    proposalId: proposal.proposalId, actionId: proposal.actionId,
-    workflow: proposal.workflow, lifecycleState: proposal.lifecycleState,
-    permissionClass: proposal.permissionClass, effectType: proposal.effectType,
-    executorVersion: proposal.executorVersion, targetPath: proposal.targetPath,
-    expectedTargetHash: proposal.targetHash,
-    preview: review.preview,
-    createdAt: proposal.createdAt, expiresAt: proposal.expiresAt ?? null,
-    approved: proposal.approved,
-  };
 }
 
 function runtimeContext(): { vault: ObsidianVault; store: OperationalStore } {

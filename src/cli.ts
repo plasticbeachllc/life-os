@@ -5,9 +5,7 @@ import { GmailRestAdapter } from "./adapters/gmail";
 import { MacOsMessagesAdapter } from "./adapters/imessage";
 import { loadConfig, loadGmailAuthConfig, loadGmailClientConfig } from "./config";
 import { OperationalStore } from "./db/store";
-import type { ProposalRecord } from "./db/store";
 import type { Finding, HealthReport, Severity } from "./models/common";
-import { undoAction } from "./tools/undo-action";
 import { proposePolicyBootstrap } from "./workflows/bootstrap-policy";
 import { applyPolicyBootstrapSet, pendingPolicyBootstrapSet } from "./workflows/apply-policy-bootstrap-set";
 import { runDoctor } from "./workflows/doctor";
@@ -28,11 +26,10 @@ import { linkIMessageConversationToPerson } from "./workflows/link-imessage-pers
 import { FindingStore } from "./findings/store";
 import { rebuildFindingAttentionState } from "./state/finding-attention";
 import { rebuildChiefOfStaffState } from "./state/chief-of-staff";
-import { applyEffectProposal } from "./tools/apply-proposal";
-import { reviewEffectProposal } from "./effects/registry";
 import { WorkRepository } from "./work/repository";
 import { createIntegrationRegistry } from "./integrations/providers";
 import { runRegisteredIntegrationCommand } from "./cli/integration-commands";
+import { formatProposal, runProposalCommand } from "./cli/proposal-commands";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -48,6 +45,8 @@ async function main(argv: string[]): Promise<number> {
     command, rest, registry: createIntegrationRegistry(),
   });
   if (integrationExit !== undefined) return integrationExit;
+  const proposalExit = await runProposalCommand({ command, rest });
+  if (proposalExit !== undefined) return proposalExit;
 
   if (command === "doctor") {
     const args = parseFlags(rest);
@@ -192,18 +191,6 @@ async function main(argv: string[]): Promise<number> {
     }
   }
 
-  if (command === "review") {
-    const args = parseFlags(rest);
-    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-    const store = new OperationalStore(config.databasePath);
-    store.migrate();
-    const proposal = args.positionals[0];
-    const proposals = proposal ? [store.getProposal(proposal)].filter((item): item is ProposalRecord => Boolean(item)) : store.listPendingProposals();
-    if (proposal && proposals.length === 0) throw new Error(`proposal not found: ${proposal}`);
-    console.log(proposals.length === 0 ? "No pending proposals." : proposals.map(formatProposal).join("\n"));
-    return 0;
-  }
-
   if (command === "findings") {
     const [subcommand, ...findingRest] = rest;
     const args = parseFlags(findingRest);
@@ -240,44 +227,6 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     throw new Error("findings supports review, dismiss, or supersede");
-  }
-
-  if (command === "approve") {
-    const args = parseFlags(rest);
-    const proposalId = args.positionals[0];
-    const actionId = args.flags.action;
-    if (!proposalId || !actionId) throw new Error("approve requires <proposal-id> --action <action-id>");
-    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-    const store = new OperationalStore(config.databasePath);
-    store.migrate();
-    store.approveProposalAction(proposalId, actionId, new Date().toISOString());
-    console.log(`Approved ${actionId} in ${proposalId}`);
-    return 0;
-  }
-
-  if (command === "apply") {
-    const args = parseFlags(rest);
-    const proposalId = args.positionals[0];
-    if (!proposalId) throw new Error("apply requires <proposal-id>");
-    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-    const store = new OperationalStore(config.databasePath);
-    store.migrate();
-    const toolInput = { proposalId, vault: new ObsidianVault(config.vaultPath), store, backupRoot: config.backupPath };
-    const result = await applyEffectProposal(toolInput);
-    console.log(`Applied ${result.actionId} to ${result.targetPath}\nBackup: ${result.backupPath}`);
-    return 0;
-  }
-
-  if (command === "undo") {
-    const args = parseFlags(rest);
-    const actionId = args.positionals[0];
-    if (!actionId) throw new Error("undo requires <action-id>");
-    const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
-    const store = new OperationalStore(config.databasePath);
-    store.migrate();
-    const result = await undoAction({ actionId, vault: new ObsidianVault(config.vaultPath), store });
-    console.log(`Undid ${result.actionId} on ${result.targetPath}`);
-    return 0;
   }
 
   if (command === "briefing") {
@@ -503,20 +452,6 @@ function formatStateReport(report: StateRebuildReport): string {
   ];
   for (const issue of report.issues) lines.push(`ERR - ${issue.path} - ${issue.message}`);
   return lines.join("\n");
-}
-
-function formatProposal(proposal: ProposalRecord): string {
-  const review = reviewEffectProposal(proposal);
-  return [
-    "",
-    `Proposal: ${proposal.proposalId} [${proposal.lifecycleState}]`,
-    `Action: ${proposal.actionId} (${proposal.permissionClass})`,
-    `Target: ${proposal.targetPath}`,
-    `Expected hash: ${proposal.targetHash}`,
-    "Proposed diff:",
-    review.preview,
-    `Approve: life-os approve ${proposal.proposalId} --action ${proposal.actionId} --vault <path>`,
-  ].join("\n");
 }
 
 function assertBriefingItemExists(content: Record<string, unknown>, itemKey: string): void {

@@ -1303,8 +1303,8 @@ Goal: reduce large coordination hotspots after domain contracts stabilize.
 - [x] Extend integration registrations with safe CLI/MCP status and ingestion metadata.
 - [x] Generate repetitive read-only status/ingestion registration.
 - [x] Keep mutation, authorization, credentials, and exact refetch tools explicit.
-- [ ] Split MCP tool implementations into domain modules while preserving one allowlist.
-- [ ] Split CLI handlers into domain modules while preserving documented commands.
+- [x] Split MCP tool implementations into domain modules while preserving one allowlist.
+- [x] Split CLI handlers into domain modules while preserving documented commands.
 
 Acceptance criteria:
 
@@ -1324,6 +1324,11 @@ refetch, extraction, linking, triage, policy, authorization, and mutation remain
 one unexposed SQLite connection and one transaction. Coordinators receive domain methods rather than
 raw SQL access, and an exception rolls the entire cross-domain operation back. This is additive code
 organization only; schema version 18 is unchanged.
+
+The final Phase 6 slice moves the complete proposal/action MCP surface into `mcp/proposal-tools.ts`
+and CLI review/approve/apply/undo routing into `cli/proposal-commands.ts`. Integration status/ingestion
+remain in their generated domain modules, while `mcp/server.ts` and `cli.ts` retain composition and
+explicit non-generic workflows. The single MCP allowlist test remains authoritative for every module.
 
 Ownership: application-surface owner; coordinate `src/mcp/server.ts` and `src/cli.ts` as shared files.
 
