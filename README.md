@@ -22,6 +22,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Bounded, high-risk-redacted Messages extraction with hash-verified refetch and sanitized review.
 - Deterministic cross-provider findings projected from validated Gmail and Messages extraction items.
 - Regenerable open-loop and commitment attention state feeding chief-of-staff and morning briefings.
+- Policy-routed attention review cards with opaque browser identities and capability-bound feedback.
 - Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
   and order-pickup alerts.
 - Primary Google Calendar read-only ingestion and deterministic compact calendar state.
@@ -133,8 +134,10 @@ provider extraction IDs, reasoning-call IDs, evidence IDs, and hashes. Finding c
 a task, proposal, reply, or provider mutation.
 
 State rebuild also derives `finding_attention_state` from active findings. It tracks open loops,
-commitments, and overdue finding IDs under a date- and status-aware dependency hash. Chief-of-staff and
-morning briefing state consume this projection; they never query provider extraction bodies directly.
+commitments, and overdue finding IDs under a date- and status-aware dependency hash. Chief-of-staff,
+morning briefing, and the bounded browser review queue consume this projection; they never query
+provider extraction bodies directly. Browser attention feedback is resolved against the exact current
+presentation decision and retained as structured calibration data without source text or provider IDs.
 
 Proposal lifecycle:
 

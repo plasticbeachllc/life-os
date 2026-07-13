@@ -329,6 +329,50 @@ export class OperationalStore {
     } finally { db.close(); }
   }
 
+  recordAttentionFeedback(input: {
+    feedbackId: string; attentionId: string;
+    signalType: string;
+    disposition: "useful" | "incorrect" | "duplicate" | "already_handled"
+      | "irrelevant" | "too_late" | "too_intrusive";
+    presentationChannel: "review_queue" | "morning_briefing" | "immediate_notification";
+    presentationReason: string; policyVersion: string; interventionLevel: 2 | 3 | 4; recordedAt: string;
+  }): void {
+    const db = this.open();
+    try {
+      db.query(`INSERT OR IGNORE INTO attention_feedback (
+        feedback_id, attention_id, signal_type, disposition, presentation_channel,
+        presentation_reason, policy_version, intervention_level, recorded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        input.feedbackId, input.attentionId, input.signalType, input.disposition,
+        input.presentationChannel, input.presentationReason, input.policyVersion,
+        input.interventionLevel, input.recordedAt,
+      );
+    } finally { db.close(); }
+  }
+
+  attentionFeedbackMetrics(): Array<{
+    signalType: string; presentationChannel: string; interventionLevel: number;
+    total: number; useful: number; negative: number;
+  }> {
+    const db = this.open();
+    try {
+      return db.query<{
+        signal_type: string; presentation_channel: string; intervention_level: number;
+        total: number; useful: number; negative: number;
+      }, []>(`SELECT signal_type, presentation_channel, intervention_level,
+        COUNT(*) AS total,
+        SUM(CASE WHEN disposition = 'useful' THEN 1 ELSE 0 END) AS useful,
+        SUM(CASE WHEN disposition = 'useful' THEN 0 ELSE 1 END) AS negative
+        FROM attention_feedback
+        GROUP BY signal_type, presentation_channel, intervention_level
+        ORDER BY signal_type, presentation_channel, intervention_level`).all().map((row) => ({
+          signalType: row.signal_type, presentationChannel: row.presentation_channel,
+          interventionLevel: row.intervention_level, total: row.total,
+          useful: row.useful, negative: row.negative,
+        }));
+    } finally { db.close(); }
+  }
+
   createProposal(input: {
     proposalId: string; runId: string; actionId: string; workflow: string;
     sourceType: string; sourceId: string; sourceHash: string; targetPath: string;
@@ -972,6 +1016,7 @@ export class OperationalStore {
       "undo_records",
       "briefing_feedback",
       "ui_feedback",
+      "attention_feedback",
       "authorization_tokens",
       "gmail_accounts",
       "gmail_ingestion_runs",

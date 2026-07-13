@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { UiNotificationBundle, UiNotificationSummaryCandidate } from "../../../../src/ui/notifications";
-import { CodexAppServerClient } from "$lib/server/codex/app-server";
+import { CodexAppServerClient } from "./codex/app-server";
 
 export interface NotificationAgentSummary {
 	sentences: string[];

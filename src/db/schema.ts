@@ -1,4 +1,4 @@
-export const schemaVersion = 20;
+export const schemaVersion = 21;
 
 export const ddl = [
   `
@@ -743,4 +743,29 @@ export const ddl = [
   )
   `,
   `CREATE INDEX IF NOT EXISTS idx_ui_feedback_subject ON ui_feedback(subject_kind, subject_ui_id, created_at)`,
+  `
+  CREATE TABLE IF NOT EXISTS attention_feedback (
+    feedback_id TEXT PRIMARY KEY,
+    attention_id TEXT NOT NULL,
+    signal_type TEXT NOT NULL CHECK(signal_type IN (
+      'untracked_user_commitment', 'waiting_on_other', 'commitment_at_risk',
+      'deadline_not_tracked', 'duplicate_commitment', 'response_needed',
+      'response_overdue', 'commitment_resolved'
+    )),
+    disposition TEXT NOT NULL CHECK(disposition IN (
+      'useful', 'incorrect', 'duplicate', 'already_handled',
+      'irrelevant', 'too_late', 'too_intrusive'
+    )),
+    presentation_channel TEXT NOT NULL CHECK(presentation_channel IN (
+      'review_queue', 'morning_briefing', 'immediate_notification'
+    )),
+    presentation_reason TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    intervention_level INTEGER NOT NULL CHECK(intervention_level BETWEEN 2 AND 4),
+    recorded_at TEXT NOT NULL,
+    UNIQUE(attention_id, presentation_channel, presentation_reason, policy_version)
+  )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_attention_feedback_disposition
+    ON attention_feedback(signal_type, presentation_channel, intervention_level, disposition, recorded_at)`,
 ];

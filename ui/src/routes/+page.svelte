@@ -35,14 +35,25 @@
 		activeMobilePanel = "chat";
 	}
 
+	async function submitAttentionFeedback(notification: InboxNotification, outcome: "useful" | "irrelevant") {
+		if (notification.feedbackSubjectKind !== "attention") return;
+		try {
+			await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" },
+				body: JSON.stringify({ subjectKind: "attention", subjectUiId: notification.id,
+					outcome, csrfToken: data.feedbackToken }) });
+		} catch { /* Feedback is best-effort and never blocks the selected user action. */ }
+	}
+
 	function handleNotificationAction(notification: InboxNotification, position: "primary" | "secondary") {
 		const action = position === "primary" ? notification.primaryAction : notification.secondaryAction;
 		if (!action) return;
 
 		if (action.kind === "resolve" || action.kind === "review" || action.kind === "discuss") {
+			void submitAttentionFeedback(notification, "useful");
 			discussNotification(notification);
 			return;
 		}
+		if (action.kind === "dismiss") void submitAttentionFeedback(notification, "irrelevant");
 
 		notifications = notifications.map((item) => {
 			if (item.id !== notification.id) return item;

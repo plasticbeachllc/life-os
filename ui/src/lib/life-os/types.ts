@@ -21,6 +21,7 @@ export interface InboxNotification {
 	relativeTime: string;
 	primaryAction?: NotificationAction;
 	secondaryAction?: NotificationAction;
+	feedbackSubjectKind?: "attention";
 }
 
 export interface ChatArtifact {

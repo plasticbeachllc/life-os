@@ -6,8 +6,8 @@ Life OS should seek value by noticing consequential changes, relating them to th
 commitments and priorities, and offering the smallest useful next step. It should not equate value
 with producing more summaries, tasks, notifications, or model output.
 
-This design builds on the target architecture in `../life-os-architecture/docs/architecture.md`,
-reviewed on `feature/architecture` at commit `a717e1d`. That architecture gives **Finding** a precise
+This design builds on the target architecture now merged into `main` at commit `8fcafe3`. That
+architecture gives **Finding** a precise
 meaning: an immutable, validated, cross-provider semantic record such as an explicit request,
 commitment, decision, or date. This document does not redefine that contract.
 
@@ -192,8 +192,28 @@ the queue exceeds its bound.
 The accompanying feedback contract supports only `useful`, `incorrect`, `duplicate`,
 `already_handled`, `irrelevant`, `too_late`, and `too_intrusive`. Feedback is bound to the exact visible
 attention ID, channel, reason, and presentation policy version. The caller supplies only attention ID,
-disposition, and timestamp; free-form prose and feedback on suppressed signals are rejected. This slice
-defines and validates records only—no feedback persistence or public CLI/MCP/UI surface exists yet.
+disposition, and timestamp; free-form prose and feedback on suppressed signals are rejected.
+
+### Implemented browser delivery and feedback
+
+The sanitized browser Inbox now compiles at most 12 items from the bounded attention review queue.
+It does not promote morning-briefing, immediate-notification, or suppressed decisions into that view.
+Each card contains an opaque UI ID, bounded title, summary, presentation explanation, and code-owned
+action labels. Finding IDs, attention IDs, state IDs, hashes, provider identifiers, and source excerpts
+are not sent to the browser.
+
+The page issues a short-lived, session-bound feedback capability only for the opaque attention items
+actually rendered. Same-origin feedback accepts the bounded attention dispositions and resolves the
+opaque subject back through the current `finding_attention_state`; stale, suppressed, missing, or
+policy-mismatched decisions fail closed. Clicking the review action records `useful`; dismissing records
+`irrelevant`. Other dispositions are supported by the domain/API contract for later UI controls.
+
+Schema 21 stores attention feedback separately from finding/proposal UI feedback. Records contain only
+the stable attention identity, signal type, disposition, presentation channel/reason/policy, a derived
+action-ladder level, and timestamp. Replayed feedback for the same exact presentation decision is
+idempotent. Aggregate metrics are available by signal type, presentation channel, and intervention
+level; no source material or provider identity is retained. This adds no model work, effect plan,
+approval, provider mutation, or vault write.
 
 ## Evolution of the common finding vocabulary
 

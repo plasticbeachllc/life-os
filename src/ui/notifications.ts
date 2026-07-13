@@ -5,6 +5,8 @@ import { CalendarStore } from "../calendar/store";
 import { OperationalStore } from "../db/store";
 import { schemaVersion } from "../db/schema";
 import { browserProposalReview } from "../effects/review-projection";
+import { compileAttentionReview } from "../attention/review";
+import { attentionSubjectUiId } from "./feedback";
 import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { buildContext, type ContextManifest } from "../context/builder";
@@ -33,6 +35,7 @@ export interface UiNotification {
   relativeTime: string;
   primaryAction?: { kind: "resolve" | "review" | "discuss"; label: string };
   secondaryAction?: { kind: "dismiss"; label: string };
+  feedbackSubjectKind?: "attention";
 }
 
 export interface UiNotificationSnapshot {
@@ -84,6 +87,30 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
     const notifications: UiNotification[] = [];
     const gmail = new GmailStore(store);
     const calendar = new CalendarStore(store);
+
+    const attentionState = store.getCurrentDerivedState("finding_attention_state");
+    if (attentionState) {
+      const attentionReview = compileAttentionReview(attentionState);
+      for (const item of attentionReview.items.slice(0, 12)) {
+        notifications.push({
+          id: attentionSubjectUiId({
+            attentionId: item.attentionId, presentationChannel: item.presentation.channel,
+            presentationReason: item.presentation.reason, policyVersion: item.presentation.policyVersion,
+          }),
+          kind: attentionKind(item.type),
+          category: "needs_you",
+          tone: "question",
+          status: "open",
+          title: compactText(item.title, 120),
+          summary: compactText(item.summary, 180),
+          detail: compactText(item.presentation.explanation, 180),
+          relativeTime: relativeTime(attentionReview.asOf, now),
+          primaryAction: { kind: "discuss", label: attentionActionLabel(item.interventions) },
+          secondaryAction: { kind: "dismiss", label: "Not relevant" },
+          feedbackSubjectKind: "attention",
+        });
+      }
+    }
 
     for (const proposal of store.listPendingProposals().slice(0, 10)) {
       notifications.push({
@@ -387,6 +414,15 @@ function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : "Unknown LifeOS error";
   const home = process.env.HOME;
   return compactText(home ? message.replaceAll(home, "~") : message, 180);
+}
+
+function attentionKind(type: string): UiNotification["kind"] {
+  return type.includes("commitment") || type.includes("deadline") ? "task" : "system";
+}
+
+function attentionActionLabel(interventions: Array<{ readiness: string }>): string {
+  return interventions.some((intervention) => intervention.readiness === "ready")
+    ? "Review next step" : "Discuss";
 }
 
 function arrayOfObjects(value: unknown): Array<Record<string, unknown>> {

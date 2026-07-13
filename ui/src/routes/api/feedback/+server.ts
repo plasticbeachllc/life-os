@@ -17,10 +17,10 @@ export const POST: RequestHandler = async ({ request, cookies, url }) => {
 		const record = value as Record<string, unknown>;
 		if (Object.keys(record).some((key) => !["subjectKind", "subjectUiId", "outcome", "csrfToken"].includes(key))
 			|| typeof record.csrfToken !== "string" || typeof record.subjectUiId !== "string"
-			|| !["finding", "proposal"].includes(String(record.subjectKind))
+			|| !["finding", "proposal", "attention"].includes(String(record.subjectKind))
 			|| !validateFeedbackCapability({ sessionId: currentChatSession(cookies),
 				token: record.csrfToken, subjectUiId: record.subjectUiId,
-				subjectKind: record.subjectKind as "finding" | "proposal" })) {
+				subjectKind: record.subjectKind as "finding" | "proposal" | "attention" })) {
 			throw new Error("feedback capability mismatch");
 		}
 		const root = repositoryRoot();
