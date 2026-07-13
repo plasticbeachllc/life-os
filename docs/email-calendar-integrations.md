@@ -22,7 +22,7 @@ existing desktop credential adapter. Neither integration can write to Google.
 Gmail ingestion and structured extraction remain separate from task creation:
 
 ```text
-IMPORTANT Gmail message
+IMPORTANT or SENT Gmail message
   -> deterministic ingestion and hashes
   -> metadata-only extraction work item
   -> exclusive bounded lease + exact refetch

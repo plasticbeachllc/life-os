@@ -1,4 +1,4 @@
-import type { GmailSourceAdapter } from "../adapters/gmail";
+import { matchesGmailSelection, type GmailSourceAdapter } from "../adapters/gmail";
 import { buildContext, type ContextCandidate, type ContextManifest } from "../context/builder";
 import type { OperationalStore } from "../db/store";
 import { normalizeGmailMessage } from "../gmail/normalizer";
@@ -45,7 +45,9 @@ export async function previewGmailExtractionContext(input: {
     throw new Error("Gmail work source changed; re-ingest before extraction preview");
   }
   const message = await input.adapter.getMessage(candidate.messageId);
-  if (!(message.labelIds ?? []).includes("IMPORTANT")) throw new Error("extraction candidate no longer has IMPORTANT label");
+  if (!matchesGmailSelection(message)) {
+    throw new Error("extraction candidate no longer has IMPORTANT or SENT label");
+  }
   const normalized = normalizeGmailMessage(message);
   if (normalized.contentHash !== candidate.contentHash) throw new Error("Gmail source hash changed; re-ingest before extraction preview");
   const thread = await input.adapter.getThread(candidate.threadId);

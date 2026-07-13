@@ -14,7 +14,7 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Token-budgeted context manifests, model routing, caching, and usage instrumentation.
 - Deterministic morning briefings with optional subscription-agent synthesis.
 - Approval-gated, hash-checked, atomic vault proposals with backup and undo.
-- Read-only Gmail ingestion for messages carrying Gmail's `IMPORTANT` system label.
+- Read-only Gmail ingestion for messages carrying Gmail's `IMPORTANT` or `SENT` system label.
 - Incremental, evidence-grounded Gmail extraction through a subscription-agent prepare/submit flow.
 - Stock Microsoft Presidio redaction of standard high-risk PII before email context reaches a model.
 - Sanitized extraction review with no Gmail IDs, hashes, headers, addresses, subjects, or source text.
@@ -35,7 +35,7 @@ rewrite journal prose, expose arbitrary shell access, or give a model unrestrict
 ## Architecture
 
 ```text
-Obsidian Markdown                    Gmail API (readonly, IMPORTANT)
+Obsidian Markdown                    Gmail API (readonly, IMPORTANT or SENT)
        |                                      |
        v                                      v
 deterministic indexing                   deterministic ingestion

@@ -19,7 +19,7 @@ export class GmailStore {
   constructor(private readonly store: OperationalStore) {}
 
   upsertAccount(input: {
-    accountId: string; emailAddress: string; selectionLabelId: "IMPORTANT";
+    accountId: string; emailAddress: string; selectionLabelId: "IMPORTANT_OR_SENT";
     historyId?: string; now: string;
   }): void {
     const db = this.store.open();

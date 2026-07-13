@@ -1,4 +1,7 @@
-import type { GmailApiThread, GmailSourceAdapter } from "../adapters/gmail";
+import {
+  GMAIL_SELECTION_ID, matchesGmailSelection,
+  type GmailApiThread, type GmailSourceAdapter,
+} from "../adapters/gmail";
 import type { OperationalStore } from "../db/store";
 import { GmailStore } from "../gmail/store";
 import { gmailThreadStateHash } from "../gmail/store";
@@ -9,7 +12,7 @@ import { runIngestion } from "../integrations/ingestion-run";
 export interface GmailIngestionReport {
   runId: string;
   accountId: string;
-  selector: "IMPORTANT";
+  selector: typeof GMAIL_SELECTION_ID;
   discovered: number;
   ingested: number;
   unchanged: number;
@@ -18,7 +21,7 @@ export interface GmailIngestionReport {
   modelCalls: 0;
 }
 
-export async function ingestImportantGmail(input: {
+export async function ingestSelectedGmail(input: {
   adapter: GmailSourceAdapter; store: OperationalStore; accountId: string; limit: number;
 }): Promise<GmailIngestionReport> {
   input.store.migrate();
@@ -28,11 +31,11 @@ export async function ingestImportantGmail(input: {
   const runId = newId("run");
   gmailStore.upsertAccount({
     accountId: input.accountId, emailAddress: profile.emailAddress,
-    selectionLabelId: "IMPORTANT", ...(profile.historyId ? { historyId: profile.historyId } : {}),
+    selectionLabelId: GMAIL_SELECTION_ID, ...(profile.historyId ? { historyId: profile.historyId } : {}),
     now: startedAt,
   });
   const report: GmailIngestionReport = {
-    runId, accountId: input.accountId, selector: "IMPORTANT",
+    runId, accountId: input.accountId, selector: GMAIL_SELECTION_ID,
     discovered: 0, ingested: 0, unchanged: 0, failed: 0, failures: [], modelCalls: 0,
   };
   return runIngestion({
@@ -44,7 +47,9 @@ export async function ingestImportantGmail(input: {
       for (const messageId of messageIds) {
         try {
           const message = await input.adapter.getMessage(messageId);
-          if (!(message.labelIds ?? []).includes("IMPORTANT")) throw new Error("selected message no longer has IMPORTANT label");
+          if (!matchesGmailSelection(message)) {
+            throw new Error("selected message no longer has IMPORTANT or SENT label");
+          }
           const normalized = normalizeGmailMessage(message);
           let threadContext = threadCache.get(message.threadId);
           if (!threadContext) {
@@ -87,7 +92,7 @@ async function listMessageIds(adapter: GmailSourceAdapter, limit: number): Promi
   const result: string[] = [];
   let pageToken: string | undefined;
   while (result.length < limit) {
-    const page = await adapter.listImportantMessageIds({
+    const page = await adapter.listSelectedMessageIds({
       maxResults: Math.min(500, limit - result.length), ...(pageToken ? { pageToken } : {}),
     });
     result.push(...page.messageIds.slice(0, limit - result.length));

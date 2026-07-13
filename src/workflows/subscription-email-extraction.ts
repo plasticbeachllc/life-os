@@ -61,7 +61,7 @@ export async function prepareSubscriptionEmailExtraction(input: {
     workflow: "gmail_extraction", subjectSourceId: input.accountId,
     leaseOwner, leaseDurationMs: 30 * 60 * 1000,
   });
-  if (!work) return { cached: false, empty: true, message: "No queued important messages." };
+  if (!work) return { cached: false, empty: true, message: "No queued selected Gmail messages." };
   let preview;
   try {
     preview = await previewGmailExtractionContext({ ...input, workItem: work });

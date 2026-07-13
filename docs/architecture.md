@@ -551,7 +551,7 @@ provider errors that may contain private payloads.
 | Provider | Selection | Retained | Explicitly not retained |
 | --- | --- | --- | --- |
 | Obsidian | Vault root and supported Markdown shapes | Paths, hashes, parsed canonical state | Rewritten journal prose; writes outside narrow tools |
-| Gmail | `IMPORTANT`, readonly account | Internal/provider identity where operationally required, timestamps, labels/state hashes, version metadata | Bodies, excerpts, raw headers, review-visible subjects/addresses |
+| Gmail | `IMPORTANT` or `SENT`, readonly account | Internal/provider identity where operationally required, timestamps, labels/state hashes, version metadata | Bodies, excerpts, raw headers, review-visible subjects/addresses |
 | Messages | Configured allowlist or explicit all-except mode; fixed local DB | Internal IDs, hashes, timestamps, direction, service, counts, cursors | Text, addresses, names, attachments, attributed archives |
 | Telegram | Explicit chat allowlist; bounded TDLib history | Internal IDs, hashes, timestamps, direction, cursors, availability | Message bodies and participant secrets unless separately approved |
 | Calendar | Primary calendar, bounded window, readonly | Title, optional location, status, time range, all-day state, hashes | Description, attendees, organizer, conference data, attachments, raw response |

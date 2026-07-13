@@ -35,7 +35,7 @@ required; all other rows run in the normal Bun suite.
 
 ## Live gates
 
-- Gmail IMPORTANT ingestion and extraction prepare using `gmail.readonly`.
+- Gmail `IMPORTANT`-or-`SENT` ingestion and extraction prepare using `gmail.readonly`.
 - Primary Calendar ingestion using `calendar.readonly`.
 - Messages configured-selection access and ingestion on macOS.
 - Telegram allowlisted TDLib ingestion when configured.

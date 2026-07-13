@@ -140,7 +140,7 @@ export function createLifeOsMcpServer(): McpServer {
   });
 
   server.registerTool("life_os_preview_email_extraction_context", {
-    description: "Refetch and hash-verify one queued IMPORTANT Gmail message, then return its bounded untrusted extraction context manifest. Makes no model call and creates no proposal.",
+    description: "Refetch and hash-verify one queued IMPORTANT or SENT Gmail message, then return its bounded untrusted extraction context manifest. Makes no model call and creates no proposal.",
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false },
   }, async () => {
@@ -154,11 +154,11 @@ export function createLifeOsMcpServer(): McpServer {
       adapter: new GmailRestAdapter(loadGmailAuthConfig(refreshToken)),
       store, accountId: config.gmailAccountId,
     });
-    return jsonResult(preview ?? { message: "No queued important messages." });
+    return jsonResult(preview ?? { message: "No queued selected Gmail messages." });
   });
 
   server.registerTool("life_os_prepare_email_extraction", {
-    description: "Prepare one audited, bounded IMPORTANT-message context for extraction by the subscription-authenticated host agent. Creates no proposal or vault write.",
+    description: "Prepare one audited, bounded IMPORTANT-or-SENT context for extraction by the subscription-authenticated host agent. Creates no proposal or vault write.",
     inputSchema: { model: z.string().min(1) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   }, async ({ model }) => {

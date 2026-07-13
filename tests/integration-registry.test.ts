@@ -27,11 +27,11 @@ const integration = (id: IngestIntegration["id"]): IngestIntegration => ({
 });
 
 test("Gmail ingestion details exclude provider identifiers and raw errors", () => {
-  const details = gmailIngestionDetails({ selector: "IMPORTANT", failures: [
+  const details = gmailIngestionDetails({ selector: "IMPORTANT_OR_SENT", failures: [
     { messageId: "provider-message-123", error: "Gmail API request failed (429): private detail" },
-    { messageId: "provider-message-456", error: "selected message no longer has IMPORTANT label" },
+    { messageId: "provider-message-456", error: "selected message no longer has IMPORTANT or SENT label" },
   ] });
-  expect(details).toEqual({ selector: "IMPORTANT", partialFailures: 2,
+  expect(details).toEqual({ selector: "IMPORTANT_OR_SENT", partialFailures: 2,
     failureCategories: { provider_request_failed: 1, selection_changed: 1 } });
   expect(JSON.stringify(details)).not.toContain("provider-message");
   expect(JSON.stringify(details)).not.toContain("private detail");

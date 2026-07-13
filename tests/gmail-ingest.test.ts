@@ -3,14 +3,17 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { GmailApiMessage, GmailApiThread, GmailSourceAdapter } from "../src/adapters/gmail";
+import {
+  GMAIL_SELECTION_QUERY, matchesGmailSelection,
+  type GmailApiMessage, type GmailApiThread, type GmailSourceAdapter,
+} from "../src/adapters/gmail";
 import { OperationalStore } from "../src/db/store";
 import { normalizeGmailMessage } from "../src/gmail/normalizer";
 import { GmailStore } from "../src/gmail/store";
 import { currentEmailExtractionIdentity } from "../src/gmail/extraction-contract";
 import { FindingStore } from "../src/findings/store";
 import { WorkRepository } from "../src/work/repository";
-import { ingestImportantGmail } from "../src/workflows/gmail-ingest";
+import { ingestSelectedGmail } from "../src/workflows/gmail-ingest";
 import { previewGmailExtractionContext } from "../src/workflows/gmail-extraction-preview";
 import {
   prepareSubscriptionEmailExtraction,
@@ -46,7 +49,7 @@ function message(input: {
 class FakeGmailAdapter implements GmailSourceAdapter {
   threadCalls = 0;
   constructor(readonly selected: GmailApiMessage, readonly thread: GmailApiThread) {}
-  async listImportantMessageIds(): Promise<{ messageIds: string[] }> {
+  async listSelectedMessageIds(): Promise<{ messageIds: string[] }> {
     return { messageIds: [this.selected.id] };
   }
   async getMessage(): Promise<GmailApiMessage> {
@@ -71,21 +74,21 @@ test("normalizer separates newly authored text from quoted history", () => {
   expect(normalized.contentHash).toStartWith("sha256:");
 });
 
-test("IMPORTANT ingestion persists metadata and hashes without bodies, then skips unchanged input", async () => {
+test("IMPORTANT-or-SENT ingestion persists metadata and hashes without bodies, then skips unchanged input", async () => {
   const selected = message({ id: "message_2", body: "Please send the checklist." });
   const earlier = message({ id: "message_1", body: "Here is the background.", labels: ["INBOX"], internalDate: "500" });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [earlier, selected] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-")), "store.db"));
 
-  const first = await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
-  expect(first).toMatchObject({ selector: "IMPORTANT", discovered: 1, ingested: 1, unchanged: 0, failed: 0, modelCalls: 0 });
+  const first = await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
+  expect(first).toMatchObject({ selector: "IMPORTANT_OR_SENT", discovered: 1, ingested: 1, unchanged: 0, failed: 0, modelCalls: 0 });
   expect(new WorkRepository(store).status().byState.pending).toBe(1);
   expect(store.countRows("gmail_messages")).toBe(1);
   expect(store.countRows("gmail_message_versions")).toBe(1);
   expect(store.countRows("gmail_threads")).toBe(1);
   expect(adapter.threadCalls).toBe(1);
 
-  const second = await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  const second = await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   expect(second).toMatchObject({ ingested: 0, unchanged: 1, failed: 0 });
   expect(store.countRows("work_items")).toBe(1);
   expect(store.countRows("gmail_message_versions")).toBe(1);
@@ -96,7 +99,7 @@ test("IMPORTANT ingestion persists metadata and hashes without bodies, then skip
     selected,
     message({ id: "message_3", body: "Actually, this is resolved.", labels: ["INBOX"], internalDate: "1500" }),
   ];
-  const third = await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  const third = await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   expect(third).toMatchObject({ ingested: 1, unchanged: 0, failed: 0 });
   expect(store.countRows("gmail_message_versions")).toBe(1);
 
@@ -109,14 +112,32 @@ test("IMPORTANT ingestion persists metadata and hashes without bodies, then skip
   }
 });
 
-test("ingestion rejects a message that lost the IMPORTANT system label", async () => {
+test("selection is the exact IMPORTANT-or-SENT union and rejects messages outside it", async () => {
+  expect(GMAIL_SELECTION_QUERY).toBe("{label:important label:sent}");
+  expect(matchesGmailSelection(message({ id: "important", body: "", labels: ["IMPORTANT"] }))).toBe(true);
+  expect(matchesGmailSelection(message({ id: "sent", body: "", labels: ["SENT"] }))).toBe(true);
+  expect(matchesGmailSelection(message({ id: "both", body: "", labels: ["IMPORTANT", "SENT"] }))).toBe(true);
   const selected = message({ id: "message_3", body: "No longer important", labels: ["INBOX"] });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-label-")), "store.db"));
-  const report = await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  const report = await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   expect(report.failed).toBe(1);
-  expect(report.failures[0]?.error).toContain("IMPORTANT");
+  expect(report.failures[0]?.error).toContain("IMPORTANT or SENT");
   expect(store.countRows("gmail_messages")).toBe(0);
+});
+
+test("SENT-only messages are ingested and remain eligible for extraction", async () => {
+  const selected = message({
+    id: "message_sent_only", body: "I will send the revised draft tomorrow.", labels: ["SENT"],
+  });
+  const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-sent-")), "store.db"));
+
+  const report = await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
+  expect(report).toMatchObject({ selector: "IMPORTANT_OR_SENT", discovered: 1, ingested: 1, failed: 0 });
+  const preview = await previewGmailExtractionContext({ adapter, store, accountId: "me" });
+  expect(preview).toMatchObject({ messageId: "message_sent_only", retainedBody: false });
+  expect(JSON.stringify(preview?.manifest.includedItems)).toContain('"message_type":"sent"');
 });
 
 test("extraction preview is bounded, flags untrusted instructions, and retains no body", async () => {
@@ -131,7 +152,7 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [prior, selected] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-preview-")), "store.db"));
-  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
 
   const preview = await previewGmailExtractionContext({ adapter, store, accountId: "me" });
   expect(preview?.modelCalls).toBe(0);
@@ -184,7 +205,7 @@ test("extraction preview distinguishes received, draft, and sent thread messages
   });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected, draft, sent] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-message-types-")), "store.db"));
-  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
 
   const preview = await previewGmailExtractionContext({ adapter, store, accountId: "me" });
   const context = JSON.stringify(preview?.manifest.includedItems);
@@ -198,7 +219,7 @@ test("extraction preview rejects source drift until re-ingestion", async () => {
   const selected = message({ id: "message_stale", body: "Original content" });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-preview-stale-")), "store.db"));
-  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   selected.payload!.body!.data = encoded("Changed content");
   expect(previewGmailExtractionContext({ adapter, store, accountId: "me" })).rejects.toThrow("re-ingest");
 });
@@ -207,7 +228,7 @@ test("subscription extraction validates evidence and persists no proposal or bod
   const selected = message({ id: "message_extract", body: "Please send the checklist by Friday." });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-extract-")), "store.db"));
-  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   const prepared = await prepareSubscriptionEmailExtraction({
     adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
 });
@@ -307,7 +328,7 @@ test("validated outgoing relation closes a production reply signal", async () =>
   });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-relations-")), "store.db"));
   const incomingAdapter = new FakeGmailAdapter(incoming, { id: "thread_1", messages: [incoming] });
-  await ingestImportantGmail({ adapter: incomingAdapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter: incomingAdapter, store, accountId: "me", limit: 10 });
   const firstPrepared = await prepareSubscriptionEmailExtraction({
     adapter: incomingAdapter, store, accountId: "me",
     model: "subscription-agent", policyVersion: "sha256:policy",
@@ -329,10 +350,10 @@ test("validated outgoing relation closes a production reply signal", async () =>
 
   const outgoing = message({
     id: "message_relation_response", body: "Confirmed—the proposed time works.",
-    labels: ["IMPORTANT", "SENT"], internalDate: "2000",
+    labels: ["SENT"], internalDate: "2000",
   });
   const outgoingAdapter = new FakeGmailAdapter(outgoing, { id: "thread_1", messages: [incoming, outgoing] });
-  await ingestImportantGmail({ adapter: outgoingAdapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter: outgoingAdapter, store, accountId: "me", limit: 10 });
   const secondPrepared = await prepareSubscriptionEmailExtraction({
     adapter: outgoingAdapter, store, accountId: "me",
     model: "subscription-agent", policyVersion: "sha256:policy",
@@ -383,7 +404,7 @@ test("relation preparation rejects a prior finding dismissed before submit", asy
   const incoming = message({ id: "message_stale_relation_request", body: "Please confirm receipt." });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-stale-relation-")), "store.db"));
   const firstAdapter = new FakeGmailAdapter(incoming, { id: "thread_1", messages: [incoming] });
-  await ingestImportantGmail({ adapter: firstAdapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter: firstAdapter, store, accountId: "me", limit: 10 });
   const firstPrepared = await prepareSubscriptionEmailExtraction({
     adapter: firstAdapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
   });
@@ -399,9 +420,9 @@ test("relation preparation rejects a prior finding dismissed before submit", asy
   const findingStore = new FindingStore(store);
   const target = findingStore.review().findings[0]!;
   const outgoing = message({ id: "message_stale_relation_response", body: "Receipt confirmed.",
-    labels: ["IMPORTANT", "SENT"], internalDate: "2000" });
+    labels: ["SENT"], internalDate: "2000" });
   const secondAdapter = new FakeGmailAdapter(outgoing, { id: "thread_1", messages: [incoming, outgoing] });
-  await ingestImportantGmail({ adapter: secondAdapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter: secondAdapter, store, accountId: "me", limit: 10 });
   const prepared = await prepareSubscriptionEmailExtraction({
     adapter: secondAdapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
   });
@@ -421,12 +442,12 @@ test("subscription extraction rejects source drift", async () => {
   const selected = message({ id: "message_extract_stale", body: "Original request" });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-extract-stale-")), "store.db"));
-  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   const prepared = await prepareSubscriptionEmailExtraction({
     adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
   });
   selected.payload!.body!.data = encoded("Changed request");
-  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   await expect(submitSubscriptionEmailExtraction({
     store, accountId: "me", callId: String(prepared.callId),
     threadStateHash: String(prepared.threadStateHash), policyVersion: "sha256:policy",
@@ -443,7 +464,7 @@ test("extraction, findings, model completion, and work completion roll back toge
   const selected = message({ id: "message_atomic", body: "Please confirm receipt." });
   const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
   const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-atomic-")), "store.db"));
-  await ingestImportantGmail({ adapter, store, accountId: "me", limit: 10 });
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
   const prepared = await prepareSubscriptionEmailExtraction({
     adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
   });

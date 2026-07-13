@@ -75,7 +75,7 @@ architecture branch should be treated as the incoming baseline for planning purp
 
 | Layer | Current behavior | Limitation |
 | --- | --- | --- |
-| Provider selection | Gmail ingests `IMPORTANT`; Messages uses configured selection; Telegram uses an allowlist; Calendar reads the primary calendar | Selection is provider-specific and does not express user relevance consistently |
+| Provider selection | Gmail ingests `IMPORTANT` or `SENT`; Messages uses configured selection; Telegram uses an allowlist; Calendar reads the primary calendar | Selection is provider-specific and does not express user relevance consistently |
 | Extraction and findings | Gmail and Messages output evidence-grounded items that project into immutable common findings | The existing kind vocabulary is intentionally narrow and does not encode higher-order attention judgments |
 | Finding lifecycle | Status events support active, dismissed, superseded, converted, and reactivated behavior | Automatic resolution and cross-source semantic matching remain deliberately unimplemented |
 | Deterministic triage | Messages suppresses verification codes and routine notices and recognizes pickup alerts | Deterministic triage does not yet project into common findings because its evidence contract differs |
