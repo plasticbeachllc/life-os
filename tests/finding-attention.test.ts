@@ -32,6 +32,14 @@ test("active findings rebuild into stable attention and chief-of-staff projectio
       suggested_interventions: [expect.objectContaining({ kind: "create_task", readiness: "ready" })],
     }),
   ]);
+  expect(first.content.presentation).toEqual([
+    expect.objectContaining({
+      channel: "morning_briefing", reason: "high_priority_daily_attention",
+    }),
+  ]);
+  expect(first.inputProvenance).toContainEqual({
+    type: "presentation_policy", id: "current", hash: "attention-presentation-v1",
+  });
 
   const overdueFindingId = String((first.content.overdue_finding_ids as string[])[0]);
   const chief = rebuildChiefOfStaffState({ store, now });
@@ -42,6 +50,8 @@ test("active findings rebuild into stable attention and chief-of-staff projectio
     expect.objectContaining({
       type: "commitment_at_risk", summary: "Submit the renewal form",
       finding_ids: [overdueFindingId],
+      presentation_channel: "morning_briefing",
+      presentation_reason: "high_priority_daily_attention",
     }),
   ]);
   expect(chief.content.suggested_focus).toContain("Resolve 1 overdue commitment(s).");
@@ -86,6 +96,17 @@ test("a matching canonical task invalidates and resolves untracked commitment at
       type: "untracked_user_commitment", summary: "Submit the renewal form",
     }),
   ]);
+  expect(first.content.presentation).toEqual([
+    expect.objectContaining({ channel: "review_queue", reason: "reviewable_intervention" }),
+  ]);
+  const chief = rebuildChiefOfStaffState({ store, now });
+  expect(chief.content.active_attention_signals).toEqual([
+    expect.objectContaining({
+      type: "untracked_user_commitment", presentation_channel: "review_queue",
+    }),
+  ]);
+  const briefing = generateMorningBriefing({ store, now }).state.content as unknown as MorningBriefing;
+  expect(briefing.attention).toEqual([]);
 
   store.saveDerivedState({
     stateId: "state_task_renewal", stateType: "task_state", entityId: "task_renewal",
@@ -105,6 +126,7 @@ test("a matching canonical task invalidates and resolves untracked commitment at
   expect(resolved.content).toMatchObject({
     signal_count: 0,
     signals: [],
+    presentation: [],
     suppressed: {
       tracked_commitments: 1, low_confidence_findings: 0,
       missing_communication_context: 1, unsupported_findings: 1,

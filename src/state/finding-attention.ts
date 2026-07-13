@@ -2,6 +2,11 @@ import type { DerivedStateRecord, OperationalStore } from "../db/store";
 import { FindingStore, type ActiveFindingProjectionInput } from "../findings/store";
 import { resolveAttention } from "../attention/resolver";
 import type { AttentionSignal } from "../attention/contract";
+import {
+  ATTENTION_PRESENTATION_POLICY_VERSION,
+  routeAttentionPresentation,
+  type PresentationDecision,
+} from "../attention/presentation";
 import { sha256Value } from "../util/hashing";
 import { materializeProjection, type ProjectionBuilder } from "./projection-contract";
 
@@ -25,6 +30,7 @@ export interface FindingAttentionState {
   overdue_finding_ids: string[];
   signal_count: number;
   signals: AttentionSignal[];
+  presentation: PresentationDecision[];
   suppressed: {
     tracked_commitments: number;
     low_confidence_findings: number;
@@ -42,10 +48,11 @@ interface FindingAttentionInput {
 }
 
 export const findingAttentionBuilder: ProjectionBuilder<FindingAttentionInput, FindingAttentionState> = {
-  name: "finding-attention", version: "v3", stateType: "finding_attention_state",
+  name: "finding-attention", version: "v4", stateType: "finding_attention_state",
   entityId: () => undefined,
   inputs: ({ now, active, tasks }) => [
     { type: "calendar_date", id: "current", hash: now.toISOString().slice(0, 10) },
+    { type: "presentation_policy", id: "current", hash: ATTENTION_PRESENTATION_POLICY_VERSION },
     ...active.map((finding) => ({
       type: "active_finding", id: finding.findingId,
       hash: sha256Value([
@@ -65,12 +72,14 @@ export const findingAttentionBuilder: ProjectionBuilder<FindingAttentionInput, F
       .filter((finding) => finding.due_date !== null && finding.due_date < date)
       .map((finding) => finding.finding_id);
     const resolution = resolveAttention({ activeFindings: active, tasks, now });
+    const presentation = routeAttentionPresentation({ signals: resolution.signals, now });
     return {
       as_of: now.toISOString(), open_loop_count: openLoops.length,
       commitment_count: commitments.length, overdue_count: overdueFindingIds.length,
       open_loops: openLoops, commitments, overdue_finding_ids: overdueFindingIds,
       signal_count: resolution.signals.length,
       signals: resolution.signals,
+      presentation,
       suppressed: resolution.suppressed,
     };
   },

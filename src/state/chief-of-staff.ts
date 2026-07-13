@@ -21,6 +21,8 @@ export interface ChiefOfStaffState {
     impact: string;
     urgency: string;
     finding_ids: string[];
+    presentation_channel: string;
+    presentation_reason: string;
   }>;
   unresolved_ambiguities: string[];
   suggested_focus: string[];
@@ -38,7 +40,7 @@ interface ChiefProjectionInput {
 }
 
 export const chiefOfStaffBuilder: ProjectionBuilder<ChiefProjectionInput, ChiefOfStaffState> = {
-  name: "chief-of-staff", version: "v5", stateType: "chief_of_staff_state",
+  name: "chief-of-staff", version: "v6", stateType: "chief_of_staff_state",
   entityId: () => undefined,
   inputs: (input) => [
     { type: "calendar_date", id: "current", hash: localDate(input.now) },
@@ -92,6 +94,9 @@ function buildChiefContent(input: ChiefProjectionInput): ChiefOfStaffState {
   const findingOpenLoops = objects(input.findingAttention?.content.open_loops);
   const findingCommitments = objects(input.findingAttention?.content.commitments);
   const attentionSignals = objects(input.findingAttention?.content.signals).slice(0, 20);
+  const presentationById = new Map(objects(input.findingAttention?.content.presentation).map((decision) => [
+    String(decision.attention_id ?? ""), decision,
+  ]));
   const overdueFindingIds = array(input.findingAttention?.content.overdue_finding_ids).map(String);
   const priorities = input.projects
     .filter((state) => state.content.status === "active" && array(state.content.next_actions).length > 0)
@@ -125,6 +130,8 @@ function buildChiefContent(input: ChiefProjectionInput): ChiefOfStaffState {
       impact: String(signal.impact ?? ""),
       urgency: String(signal.urgency ?? ""),
       finding_ids: array(signal.finding_ids).map(String),
+      presentation_channel: String(presentationById.get(String(signal.attention_id ?? ""))?.channel ?? "suppress"),
+      presentation_reason: String(presentationById.get(String(signal.attention_id ?? ""))?.reason ?? "low_value_no_action"),
     })).filter((signal) => signal.attention_id && signal.type && signal.summary),
     unresolved_ambiguities: input.unresolvedAmbiguities,
     suggested_focus: suggestedFocus(

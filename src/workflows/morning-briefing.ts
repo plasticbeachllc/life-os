@@ -41,7 +41,7 @@ interface MorningBriefingInput {
 }
 
 export const morningBriefingBuilder: ProjectionBuilder<MorningBriefingInput, MorningBriefing> = {
-  name: "morning-briefing", version: "v4", stateType: "daily_state",
+  name: "morning-briefing", version: "v5", stateType: "daily_state",
   entityId: ({ date }) => date,
   inputs: (input) => [
     { type: "calendar_date", id: "briefing", hash: input.date },
@@ -95,14 +95,16 @@ function buildMorningBriefing(input: MorningBriefingInput): MorningBriefing {
       summary: String(item.reason ?? "Current priority"),
       evidenceIds: strings(item.evidence_ids ?? item.entity_id),
     })),
-    attention: objects(chiefContent.active_attention_signals).slice(0, 8).map((signal) => ({
-      summary: `${String(signal.type ?? "attention").replaceAll("_", " ")}: ${String(signal.summary ?? "")}`,
-      evidenceIds: [
-        String(signal.attention_id ?? ""),
-        ...strings(signal.finding_ids),
-        input.findingAttention?.stateId ?? "",
-      ].filter(Boolean),
-    })),
+    attention: objects(chiefContent.active_attention_signals)
+      .filter((signal) => signal.presentation_channel === "morning_briefing")
+      .slice(0, 8).map((signal) => ({
+        summary: `${String(signal.type ?? "attention").replaceAll("_", " ")}: ${String(signal.summary ?? "")}`,
+        evidenceIds: [
+          String(signal.attention_id ?? ""),
+          ...strings(signal.finding_ids),
+          input.findingAttention?.stateId ?? "",
+        ].filter(Boolean),
+      })),
     overdue: attentionItems(
       strings(chiefContent.overdue_commitments), taskById, findingById,
       input.findingAttention?.stateId, "Overdue",

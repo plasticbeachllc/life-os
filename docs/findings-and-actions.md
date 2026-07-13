@@ -137,6 +137,31 @@ therefore continues to avoid response and automatic-resolution claims. Once the 
 defines that representation, its content hashes and validator versions must become explicit projection
 inputs before these signals are enabled.
 
+### Implemented presentation policy
+
+The deterministic presentation router uses four channels: `suppress`, `review_queue`,
+`morning_briefing`, and `immediate_notification`. Every decision includes a reason, explanation, and
+`attention-presentation-v1` policy identity.
+
+- Signals below `0.75` confidence are suppressed.
+- High-impact or today-urgent signals enter the morning briefing.
+- Medium-impact signals and signals with a reviewable intervention enter the review queue.
+- Low-impact, non-urgent signals with no reviewable intervention are suppressed.
+- Immediate notification is disabled by default. Even when explicitly enabled, it requires a
+  high-impact, today-urgent signal plus a distinct validated safety-risk or irreversible-loss context
+  with at least `0.9` confidence and an effective time no more than four hours away.
+
+The attention projection records presentation decisions and includes the policy version in its
+invalidation identity. Chief-of-staff state carries the decision with each signal. The deterministic
+morning briefing includes only `morning_briefing` signals; review-queue and suppressed signals are not
+silently promoted into the daily briefing. No production path currently supplies or enables immediate
+interruption contexts.
+
+The redacted table-driven evaluation corpus covers tracked, untracked, overdue, ambiguous, duplicate,
+response-needed, response-overdue, responded, resolved, low-confidence, and explicitly validated
+immediate-interruption cases. It is the initial behavioral specification for future architecture and UI
+integration.
+
 ## Evolution of the common finding vocabulary
 
 Extraction should remain provider-local and factual. The architecture branch's existing common
