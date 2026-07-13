@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { loadConfig } from "../config";
 import { CalendarStore } from "../calendar/store";
 import { OperationalStore } from "../db/store";
+import { schemaVersion } from "../db/schema";
 import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { buildContext, type ContextManifest } from "../context/builder";
@@ -70,8 +71,19 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
     }
 
     const store = new OperationalStore(config.databasePath);
-    if (store.getSchemaVersion() === undefined) {
-      return { snapshot: setupSnapshot(now, "LifeOS needs a database migration before the Inbox can load."), summaryCandidates: [] };
+    const currentSchemaVersion = store.getSchemaVersion();
+    if (currentSchemaVersion === undefined) {
+      return {
+        snapshot: setupSnapshot(now, "LifeOS needs an initialized operational database before the Inbox can load."),
+        summaryCandidates: [],
+      };
+    }
+    if (currentSchemaVersion !== schemaVersion) {
+      return {
+        snapshot: setupSnapshot(now,
+          `LifeOS prototype database schema ${currentSchemaVersion} must be reset for schema ${schemaVersion}.`),
+        summaryCandidates: [],
+      };
     }
 
     const notifications: UiNotification[] = [];
@@ -331,7 +343,7 @@ function setupSnapshot(now: Date, summary: string): UiNotificationSnapshot {
       status: "open",
       title: "Finish LifeOS setup",
       summary,
-      detail: "LifeOS needs its initial health check and database setup before the Inbox can connect.",
+      detail: "Run doctor. During prototyping, delete any incompatible operational database and rebuild it from canonical sources.",
       relativeTime: "Setup required",
       primaryAction: { kind: "discuss", label: "Ask how to finish" },
     }],

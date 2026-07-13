@@ -26,7 +26,8 @@ IMPORTANT Gmail message
   -> deterministic ingestion and hashes
   -> bounded subscription-agent extraction
   -> sanitized extraction review
-  -> user selects extraction ID + item index
+  -> deterministic common finding projection
+  -> user selects active finding
   -> yellow task proposal
   -> exact preview and target-hash validation
   -> short-lived approval token
@@ -35,23 +36,23 @@ IMPORTANT Gmail message
 
 ### Proposal construction
 
-`proposeEmailExtractionTask` accepts only an extraction ID and item index. It rejects missing items,
-non-user ownership, and kinds other than `explicit_request`, `open_loop`, or `user_commitment`.
+`proposeFindingTask` accepts only a finding ID. It rejects missing or inactive findings, non-user
+ownership, and kinds other than `explicit_request`, `open_loop`, or `user_commitment`.
 
 Life OS, not the agent, derives:
 
-- task text from the validated extraction statement;
+- task text from the validated finding statement;
 - due date from the structured extraction;
 - a stable `task_*` ID;
 - the fixed target `00 Inbox/Inbox.md`;
-- source and target hashes;
+- immutable finding-content and target hashes;
 - the exact review preview.
 
 The agent cannot supply a path, patch, task body, due date, or task ID.
 
 ### Application
 
-`applyEmailTaskProposal` rechecks all important boundaries after approval:
+`applyFindingTaskProposal` rechecks all important boundaries after approval:
 
 - proposal workflow and tool identity;
 - approved lifecycle state;
@@ -59,11 +60,14 @@ The agent cannot supply a path, patch, task body, due date, or task ID.
 - deterministic `create_task` policy decision;
 - vault-root containment;
 - unchanged target hash;
+- active finding status and unchanged finding content hash;
 - task-line and task-ID shape.
 
 It copies the current inbox to the external backup directory, writes a temporary sibling file, renames
 it atomically, records before/after hashes, and creates an undo record. The appended provenance comment
-links the stable task to the extraction without retaining an email body.
+links the stable task to the finding without retaining an email body. Successful application records a
+`converted` finding status in the same SQLite transaction as action and undo metadata; undo appends an
+`active` status event.
 
 ## Calendar
 
@@ -127,7 +131,7 @@ The integration adds three tools:
 | --- | --- |
 | `life_os_calendar_status` | Metadata-only configured/event/unprocessed counts. |
 | `life_os_ingest_calendar` | Read-only provider ingestion and compact-state rebuild. |
-| `life_os_propose_email_task` | Creates a pending fixed-inbox proposal; does not write. |
+| `life_os_propose_finding_task` | Creates a pending fixed-inbox proposal from one eligible active finding; does not write. |
 
 Task application continues through the shared tools:
 
@@ -145,7 +149,7 @@ Schema version 8 adds:
 - `calendar_ingestion_runs`
 - `calendar_events`
 
-Email task proposals reuse the existing runs, proposals, actions, approvals, authorization tokens,
+Finding task proposals reuse the existing runs, proposals, actions, approvals, authorization tokens,
 action results, backups, and undo records.
 
 ## Verification
@@ -153,8 +157,8 @@ action results, backups, and undo records.
 The live primary-calendar check completed with five changed events on the first run and five unchanged
 events on the second run. Calendar status reported zero unprocessed events.
 
-The first email-task proposal was approved as an end-to-end test. It appended a Walmart+ decision task,
-created an external backup, recorded extraction provenance, and rebuilt into compact task state without
+The first finding-task proposal was approved as an end-to-end test. It appended a decision task,
+created an external backup, recorded finding provenance, and rebuilt into compact task state without
 validation errors.
 
 Automated coverage includes incremental Calendar replay, compact-state non-retention, fixed task target,
@@ -165,5 +169,5 @@ provenance parsing, and the MCP tool allowlist.
 
 - Reconcile events that disappear from the active window without returning as canceled records.
 - Record failed Calendar ingestion runs after a run has started.
-- Add explicit review feedback for proposed email tasks before using acceptance-rate metrics.
+- Add explicit review feedback for proposed finding tasks before using acceptance-rate metrics.
 - Add provider sync tokens only if measured API volume justifies them.

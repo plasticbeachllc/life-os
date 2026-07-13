@@ -32,7 +32,7 @@ test("MCP server handshakes and exposes only narrow Life OS tools", async () => 
       "life_os_prepare_undo",
       "life_os_preview_email_extraction_context",
       "life_os_preview_imessage_extraction_context",
-      "life_os_propose_email_task",
+      "life_os_propose_finding_task",
       "life_os_rebuild_state",
       "life_os_review_email_extractions",
       "life_os_review_imessage_extractions",

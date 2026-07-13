@@ -37,6 +37,10 @@ export interface DerivedStateRecord {
   content: Record<string, unknown>;
   sourceHashes: string[];
   generationMethod: string;
+  builderName?: string;
+  builderVersion?: string;
+  inputProvenance?: Array<{ type: string; id: string; hash: string }>;
+  dependencyHash?: string;
   promptVersion?: string;
   model?: string;
   createdAt: string;
@@ -125,6 +129,19 @@ export class OperationalStore {
     const db = this.open();
     try {
       db.transaction(() => {
+        const hasMigrations = Boolean(db.query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+        ).get());
+        if (hasMigrations) {
+          const current = db.query<{ version: number | null }, []>(
+            "SELECT MAX(version) AS version FROM schema_migrations",
+          ).get()?.version;
+          if (current !== null && current !== undefined && current !== schemaVersion) {
+            throw new Error(
+              `prototype database schema ${current} is incompatible with ${schemaVersion}; delete the operational database and rebuild`,
+            );
+          }
+        }
         for (const statement of ddl) db.exec(statement);
         db.query("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)")
           .run(schemaVersion, new Date().toISOString());
@@ -326,6 +343,9 @@ export class OperationalStore {
   markProposalApplied(input: {
     proposalId: string; actionId: string; appliedAt: string; targetHash: string;
     backupPath: string; beforeHash: string; afterHash: string;
+    findingConversion?: {
+      eventId: string; findingId: string; expectedContentHash: string; taskId: string;
+    };
   }): void {
     const db = this.open();
     try {
@@ -336,6 +356,24 @@ export class OperationalStore {
           .run(input.appliedAt, input.proposalId);
         db.query("INSERT INTO undo_records (action_id, target_path, backup_path, before_hash, after_hash, created_at) VALUES (?, (SELECT target_path FROM actions WHERE action_id = ?), ?, ?, ?, ?)")
           .run(input.actionId, input.actionId, input.backupPath, input.beforeHash, input.afterHash, input.appliedAt);
+        if (input.findingConversion) {
+          const finding = db.query<{ content_hash: string; status: string }, [string]>(`
+            SELECT finding.content_hash,
+              (SELECT event.status FROM finding_status_events event
+               WHERE event.finding_id = finding.finding_id
+               ORDER BY event.created_at DESC, event.event_id DESC LIMIT 1) AS status
+            FROM findings finding WHERE finding.finding_id = ?
+          `).get(input.findingConversion.findingId);
+          if (!finding || finding.content_hash !== input.findingConversion.expectedContentHash
+            || finding.status !== "active") {
+            throw new Error("finding changed before task conversion was recorded");
+          }
+          db.query(`INSERT INTO finding_status_events (
+            event_id, finding_id, status, related_entity_type, related_entity_id, created_at
+          ) VALUES (?, ?, 'converted', 'task', ?, ?)`)
+            .run(input.findingConversion.eventId, input.findingConversion.findingId,
+              input.findingConversion.taskId, input.appliedAt);
+        }
       })();
     } finally {
       db.close();
@@ -364,8 +402,24 @@ export class OperationalStore {
     const db = this.open();
     try {
       db.transaction(() => {
+        const findingTask = db.query<{
+          tool_name: string; source_id: string; arguments_json: string;
+        }, [string]>(`
+          SELECT action.tool_name, proposal.source_id, action.arguments_json
+          FROM actions action JOIN proposals proposal ON proposal.run_id = action.run_id
+          WHERE action.action_id = ?
+        `).get(actionId);
         db.query("UPDATE undo_records SET undone_at = ? WHERE action_id = ? AND undone_at IS NULL").run(undoneAt, actionId);
         db.query("UPDATE actions SET lifecycle_state = 'undone' WHERE action_id = ?").run(actionId);
+        if (findingTask?.tool_name === "append_finding_task") {
+          const args = JSON.parse(findingTask.arguments_json) as Record<string, unknown>;
+          const taskId = typeof args.taskId === "string" ? args.taskId : undefined;
+          if (!taskId) throw new Error("finding task action lacks a stable task ID");
+          db.query(`INSERT INTO finding_status_events (
+            event_id, finding_id, status, related_entity_type, related_entity_id, reason, created_at
+          ) VALUES (?, ?, 'active', 'task', ?, 'task creation undone', ?)`)
+            .run(`findingevent_undo_${actionId}`, findingTask.source_id, taskId, undoneAt);
+        }
       })();
     } finally {
       db.close();
@@ -393,8 +447,9 @@ export class OperationalStore {
         db.query(
           `INSERT INTO derived_states (
              state_id, state_type, entity_id, state_version, content_json,
-             source_hashes_json, generation_method, prompt_version, model, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             source_hashes_json, generation_method, builder_name, builder_version,
+             input_provenance_json, dependency_hash, prompt_version, model, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           record.stateId,
           record.stateType,
@@ -403,6 +458,10 @@ export class OperationalStore {
           JSON.stringify(record.content),
           JSON.stringify(record.sourceHashes),
           record.generationMethod,
+          record.builderName ?? record.generationMethod,
+          record.builderVersion ?? "legacy",
+          JSON.stringify(record.inputProvenance ?? []),
+          record.dependencyHash ?? record.sourceHashes[0] ?? record.stateId,
           record.promptVersion ?? null,
           record.model ?? null,
           record.createdAt,
@@ -419,6 +478,7 @@ export class OperationalStore {
       const row = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string, string | null]>(
         `SELECT * FROM derived_states
@@ -434,6 +494,9 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}),
         createdAt: row.created_at,
@@ -449,6 +512,7 @@ export class OperationalStore {
       const rows = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string]>(
         "SELECT * FROM derived_states WHERE state_type = ? AND superseded_at IS NULL ORDER BY entity_id",
@@ -459,6 +523,9 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}), createdAt: row.created_at,
       }));
@@ -473,6 +540,7 @@ export class OperationalStore {
       const row = db.query<{
         state_id: string; state_type: string; entity_id: string | null; state_version: number;
         content_json: string; source_hashes_json: string; generation_method: string;
+        builder_name: string; builder_version: string; input_provenance_json: string; dependency_hash: string;
         prompt_version: string | null; model: string | null; created_at: string;
       }, [string]>("SELECT * FROM derived_states WHERE state_id = ?").get(stateId);
       if (!row) return undefined;
@@ -482,9 +550,48 @@ export class OperationalStore {
         content: JSON.parse(row.content_json) as Record<string, unknown>,
         sourceHashes: JSON.parse(row.source_hashes_json) as string[],
         generationMethod: row.generation_method,
+        builderName: row.builder_name, builderVersion: row.builder_version,
+        inputProvenance: JSON.parse(row.input_provenance_json) as Array<{ type: string; id: string; hash: string }>,
+        dependencyHash: row.dependency_hash,
         ...(row.prompt_version ? { promptVersion: row.prompt_version } : {}),
         ...(row.model ? { model: row.model } : {}), createdAt: row.created_at,
       };
+    } finally {
+      db.close();
+    }
+  }
+
+  retireDerivedStates(input: {
+    stateType: string; keepEntityIds: string[]; retiredAt: string;
+  }): number {
+    const db = this.open();
+    try {
+      const current = db.query<{ entity_id: string | null }, [string]>(
+        "SELECT entity_id FROM derived_states WHERE state_type = ? AND superseded_at IS NULL",
+      ).all(input.stateType);
+      const keep = new Set(input.keepEntityIds);
+      const retired = current.filter((row) => row.entity_id !== null && !keep.has(row.entity_id));
+      const update = db.query(
+        "UPDATE derived_states SET superseded_at = ? WHERE state_type = ? AND entity_id = ? AND superseded_at IS NULL",
+      );
+      db.transaction(() => {
+        for (const row of retired) update.run(input.retiredAt, input.stateType, row.entity_id!);
+      })();
+      return retired.length;
+    } finally {
+      db.close();
+    }
+  }
+
+  retireDerivedState(input: {
+    stateType: string; entityId: string; retiredAt: string;
+  }): boolean {
+    const db = this.open();
+    try {
+      const result = db.query(
+        "UPDATE derived_states SET superseded_at = ? WHERE state_type = ? AND entity_id = ? AND superseded_at IS NULL",
+      ).run(input.retiredAt, input.stateType, input.entityId);
+      return result.changes > 0;
     } finally {
       db.close();
     }
@@ -759,6 +866,9 @@ export class OperationalStore {
       "workflow_state",
       "change_events",
       "derived_states",
+      "subject_links",
+      "findings",
+      "finding_status_events",
       "model_calls",
       "context_manifests",
       "model_cache",

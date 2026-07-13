@@ -66,5 +66,5 @@ test("state rebuild processes deltas and repeatedly reports invalid notes", asyn
   expect(third.changed).toBe(1);
   expect(third.projected).toBe(2);
   expect(store.countRows("change_events")).toBe(3);
-  expect(store.countRows("derived_states")).toBe(7);
+  expect(store.countRows("derived_states")).toBe(8);
 });

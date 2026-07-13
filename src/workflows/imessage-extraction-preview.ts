@@ -1,5 +1,8 @@
 import type { IMessageConversationSelection, IMessageSourceAdapter } from "../adapters/imessage";
 import { buildContext, type ContextCandidate, type ContextManifest } from "../context/builder";
+import { imessageDevelopmentContextCandidates } from "../context/imessage-development";
+import { persistableContextManifest, type PersistableContextManifest } from "../context/manifests";
+import type { ContextRequest } from "../context/request";
 import type { OperationalStore } from "../db/store";
 import { normalizeIMessage } from "../imessage/normalizer";
 import { IMessageStore } from "../imessage/store";
@@ -13,7 +16,9 @@ export interface IMessageExtractionPreview {
   sourceHash: string;
   conversationStateHash: string;
   deltaEvidenceIds: string[];
+  request: ContextRequest;
   manifest: ContextManifest;
+  auditManifest: PersistableContextManifest;
   promptInjectionIndicators: string[];
   modelCalls: 0;
   retainedText: false;
@@ -98,16 +103,40 @@ export async function previewIMessageExtractionContext(input: {
       relevance: 0.9, impact: 0.8, recency: 1,
       sourceRefs: turns.map((turn) => turn.evidence_id),
     },
+    ...imessageDevelopmentContextCandidates({
+      store: input.store,
+      sourceId: input.sourceId,
+      conversationId: selected.conversationId,
+    }),
     policyCandidate(input.policyPrompt, input.policyVersion),
   ];
-  const manifest = buildContext(candidates, {
-    maxInputTokens: 10000, reservedOutputTokens: 1200,
-    sourceTokens: 2200, entityStateTokens: 0, recentChangeTokens: 6200,
-    policyTokens: 500, contingencyTokens: 1100,
-  });
+  const budget = {
+    maxInputTokens: 12000, reservedOutputTokens: 1200,
+    sourceTokens: 2200, entityStateTokens: 2200, recentChangeTokens: 6200,
+    policyTokens: 500, contingencyTokens: 900,
+  };
+  const request: ContextRequest = {
+    workflow: "imessage_extraction",
+    trigger: {
+      type: "source_delta",
+      subjectId: selected.conversationId,
+      sourceIdentities: [{
+        provider: "imessage",
+        sourceId: input.sourceId,
+        artifactId: selected.messageId,
+        versionHash: selected.contentHash,
+        containerId: selected.conversationId,
+        containerHash: conversationStateHash,
+      }],
+    },
+    purpose: "extract",
+    budget,
+  };
+  const manifest = buildContext(candidates, budget);
   return {
     messageId: selected.messageId, conversationId: selected.conversationId,
-    sourceHash: selected.contentHash, conversationStateHash, deltaEvidenceIds, manifest,
+    sourceHash: selected.contentHash, conversationStateHash, deltaEvidenceIds,
+    request, manifest, auditManifest: persistableContextManifest(manifest, imessageAuditItems),
     promptInjectionIndicators, modelCalls: 0, retainedText: false,
   };
 }
@@ -123,7 +152,7 @@ function policyCandidate(policy?: CompiledPolicyPrompt, policyVersion?: string):
   };
 }
 
-export function imessageAuditItems(items: unknown[]): unknown[] {
+export function imessageAuditItems(items: ContextCandidate[]): unknown[] {
   return items.map(stripTransientText);
 }
 
@@ -131,7 +160,10 @@ function stripTransientText(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripTransientText);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
-    if (["untrusted_message_text", "untrusted_text"].includes(key)) return [];
+    if ([
+      "untrusted_message_text", "untrusted_text", "display_name", "aliases",
+      "recent_interaction_summary", "description", "summary", "location",
+    ].includes(key)) return [];
     return [[key, stripTransientText(item)]];
   }));
 }

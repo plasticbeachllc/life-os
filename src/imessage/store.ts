@@ -2,6 +2,7 @@ import type { OperationalStore } from "../db/store";
 import { sha256Value } from "../util/hashing";
 import type { NormalizedIMessage } from "./normalizer";
 import { imessageNormalizerVersion } from "./normalizer";
+import type { ExtractionRecordForProjection } from "../findings/contract";
 
 export class IMessageStore {
   constructor(private readonly store: OperationalStore) {}
@@ -202,6 +203,26 @@ export class IMessageStore {
             AND source_hash = ? AND status = 'prepared' AND call_id <> ?
         `).run(input.createdAt, input.sourceHash, input.callId);
       })();
+    } finally {
+      db.close();
+    }
+  }
+
+  listExtractionsForFindingProjection(): ExtractionRecordForProjection[] {
+    const db = this.store.open();
+    try {
+      return db.query<{
+        extraction_id: string; call_id: string; output_json: string; created_at: string;
+      }, []>(`
+        SELECT extraction_id, call_id, output_json, created_at
+        FROM imessage_extractions ORDER BY created_at, extraction_id
+      `).all().map((row) => ({
+        sourceType: "imessage_extraction",
+        extractionId: row.extraction_id,
+        callId: row.call_id,
+        output: JSON.parse(row.output_json) as Record<string, unknown>,
+        createdAt: row.created_at,
+      }));
     } finally {
       db.close();
     }

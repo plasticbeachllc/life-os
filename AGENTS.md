@@ -68,13 +68,18 @@ work is ready.
 
 ## Database Changes
 
-- Make schema changes additive and increment `schemaVersion` exactly once per coordinated migration.
-- Preserve action IDs, proposal lifecycle, audit history, source hashes, and undo records.
+- During the early prototype phase, internal schemas may be replaced rather than migrated compatibly.
+- Coordinate schema ownership and increment `schemaVersion` exactly once per schema revision.
+- Reject an incompatible existing operational database with an explicit reset instruction. Never delete
+  or reset it automatically.
+- Treat SQLite as disposable prototype state; canonical user knowledge remains in Obsidian Markdown and
+  configured providers. When schema changes, rebuild operational state from those canonical sources.
 - Store provider bodies only when the specification explicitly permits it. Gmail bodies are forbidden.
 - Use JSON columns for structured projections, not serialized prompt blobs.
 - Add indexes and uniqueness constraints for idempotency and cache identity.
 - Cache keys must include workflow, prompt, model, source, context, schema, and policy versions where relevant.
-- Test migration, unchanged replay, changed source, and concurrent/stale submission behavior.
+- Test fresh schema creation, incompatible-version rejection, unchanged replay, changed source, and
+  concurrent/stale submission behavior.
 
 ## MCP Tool Rules
 
@@ -140,12 +145,12 @@ runtime dependency, MCP reload, OAuth grant, or live provider verification remai
 
 Each parallel agent should report:
 
-1. Files and schema versions changed.
+1. Files and schema versions changed, including any required prototype database reset.
 2. New commands, MCP tools, and permissions.
 3. Data retained and explicitly not retained.
 4. Cache and invalidation identity.
 5. Tests and live checks run.
-6. Known gaps, migration steps, and required reloads.
+6. Known gaps, reset/backfill steps, and required reloads.
 
 Keep unrelated refactors out of integration branches. Work with existing user changes and never reset,
 revert, or overwrite another agent's work to simplify a merge.

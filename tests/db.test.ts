@@ -14,11 +14,11 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(13);
+  expect(store.getSchemaVersion()).toBe(16);
   expect(store.countRows("schema_migrations")).toBe(1);
 });
 
-test("additively migrates an existing schema v7 database to combined provider schema v13", () => {
+test("rejects an incompatible prototype database with an explicit reset instruction", () => {
   const dir = mkdtempSync(join(tmpdir(), "life-os-db-v7-"));
   const path = join(dir, "life-os.db");
   const db = new Database(path);
@@ -28,16 +28,10 @@ test("additively migrates an existing schema v7 database to combined provider sc
   db.close();
 
   const store = new OperationalStore(path);
-  store.migrate();
-
-  expect(store.getSchemaVersion()).toBe(13);
-  expect(store.countRows("schema_migrations")).toBe(2);
-  expect(store.countRows("imessage_messages")).toBe(0);
-  const migrated = store.open();
-  expect(migrated.query<{ count: number }, []>("SELECT COUNT(*) count FROM telegram_messages").get()?.count).toBe(0);
-  migrated.close();
-  expect(store.countRows("calendar_events")).toBe(0);
-  expect(store.countRows("calendar_event_versions")).toBe(0);
+  expect(() => store.migrate()).toThrow(
+    "prototype database schema 7 is incompatible with 16; delete the operational database and rebuild",
+  );
+  expect(store.getSchemaVersion()).toBe(7);
 });
 
 test("records runs, actions, and action results", () => {

@@ -20,10 +20,12 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
 - Sanitized extraction review with no Gmail IDs, hashes, headers, addresses, subjects, or source text.
 - Allowlisted, incremental read-only ingestion from the local macOS Messages database.
 - Bounded, high-risk-redacted Messages extraction with hash-verified refetch and sanitized review.
+- Deterministic cross-provider findings projected from validated Gmail and Messages extraction items.
+- Regenerable open-loop and commitment attention state feeding chief-of-staff and morning briefings.
 - Zero-model deterministic triage for verification codes, notification enrollment, routine service texts,
   and order-pickup alerts.
 - Primary Google Calendar read-only ingestion and deterministic compact calendar state.
-- User-selected email extraction items can become fixed-inbox, approval-gated task proposals.
+- User-selected active findings can become fixed-inbox, approval-gated task proposals.
 
 No version 1 workflow can send or delete email, mutate Gmail labels, merge entities autonomously,
 rewrite journal prose, expose arbitrary shell access, or give a model unrestricted filesystem writes.
@@ -58,8 +60,9 @@ the vault or Gmail.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
 assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
-current provider architecture. The proposed source-independent taxonomy and lifecycle for turning
-incoming evidence into useful interventions is in
+current provider architecture. The comprehensive target architecture, normative contracts, reference
+code, and phased implementation checklist are in [`docs/architecture.md`](docs/architecture.md). The
+proposed attention-signal taxonomy and intervention lifecycle are in
 [`docs/findings-and-actions.md`](docs/findings-and-actions.md). Parallel contributors must also follow
 [`AGENTS.md`](AGENTS.md).
 
@@ -110,8 +113,22 @@ bun run src/cli.ts doctor --vault ~/worktable/vault
 bun run src/cli.ts state rebuild --vault ~/worktable/vault
 bun run src/cli.ts state show chief-of-staff --vault ~/worktable/vault
 bun run src/cli.ts briefing morning --vault ~/worktable/vault
+bun run src/cli.ts findings review --vault ~/worktable/vault
+bun run src/cli.ts findings dismiss <finding-id> --reason 'not actionable' --vault ~/worktable/vault
+bun run src/cli.ts findings supersede <finding-id> --replacement <finding-id> \
+  --reason 'replaced by newer evidence' --vault ~/worktable/vault
 bun run src/cli.ts metrics efficiency --vault ~/worktable/vault
 ```
+
+`state rebuild` idempotently backfills common findings from existing validated Gmail and Messages
+model extractions without invoking a model. New validated extractions project immediately. Findings
+retain structured meaning and internal evidence provenance in SQLite, while `findings review` omits
+provider extraction IDs, reasoning-call IDs, evidence IDs, and hashes. Finding creation does not create
+a task, proposal, reply, or provider mutation.
+
+State rebuild also derives `finding_attention_state` from active findings. It tracks open loops,
+commitments, and overdue finding IDs under a date- and status-aware dependency hash. Chief-of-staff and
+morning briefing state consume this projection; they never query provider extraction bodies directly.
 
 Proposal lifecycle:
 
@@ -172,6 +189,8 @@ copy only the desired source conversation IDs into the external environment file
 bun run src/cli.ts message conversations --vault ~/worktable/vault
 bun run src/cli.ts message status --vault ~/worktable/vault
 bun run src/cli.ts message ingest --vault ~/worktable/vault --limit 500
+bun run src/cli.ts message link-person --conversation '<source-conversation-id>' \
+  --person person_example --vault ~/worktable/vault
 bun run src/cli.ts message preview-extraction --vault ~/worktable/vault
 bun run src/cli.ts message review-extractions --vault ~/worktable/vault
 bun run src/cli.ts message triage --vault ~/worktable/vault --limit 100
@@ -192,6 +211,13 @@ LIFE_OS_IMESSAGE_BLACKLIST_CONVERSATION_IDS=
 
 Selection identifiers remain in the external mode-600 environment file. They are not returned through
 MCP, and operational records use derived internal conversation IDs.
+
+After ingesting a selected conversation and rebuilding canonical person state, `message link-person`
+can explicitly associate that conversation with one existing person ID. The command validates the
+configured Messages selection and stores only the derived internal conversation identity, bound to the
+current participant-set hash. It does not merge people or expose a general association write through
+MCP. Linked Messages extraction may then receive bounded person state, that person's open tasks, and
+calendar entries that deterministically mention an established name or alias.
 
 The adapter opens only `~/Library/Messages/chat.db`, read-only, and uses fixed queries. Apple's
 attributed-body archives are decoded by a fixed, bounded macOS Foundation subprocess with archive data
@@ -227,7 +253,7 @@ args = ["run", "--env-file", "/Users/you/.config/life-os/.env", "--",
         "/opt/homebrew/bin/bun", "run", "/path/to/life-os/src/mcp/server.ts"]
 ```
 
-Life OS currently exposes 26 narrow tools covering health, compact state, briefings, Gmail, Calendar,
+Life OS exposes a narrow tool set covering health, compact state, briefings, Gmail, Calendar,
 and Messages status/review/extraction, subscription prepare/submit workflows, and exact proposal
 authorization/apply/undo. It exposes
 no arbitrary path, patch, command, or generic write tool.
@@ -248,9 +274,24 @@ Email extraction sequence:
 4. `life_os_submit_email_extraction`
 5. `life_os_review_email_extractions`
 
-Extraction never creates a proposal automatically. Converting selected extraction items into tasks is
-explicit through `life_os_propose_email_task`, which accepts only an extraction ID and item index,
-fixes the target to `00 Inbox/Inbox.md`, and enters the standard review/authorization flow.
+Extraction never creates a proposal automatically. Converting an eligible active finding into a task is
+explicit through `life_os_propose_finding_task`, which accepts only a finding ID, fixes the target to
+`00 Inbox/Inbox.md`, and derives the task text, due date, stable ID, and preview.
+
+Finding task application appends a `converted` lifecycle event in the same SQLite transaction as the
+action, proposal, backup, and undo metadata. Undo reactivates the finding. Dismissal and supersession
+are explicit CLI operations; no generic finding-status MCP mutation is exposed.
+
+During the prototype phase, operational schema versions are intentionally incompatible. If the SQLite
+schema version changes, delete the operational database and rebuild it from canonical Markdown and
+configured providers. Life OS fails with an explicit reset instruction instead of attempting a legacy
+migration. It never deletes the database automatically.
+
+Schema v16 records explicit builder name, builder version, typed input provenance, and dependency hash
+for derived state. Full rebuild retires project, person, and task projections whose canonical Markdown
+inputs disappeared; targeted rebuilds can update or retire an exact state/entity pair. Identical inputs
+reuse the current projection with no model call or database write. Morning recommendations remain a
+separate optional reasoning overlay and never replace deterministic daily state.
 
 Calendar is primary-calendar-only in version 1. It retains event title, optional location, status,
 start/end, all-day state, and hashes; descriptions, attendees, organizers, conference links, and
