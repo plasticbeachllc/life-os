@@ -20,6 +20,7 @@ import {
   submitSubscriptionEmailExtraction,
 } from "../src/workflows/subscription-email-extraction";
 import { refreshAfterExtraction } from "../src/workflows/post-extraction-refresh";
+import { linkGmailThreadToPerson } from "../src/workflows/link-gmail-subject";
 
 setDefaultTimeout(15_000);
 
@@ -181,6 +182,8 @@ test("extraction preview is bounded, flags untrusted instructions, and retains n
   expect(preview?.manifest.includedItems.length).toBeGreaterThan(0);
   expect(JSON.stringify(preview?.manifest.includedItems)).not.toContain("4111 1111 1111 1111");
   expect(JSON.stringify(preview?.manifest.includedItems)).toContain("CREDIT_CARD");
+  expect(JSON.stringify(preview?.manifest.includedItems))
+    .toContain("validated_source_subject_history");
   expect(store.countRows("model_calls")).toBe(0);
   expect(store.countRows("gmail_message_versions")).toBe(1);
 
@@ -576,6 +579,33 @@ test("subscription extraction rejects source drift", async () => {
   expect(store.getModelCall(String(prepared.callId))?.status).toBe("failed");
   expect(store.getModelCall(String(prepared.callId))?.error).toBe("stale_source");
   expect(new WorkRepository(store).status().byState).toMatchObject({ stale: 1, pending: 1 });
+}, 15_000);
+
+test("subscription extraction rejects a reviewed subject link added after preparation", async () => {
+  const selected = message({ id: "message_context_link", body: "Please review the project update." });
+  const adapter = new FakeGmailAdapter(selected, { id: "thread_1", messages: [selected] });
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-gmail-context-link-")), "store.db"));
+  await ingestSelectedGmail({ adapter, store, accountId: "me", limit: 10 });
+  const prepared = await prepareSubscriptionEmailExtraction({
+    adapter, store, accountId: "me", model: "subscription-agent", policyVersion: "sha256:policy",
+  });
+  store.saveDerivedState({
+    stateId: "state_person_context_v1", stateType: "person_state", entityId: "person_context",
+    stateVersion: 1, content: { entity_id: "person_context" },
+    sourceHashes: ["sha256:person-context"], generationMethod: "test",
+    createdAt: "2026-07-12T12:00:00.000Z",
+  });
+  linkGmailThreadToPerson({
+    store, accountId: "me", sourceMessageId: "message_context_link", personId: "person_context",
+  });
+  await expect(submitSubscriptionEmailExtraction({
+    store, accountId: "me", callId: String(prepared.callId),
+    threadStateHash: String(prepared.threadStateHash), policyVersion: "sha256:policy",
+    output: { classification: "reference_only", summary: "Project update received.",
+      items: [], relations: [], unresolved: [], promptInjectionDetected: false },
+  })).rejects.toThrow("validated source subject context changed");
+  expect(store.getModelCall(String(prepared.callId))?.error).toBe("context_changed");
+  expect(store.countRows("gmail_extractions")).toBe(0);
 }, 15_000);
 
 test("extraction, findings, model completion, and work completion roll back together", async () => {

@@ -30,6 +30,8 @@ import { WorkRepository } from "./work/repository";
 import { createIntegrationRegistry } from "./integrations/providers";
 import { runRegisteredIntegrationCommand } from "./cli/integration-commands";
 import { formatProposal, runProposalCommand } from "./cli/proposal-commands";
+import { linkGmailThreadToPerson, linkGmailThreadToProject } from "./workflows/link-gmail-subject";
+import { linkCalendarEventToProject, linkCalendarEventToTask } from "./workflows/link-calendar-subject";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -279,6 +281,29 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "email") {
     const [subcommand, ...emailRest] = rest;
+    if (subcommand === "link-person" || subcommand === "link-project") {
+      const args = parseFlags(emailRest);
+      rejectUnknownCommandFlags(args, [
+        "vault", "message", subcommand === "link-person" ? "person" : "project",
+      ]);
+      const sourceMessageId = args.flags.message;
+      const subjectId = subcommand === "link-person" ? args.flags.person : args.flags.project;
+      if (!sourceMessageId || !subjectId) {
+        throw new Error(`email ${subcommand} requires --message <source-id> --${
+          subcommand === "link-person" ? "person" : "project"
+        } <canonical-id>`);
+      }
+      const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+      const common = {
+        store: new OperationalStore(config.databasePath), accountId: config.gmailAccountId,
+        sourceMessageId,
+      };
+      const result = subcommand === "link-person"
+        ? linkGmailThreadToPerson({ ...common, personId: subjectId })
+        : linkGmailThreadToProject({ ...common, projectId: subjectId });
+      console.log(JSON.stringify(result, null, 2));
+      return 0;
+    }
     if (subcommand === "review-extractions") {
       const args = parseFlags(emailRest);
       const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
@@ -390,6 +415,33 @@ async function main(argv: string[]): Promise<number> {
     }
   }
 
+  if (command === "calendar") {
+    const [subcommand, ...calendarRest] = rest;
+    if (subcommand === "link-project" || subcommand === "link-task") {
+      const args = parseFlags(calendarRest);
+      rejectUnknownCommandFlags(args, [
+        "vault", "event", subcommand === "link-project" ? "project" : "task",
+      ]);
+      const sourceEventId = args.flags.event;
+      const subjectId = subcommand === "link-project" ? args.flags.project : args.flags.task;
+      if (!sourceEventId || !subjectId) {
+        throw new Error(`calendar ${subcommand} requires --event <source-id> --${
+          subcommand === "link-project" ? "project" : "task"
+        } <canonical-id>`);
+      }
+      const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+      const common = {
+        store: new OperationalStore(config.databasePath), accountId: config.gmailAccountId,
+        sourceEventId,
+      };
+      const result = subcommand === "link-project"
+        ? linkCalendarEventToProject({ ...common, projectId: subjectId })
+        : linkCalendarEventToTask({ ...common, taskId: subjectId });
+      console.log(JSON.stringify(result, null, 2));
+      return 0;
+    }
+  }
+
   printUsage();
   return 2;
 }
@@ -424,6 +476,14 @@ function parseFlags(args: string[]): { flags: Record<string, string>; positional
   }
 
   return { flags, positionals };
+}
+
+function rejectUnknownCommandFlags(
+  args: { flags: Record<string, string>; positionals: string[] }, allowed: string[],
+): void {
+  if (args.positionals.length > 0) throw new Error(`unexpected argument: ${args.positionals[0]}`);
+  const unknown = Object.keys(args.flags).find((flag) => !allowed.includes(flag));
+  if (unknown) throw new Error(`unsupported command flag: --${unknown}`);
 }
 
 function formatReport(report: HealthReport, vaultPath: string): string {
@@ -485,6 +545,8 @@ function printUsage(): void {
   life-os email status --vault <path>
   life-os email review-extractions --vault <path>
   life-os email preview-extraction --vault <path>
+  life-os email link-person --message <source-id> --person <person-id> --vault <path>
+  life-os email link-project --message <source-id> --project <project-id> --vault <path>
   life-os message status --vault <path>
   life-os message conversations --vault <path> [--limit <n>]
   life-os message ingest --vault <path> [--limit <n>]
@@ -493,6 +555,8 @@ function printUsage(): void {
   life-os message review-extractions --vault <path>
   life-os calendar ingest --vault <path> [--limit <n>]
   life-os calendar status --vault <path>
+  life-os calendar link-project --event <source-id> --project <project-id> --vault <path>
+  life-os calendar link-task --event <source-id> --task <task-id> --vault <path>
   life-os message triage --vault <path> [--limit <n>]
   life-os findings review --vault <path>
   life-os findings dismiss <finding-id> --reason <text> --vault <path>

@@ -11,6 +11,7 @@ import { promptContext, type CompiledPolicyPrompt } from "../orchestration/promp
 import type { WorkItem } from "../work/contract";
 import { WorkRepository } from "../work/repository";
 import { compareSourceEventOrder } from "../events/repository";
+import { sourceSubjectContextCandidate } from "../context/source-subjects";
 
 export interface GmailExtractionPreview {
   workId: string;
@@ -131,6 +132,9 @@ export async function previewGmailExtractionContext(input: {
       relevance: 0.85, impact: 0.8, recency: 1,
       sourceRefs: turns.flatMap((turn) => [`gmail:${turn.message_id}:${turn.source_hash}`, turn.source_hash]),
     },
+    ...(work.streamEventId ? [sourceSubjectContextCandidate({
+      store: input.store, eventId: work.streamEventId,
+    })] : []),
     ...(entityCandidates.length > 0 ? [{
       id: `entities:${normalized.messageId}`, category: "entity_state" as const, retrievalLevel: 1 as const,
       content: { exact_candidates: entityCandidates },

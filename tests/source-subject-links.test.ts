@@ -8,6 +8,9 @@ import type { AppendSourceEventInput } from "../src/events/contract";
 import { SourceEventRepository } from "../src/events/repository";
 import { SourceSubjectLinkRepository } from "../src/events/subject-links";
 import { sha256Text } from "../src/util/hashing";
+import {
+  assertSourceSubjectContextCurrent, sourceSubjectContextCandidate,
+} from "../src/context/source-subjects";
 
 test("reviewed canonical subjects create a causal window across providers", () => {
   const store = database("cross-provider");
@@ -101,6 +104,52 @@ test("revocation removes traversal authority and storage retains no provider ide
   } finally { db.close(); }
 });
 
+test("bounded context exposes sanitized linked history and rejects changed dependencies", () => {
+  const store = database("context");
+  saveSubject(store, "project", "project_launch");
+  const events = new SourceEventRepository(store);
+  const gmail = events.append(event(
+    "gmail", "2026-07-12T12:00:00.000Z", "PRIVATE_GMAIL_ID", "PRIVATE_THREAD_ID",
+  )).event;
+  const calendar = events.append(event(
+    "calendar", "2026-07-12T12:02:00.000Z", "PRIVATE_CALENDAR_ID", "PRIVATE_EVENT_ID",
+    "calendar_event", "system",
+  )).event;
+  const links = new SourceSubjectLinkRepository(store);
+  links.link({ eventId: gmail.eventId, subject: { type: "project", id: "project_launch" }, basis: "reviewed" });
+  const calendarLink = links.link({
+    eventId: calendar.eventId, subject: { type: "project", id: "project_launch" }, basis: "reviewed",
+  });
+  const candidate = sourceSubjectContextCandidate({ store, eventId: calendar.eventId });
+  expect(candidate.category).toBe("recent_change");
+  expect(candidate.retrievalLevel).toBe(1);
+  expect(candidate.content).toMatchObject({
+    context_kind: "validated_source_subject_history",
+    linked_subjects: [{ type: "project", id: "project_launch" }],
+    recent_events: [{ provider: "gmail" }, { provider: "calendar" }],
+  });
+  expect(JSON.stringify(candidate.content)).not.toContain("PRIVATE_");
+  expect(() => assertSourceSubjectContextCurrent(store, [candidate])).not.toThrow();
+  links.revoke({ linkId: calendarLink.linkId });
+  expect(() => assertSourceSubjectContextCurrent(store, [candidate]))
+    .toThrow("validated source subject context changed");
+});
+
+test("an association added after preparation invalidates an empty subject snapshot", () => {
+  const store = database("context-added-link");
+  saveSubject(store, "person", "person_alex");
+  const sourceEvent = new SourceEventRepository(store).append(
+    event("gmail", "2026-07-12T12:00:00.000Z", "record", "thread"),
+  ).event;
+  const prepared = sourceSubjectContextCandidate({ store, eventId: sourceEvent.eventId });
+  expect(prepared.content).toMatchObject({ linked_subjects: [], recent_events: [] });
+  new SourceSubjectLinkRepository(store).link({
+    eventId: sourceEvent.eventId, subject: { type: "person", id: "person_alex" }, basis: "reviewed",
+  });
+  expect(() => assertSourceSubjectContextCurrent(store, [prepared]))
+    .toThrow("validated source subject context changed");
+});
+
 function event(
   provider: AppendSourceEventInput["provider"], occurredAt: string,
   sourceRecordId: string, containerId: string,
@@ -113,6 +162,7 @@ function event(
     occurredAt, observedAt: "2026-07-12T13:00:00.000Z", contentAvailable: true,
   };
 }
+
 
 function saveSubject(store: OperationalStore, type: "person" | "project" | "task", id: string): void {
   store.saveDerivedState({

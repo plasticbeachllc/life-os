@@ -2,6 +2,8 @@
 
 Breaking changes are intentional before the first stable release.
 
+- Schema 25: Calendar stream containers are event-scoped; reviewed Gmail/Calendar links and bounded
+  cross-provider subject context are available without cross-provider source text.
 - Schema 24: reviewed canonical subject links connect source-event containers without content- or
   timing-based inference.
 - Schema 19: sanitized operational workspace feedback and opaque UI subjects.

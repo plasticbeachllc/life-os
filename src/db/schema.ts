@@ -1,4 +1,4 @@
-export const schemaVersion = 24;
+export const schemaVersion = 25;
 
 export const ddl = [
   `

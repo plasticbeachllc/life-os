@@ -1546,10 +1546,11 @@ Current limitations are deliberate:
 
 - There is no automatic person association, entity merge, or model-created link.
 - There is no MCP tool for association mutation.
-- Only Messages currently has a public reviewed-link workflow. Its participant-bound association is also
-  projected into the shared stream subject index.
-- Calendar matching is conservative lexical retrieval and does not create a durable event-person link.
-- Common findings and the internal work queue remain future phases.
+- Reviewed-link CLI workflows exist only for Messages conversation-to-person, Gmail thread-to-person or
+  project, and primary Calendar event-to-project or task.
+- Telegram and canonical-note containers have no public subject-link workflow.
+- Calendar name matching remains lexical retrieval only and does not create a durable event-person link.
+- Cross-provider extraction context contains bounded event metadata, not source text from another provider.
 
 Downstream implementations should extend the subject-link enum and public workflows only through a
 coordinated schema and policy review. They should not turn the initial table into a generic graph-write
@@ -1575,6 +1576,18 @@ basis, confidence, exact validation identity, timestamps, and optional pointer t
 assertion. It does not retain source record IDs, provider account/container IDs, participants, addresses,
 headers, subjects, locations, source excerpts, or prompts. There is no generic CLI or MCP graph-write
 surface; new provider-specific review workflows remain separately designed policy boundaries.
+
+Schema version 25 makes Calendar containers event-scoped and adds narrow reviewed Gmail and Calendar
+workflows. It also registers a level-1 `recent_change` context candidate for every stream-backed Gmail and
+Messages extraction. The candidate contains canonical subject refs plus bounded provider/kind/direction/
+time/content-availability metadata for current events at or before the selected event. It contains no
+cross-provider source text or provider identifier.
+
+The candidate records a deterministic dependency over the target event, current canonical subject states,
+and included current source-event versions. Even an empty association snapshot is recorded. Submission
+recomputes it, so a link added, revoked, invalidated, or made stale after preparation rejects the call as
+changed context. Calendar event containers use calendar-plus-event identity; linking one event therefore
+cannot associate unrelated events from the same primary calendar.
 
 ## 22. Initial prepared-reasoning lifecycle
 

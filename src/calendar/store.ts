@@ -94,7 +94,8 @@ export class CalendarStore {
           provider: "calendar", eventKind: "calendar_event", direction: "system",
           sourceScopeId: input.accountId,
           sourceRecordId: `${input.calendarId}:${input.event.eventId}`,
-          containerId: input.calendarId, sourceVersionHash: input.event.contentHash,
+          containerId: `${input.calendarId}:${input.event.eventId}`,
+          sourceVersionHash: input.event.contentHash,
           occurredAt: input.event.startAt, observedAt: input.now, contentAvailable: true,
         });
       })();

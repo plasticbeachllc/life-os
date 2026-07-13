@@ -685,6 +685,8 @@ test("Messages context includes only linked person developments and rejects chan
     trigger: { type: "source_delta", subjectId: conversationId },
   });
   const live = JSON.stringify(preview?.manifest.includedItems);
+  expect(live).toContain("validated_source_subject_history");
+  expect(live).toContain('"provider":"imessage"');
   expect(live).toContain("Alex Morgan");
   expect(live).toContain("Confirm the venue with Alex");
   expect(live).toContain("Coffee with Alex");

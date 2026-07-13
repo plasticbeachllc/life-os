@@ -183,6 +183,10 @@ op run --env-file ~/.config/life-os/.env -- \
 
 bun run src/cli.ts email status --vault ~/worktable/vault
 bun run src/cli.ts email review-extractions --vault ~/worktable/vault
+bun run src/cli.ts email link-person --message '<source-message-id>' \
+  --person person_example --vault ~/worktable/vault
+bun run src/cli.ts email link-project --message '<source-message-id>' \
+  --project project_example --vault ~/worktable/vault
 ```
 
 Ingestion and extraction are separate. Ingestion stores message/thread metadata and immutable hashes,
@@ -332,7 +336,18 @@ attachments are not retained. Ingest a one-day lookback and 30-day horizon with:
 op run --env-file ~/.config/life-os/.env -- \
   bun run src/cli.ts calendar ingest --vault ~/worktable/vault
 bun run src/cli.ts calendar status --vault ~/worktable/vault
+bun run src/cli.ts calendar link-project --event '<source-event-id>' \
+  --project project_example --vault ~/worktable/vault
+bun run src/cli.ts calendar link-task --event '<source-event-id>' \
+  --task task_example --vault ~/worktable/vault
 ```
+
+Reviewed Gmail links apply to one ingested thread; reviewed Calendar links apply to one ingested primary
+event. These CLI-only operations require an existing canonical subject and return only opaque link and
+canonical subject identity. They do not change Gmail, Calendar, or the vault. Once linked, Gmail and
+Messages extraction receive a bounded metadata-only history of earlier events in containers reviewed as
+concerning the same canonical subject. Adding, revoking, or invalidating a link after preparation makes
+that prepared context stale.
 
 Messages extraction sequence:
 
