@@ -58,7 +58,10 @@ the vault or Gmail.
 
 See [`docs/token-efficiency-inventory.md`](docs/token-efficiency-inventory.md) for the migration
 assessment and [`docs/email-calendar-integrations.md`](docs/email-calendar-integrations.md) for the
-current provider architecture. Parallel contributors must also follow [`AGENTS.md`](AGENTS.md).
+current provider architecture. The proposed source-independent taxonomy and lifecycle for turning
+incoming evidence into useful interventions is in
+[`docs/findings-and-actions.md`](docs/findings-and-actions.md). Parallel contributors must also follow
+[`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
