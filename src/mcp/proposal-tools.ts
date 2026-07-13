@@ -3,8 +3,8 @@ import * as z from "zod";
 
 import { ObsidianVault } from "../adapters/obsidian";
 import { loadConfig } from "../config";
-import { OperationalStore, type ProposalRecord } from "../db/store";
-import { reviewEffectProposal } from "../effects/registry";
+import { OperationalStore } from "../db/store";
+import { sanitizedProposalReview } from "../effects/review-projection";
 import {
   consumeUndoAuthorization, prepareProposalAuthorization, prepareUndoAuthorization,
 } from "../policy/authorization";
@@ -18,7 +18,7 @@ export function registerProposalTools(server: McpServer): void {
     inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false },
   }, async () => {
     const { store } = runtime();
-    const proposals = store.listPendingProposals().map(sanitizeProposal);
+    const proposals = store.listPendingProposals().map(sanitizedProposalReview);
     return jsonResult({ count: proposals.length, proposals });
   });
 
@@ -28,7 +28,7 @@ export function registerProposalTools(server: McpServer): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, async ({ findingId }) => {
     const context = runtime();
-    return jsonResult(sanitizeProposal(await proposeFindingTask({ findingId, ...context })));
+    return jsonResult(sanitizedProposalReview(await proposeFindingTask({ findingId, ...context })));
   });
 
   server.registerTool("life_os_get_proposal", {
@@ -38,7 +38,7 @@ export function registerProposalTools(server: McpServer): void {
   }, async ({ proposalId }) => {
     const proposal = runtime().store.getProposal(proposalId);
     if (!proposal) throw new Error(`proposal not found: ${proposalId}`);
-    return jsonResult(sanitizeProposal(proposal));
+    return jsonResult(sanitizedProposalReview(proposal));
   });
 
   server.registerTool("life_os_prepare_proposal_approval", {
@@ -84,19 +84,6 @@ function runtime(): {
   const config = loadConfig();
   const store = new OperationalStore(config.databasePath); store.migrate();
   return { config, vault: new ObsidianVault(config.vaultPath), store };
-}
-
-export function sanitizeProposal(proposal: ProposalRecord): Record<string, unknown> {
-  const review = reviewEffectProposal(proposal);
-  return {
-    proposalId: proposal.proposalId, actionId: proposal.actionId,
-    workflow: proposal.workflow, lifecycleState: proposal.lifecycleState,
-    permissionClass: proposal.permissionClass, effectType: proposal.effectType,
-    executorVersion: proposal.executorVersion, targetPath: proposal.targetPath,
-    expectedTargetHash: proposal.targetHash, preview: review.preview,
-    createdAt: proposal.createdAt, expiresAt: proposal.expiresAt ?? null,
-    approved: proposal.approved,
-  };
 }
 
 function jsonResult(value: unknown): { content: Array<{ type: "text"; text: string }> } {

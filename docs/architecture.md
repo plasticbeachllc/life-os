@@ -1336,20 +1336,31 @@ Ownership: application-surface owner; coordinate `src/mcp/server.ts` and `src/cl
 
 Goal: expose the product model cleanly.
 
-- [ ] Organize UI around sources, findings, state, and proposals.
-- [ ] Add attention queues for reply/open-loop/date/relationship/project categories.
-- [ ] Show freshness and provenance without raw identifiers.
-- [ ] Show proposal previews and explicit approval state.
-- [ ] Show action result and undo availability.
-- [ ] Add provider health, work backlog, and sanitized failure categories.
-- [ ] Add feedback capture for finding usefulness and proposal acceptance.
+- [x] Organize UI around sources, findings, state, and proposals.
+- [x] Add attention queues for reply/open-loop/date/relationship/project categories.
+- [x] Show freshness and provenance without raw identifiers.
+- [x] Show proposal previews and explicit approval state.
+- [x] Show action result and undo availability.
+- [x] Add provider health, work backlog, and sanitized failure categories.
+- [x] Add feedback capture for finding usefulness and proposal acceptance.
 
 Acceptance criteria:
 
-- [ ] Chat cannot bypass proposal authorization.
-- [ ] UI and MCP review projections share sanitization tests.
-- [ ] No provider IDs, source hashes, raw addresses, subjects, or excerpts appear in browser payloads.
-- [ ] Empty, stale, loading, partial-provider, and failed states are represented.
+- [x] Chat cannot bypass proposal authorization.
+- [x] UI and MCP review projections share sanitization tests.
+- [x] No provider IDs, source hashes, raw addresses, subjects, or excerpts appear in browser payloads.
+- [x] Empty, stale, loading, partial-provider, and failed states are represented.
+
+Implemented in schema version 19. The server builds one sanitized workspace projection; the browser
+never opens SQLite. Source cards contain generic provider labels and health only. Attention queues and
+findings expose categories, counts, due-state metadata, and opaque UI IDs rather than source text or
+provider identity. Browser proposal previews reuse the MCP-validated effect contract but reduce exact
+plans to safe effect summaries. Recent actions expose result and undo state under opaque IDs.
+
+Feedback is append-only and accepts only opaque UI subjects with closed finding-usefulness or
+proposal-acceptance outcomes. Chat retains an exact enabled read-only MCP allowlist, a read-only
+sandbox, no shell or network, and an explicit deny list containing every authorization and mutation
+tool. Workspace modes cover loading, empty, stale, partial, failed, setup-required, and live states.
 
 Ownership: UI owner consuming stable domain APIs; no direct SQLite access from client code.
 

@@ -228,6 +228,10 @@ export class WorkRepository {
       const workflowRows = db.query<{ workflow: WorkWorkflow; count: number }, []>(
         "SELECT workflow, COUNT(*) AS count FROM work_items GROUP BY workflow",
       ).all();
+      const failureRows = db.query<{ error_category: WorkErrorCategory; count: number }, []>(`
+        SELECT error_category, COUNT(*) AS count FROM work_items
+        WHERE state = 'failed' AND error_category IS NOT NULL GROUP BY error_category
+      `).all();
       const oldest = db.query<{ created_at: string | null }, []>(
         "SELECT MIN(created_at) AS created_at FROM work_items WHERE state = 'pending'",
       ).get()?.created_at;
@@ -235,9 +239,11 @@ export class WorkRepository {
       const byWorkflow: WorkStatus["byWorkflow"] = { gmail_extraction: 0, imessage_extraction: 0 };
       for (const row of stateRows) byState[row.state] = row.count;
       for (const row of workflowRows) byWorkflow[row.workflow] = row.count;
+      const failureCategories: WorkStatus["failureCategories"] = {};
+      for (const row of failureRows) failureCategories[row.error_category] = row.count;
       return {
         total: Object.values(byState).reduce((sum, count) => sum + count, 0),
-        byState, byWorkflow,
+        byState, byWorkflow, failureCategories,
         oldestPendingAgeSeconds: oldest
           ? Math.max(0, Math.floor((now.getTime() - new Date(oldest).getTime()) / 1000)) : null,
       };

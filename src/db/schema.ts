@@ -1,4 +1,4 @@
-export const schemaVersion = 18;
+export const schemaVersion = 19;
 
 export const ddl = [
   `
@@ -723,4 +723,14 @@ export const ddl = [
   CREATE INDEX IF NOT EXISTS idx_telegram_messages_candidates
   ON telegram_messages(source_id, last_extraction_hash, sent_at)
   `,
+  `
+  CREATE TABLE IF NOT EXISTS ui_feedback (
+    feedback_id TEXT PRIMARY KEY,
+    subject_kind TEXT NOT NULL CHECK(subject_kind IN ('finding', 'proposal')),
+    subject_ui_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('useful', 'not_useful', 'accepted', 'rejected')),
+    created_at TEXT NOT NULL
+  )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_ui_feedback_subject ON ui_feedback(subject_kind, subject_ui_id, created_at)`,
 ];

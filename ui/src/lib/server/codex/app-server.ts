@@ -23,24 +23,35 @@ export interface ChatContext {
 	summary: string;
 }
 
-const readOnlyLifeOsTools = [
+export const readOnlyLifeOsTools = [
 	"life_os_doctor",
 	"life_os_list_compact_state",
 	"life_os_list_pending_proposals",
 	"life_os_gmail_status",
 	"life_os_calendar_status",
+	"life_os_imessage_status",
+	"life_os_telegram_status",
+	"life_os_work_status",
 	"life_os_review_email_extractions",
+	"life_os_review_imessage_extractions",
 	"life_os_get_proposal",
 ] as const;
 
-const disabledLifeOsTools = [
+export const disabledLifeOsTools = [
 	"life_os_rebuild_state",
 	"life_os_get_morning_briefing",
 	"life_os_ingest_calendar",
-	"life_os_propose_email_task",
+	"life_os_ingest_gmail",
+	"life_os_ingest_imessage",
+	"life_os_ingest_telegram",
+	"life_os_propose_finding_task",
 	"life_os_preview_email_extraction_context",
 	"life_os_prepare_email_extraction",
 	"life_os_submit_email_extraction",
+	"life_os_preview_imessage_extraction_context",
+	"life_os_prepare_imessage_extraction",
+	"life_os_submit_imessage_extraction",
+	"life_os_triage_imessage_service_messages",
 	"life_os_prepare_proposal_approval",
 	"life_os_apply_approved_proposal",
 	"life_os_prepare_undo",

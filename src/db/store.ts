@@ -101,6 +101,16 @@ export interface UndoRecord {
   undoneAt?: string;
 }
 
+export interface ActionReviewRecord {
+  actionId: string;
+  effectType: EffectType;
+  lifecycleState: string;
+  ok?: boolean;
+  createdAt: string;
+  undoAvailable: boolean;
+  undone: boolean;
+}
+
 export interface ModelCacheRecord {
   cacheKey: string;
   output: unknown;
@@ -262,6 +272,55 @@ export class OperationalStore {
     } finally {
       db.close();
     }
+  }
+
+  listRecentActionReviews(limit = 20): ActionReviewRecord[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("action review limit is invalid");
+    const db = this.open();
+    try {
+      return db.query<{
+        action_id: string; effect_type: EffectType; lifecycle_state: string;
+        ok: number | null; created_at: string; undo_created_at: string | null;
+        undone_at: string | null;
+      }, [number]>(`
+        SELECT action.action_id, action.effect_type, action.lifecycle_state,
+          result.ok, action.created_at, undo.created_at AS undo_created_at, undo.undone_at
+        FROM actions action
+        LEFT JOIN action_results result ON result.result_id = (
+          SELECT latest.result_id FROM action_results latest
+          WHERE latest.action_id = action.action_id ORDER BY latest.result_id DESC LIMIT 1
+        )
+        LEFT JOIN undo_records undo ON undo.undo_id = (
+          SELECT latest.undo_id FROM undo_records latest
+          WHERE latest.action_id = action.action_id ORDER BY latest.undo_id DESC LIMIT 1
+        )
+        WHERE action.lifecycle_state IN ('applied', 'undone', 'failed')
+        ORDER BY action.created_at DESC, action.action_id DESC LIMIT ?
+      `).all(limit).map((row) => ({
+        actionId: row.action_id, effectType: row.effect_type,
+        lifecycleState: row.lifecycle_state,
+        ...(row.ok === null ? {} : { ok: Boolean(row.ok) }), createdAt: row.created_at,
+        undoAvailable: row.undo_created_at !== null && row.undone_at === null,
+        undone: row.undone_at !== null,
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  recordUiFeedback(input: {
+    feedbackId: string; subjectKind: "finding" | "proposal";
+    subjectUiId: string; outcome: "useful" | "not_useful" | "accepted" | "rejected";
+    createdAt: string;
+  }): void {
+    const db = this.open();
+    try {
+      db.query(`INSERT INTO ui_feedback (
+        feedback_id, subject_kind, subject_ui_id, outcome, created_at
+      ) VALUES (?, ?, ?, ?, ?)`).run(
+        input.feedbackId, input.subjectKind, input.subjectUiId, input.outcome, input.createdAt,
+      );
+    } finally { db.close(); }
   }
 
   createProposal(input: {
@@ -906,6 +965,7 @@ export class OperationalStore {
       "rejections",
       "undo_records",
       "briefing_feedback",
+      "ui_feedback",
       "authorization_tokens",
       "gmail_accounts",
       "gmail_ingestion_runs",
