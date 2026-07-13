@@ -61,7 +61,7 @@ describe("LifeOS notification compiler", () => {
 
 		expect(snapshot.mode).toBe("live");
 		expect(snapshot.notifications).toContainEqual(expect.objectContaining({
-			title: "LifeOS noticed a risk",
+			title: "Something may need attention",
 			summary: "One active project has no next action.",
 			category: "needs_you",
 		}));

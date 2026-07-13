@@ -51,7 +51,7 @@
 					status: "resolved",
 					tone: "update",
 					title: "Task creation undone",
-					summary: "The automatically created task was removed from the prototype activity stream.",
+					summary: "The automatically created task was removed.",
 				};
 			}
 			return { ...item, status: "resolved" };
@@ -79,7 +79,7 @@
 		<div class="flex items-center gap-2">
 			<div class="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
 				<span class="size-2 rounded-full bg-emerald-500"></span>
-				Prototype · no writes enabled
+				Read-only mode
 			</div>
 			<Button variant="ghost" size="icon" aria-label="Open settings">
 				<Settings2 aria-hidden="true" />

@@ -277,7 +277,7 @@
 		appendMessage(activeConversationId, {
 			id: `message_review_${Date.now()}`,
 			role: "agent",
-			body: `“${message.artifact.title}” is an external action. The connected version will open the exact recipient and reply for confirmation before anything is sent.`,
+			body: `“${message.artifact.title}” would affect the outside world. Review the exact recipient and content before approving it; nothing has been sent.`,
 			createdAt: "Now",
 		});
 	}

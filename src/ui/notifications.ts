@@ -85,9 +85,9 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
         category: "approvals",
         tone: "proposal",
         status: "open",
-        title: "Internal change awaits review",
+        title: "Change ready for review",
         summary: compactText(String(proposal.arguments.preview ?? "A LifeOS change is ready for review."), 180),
-        detail: "Current policy still requires approval for this internal change.",
+        detail: "Nothing will change without your approval.",
         relativeTime: relativeTime(proposal.createdAt, now),
         primaryAction: { kind: "review", label: "Review" },
         secondaryAction: { kind: "dismiss", label: "Dismiss" },
@@ -106,9 +106,9 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
             category: "activity",
             tone: "update",
             status: "resolved",
-            title: "Untrusted email instruction detected",
-            summary: "LifeOS isolated an instruction in provider content instead of treating it as a command.",
-            detail: "No task or proposal was created from the instruction.",
+            title: "Potential instruction found in an email",
+            summary: "I treated it as email content, not a command.",
+            detail: "Nothing was created or changed.",
             relativeTime: relativeTime(extraction.createdAt, now),
           });
           continue;
@@ -125,8 +125,8 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
             summary: compactText(extraction.unresolved[0] ?? "LifeOS could not resolve one detail.", 180),
             detail: compactText(extraction.summary, 140),
             relativeTime: relativeTime(extraction.createdAt, now),
-            primaryAction: { kind: "resolve", label: "Resolve" },
-            secondaryAction: { kind: "dismiss", label: "Ignore" },
+            primaryAction: { kind: "resolve", label: "Clarify" },
+            secondaryAction: { kind: "dismiss", label: "Dismiss" },
           });
         }
       }
@@ -138,8 +138,8 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           category: "activity",
           tone: "update",
           status: status.lastRunStatus === "completed" ? "resolved" : "open",
-          title: status.lastRunStatus === "completed" ? "Email ingestion completed" : "Email ingestion needs attention",
-          summary: `${status.messages} metadata-only message record${status.messages === 1 ? "" : "s"} retained; message bodies are not stored.`,
+          title: status.lastRunStatus === "completed" ? "Email check complete" : "Email check needs attention",
+          summary: `${status.messages} message${status.messages === 1 ? " is" : "s are"} available. Message bodies were not saved.`,
           relativeTime: relativeTime(status.lastRunCompletedAt, now),
         });
       }
@@ -153,10 +153,10 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
         category: "activity",
         tone: "update",
         status: status.unprocessed === 0 ? "resolved" : "open",
-        title: status.unprocessed === 0 ? "Calendar is organized" : "Calendar has new changes",
-        summary: `${status.events} upcoming event${status.events === 1 ? "" : "s"} in compact state.`,
+        title: status.unprocessed === 0 ? "Calendar is up to date" : "Calendar has new changes",
+        summary: `${status.events} upcoming event${status.events === 1 ? " is" : "s are"} available.`,
         ...(status.unprocessed > 0
-          ? { detail: `${status.unprocessed} change${status.unprocessed === 1 ? "" : "s"} waiting for projection.` }
+          ? { detail: `${status.unprocessed} change${status.unprocessed === 1 ? " is" : "s are"} still being organized.` }
           : {}),
         relativeTime: "Current state",
       });
@@ -171,10 +171,10 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
         category: "needs_you",
         tone: "question",
         status: "open",
-        title: "LifeOS noticed a risk",
+        title: "Something may need attention",
         summary: compactText(String(risk.summary ?? "An active item may need attention."), 180),
         relativeTime: chief ? relativeTime(chief.createdAt, now) : "Current state",
-        primaryAction: { kind: "discuss", label: "Discuss" },
+        primaryAction: { kind: "discuss", label: "Ask about this" },
       });
     }
 
@@ -185,8 +185,8 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
         category: "activity",
         tone: "update",
         status: "resolved",
-        title: "LifeOS is all clear",
-        summary: "No current compact state, ingestion result, or proposal needs your attention.",
+        title: "You’re caught up",
+        summary: "Nothing currently needs your review.",
         relativeTime: "Now",
       });
     }
@@ -216,7 +216,7 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
       snapshot: {
         mode: "unavailable",
         generatedAt: now.toISOString(),
-        notifications: [systemErrorNotification(error)],
+        notifications: [systemErrorNotification()],
         error: safeError(error),
       },
       summaryCandidates: [],
@@ -331,14 +331,14 @@ function setupSnapshot(now: Date, summary: string): UiNotificationSnapshot {
       status: "open",
       title: "Finish LifeOS setup",
       summary,
-      detail: "Run the existing doctor and database migration commands before connecting the UI.",
+      detail: "LifeOS needs its initial health check and database setup before the Inbox can connect.",
       relativeTime: "Setup required",
-      primaryAction: { kind: "discuss", label: "Ask LifeOS" },
+      primaryAction: { kind: "discuss", label: "Ask how to finish" },
     }],
   };
 }
 
-function systemErrorNotification(error: unknown): UiNotification {
+function systemErrorNotification(): UiNotification {
   return {
     id: uiId("system", "unavailable"),
     kind: "system",
@@ -346,9 +346,9 @@ function systemErrorNotification(error: unknown): UiNotification {
     tone: "question",
     status: "open",
     title: "LifeOS Inbox is unavailable",
-    summary: safeError(error),
+    summary: "I couldn’t load the Inbox. Ask LifeOS for the next safe troubleshooting step.",
     relativeTime: "Now",
-    primaryAction: { kind: "discuss", label: "Ask LifeOS" },
+    primaryAction: { kind: "discuss", label: "Get help" },
   };
 }
 
