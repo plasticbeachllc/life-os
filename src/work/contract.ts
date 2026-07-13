@@ -52,4 +52,5 @@ export interface WorkStatus {
   byState: Record<WorkState, number>;
   byWorkflow: Record<WorkWorkflow, number>;
   oldestPendingAgeSeconds: number | null;
+  failureCategories: Partial<Record<WorkErrorCategory, number>>;
 }

@@ -3,6 +3,7 @@ import type { OperationalStore, ProposalRecord } from "../db/store";
 import { sha256Text } from "../util/hashing";
 import { newId } from "../util/ids";
 import { markdownTasks } from "../util/markdown";
+import { createEffectProposal, findCurrentEffectProposal } from "../effects/proposals";
 
 export interface TaskIdPatch {
   line: number;
@@ -22,7 +23,10 @@ export async function proposeTaskIdNormalization(input: {
     const missing = markdownTasks(note.raw).filter((task) => !task.taskId);
     if (missing.length === 0) continue;
     const targetHash = sha256Text(note.raw);
-    const prior = input.store.findProposal("normalize_task_ids", note.relativePath, targetHash);
+    const prior = findCurrentEffectProposal({
+      store: input.store, workflow: "normalize_task_ids", targetPath: note.relativePath,
+      targetHash, effectType: "task_id_patch",
+    });
     if (prior) {
       existing.push(prior);
       continue;
@@ -31,15 +35,11 @@ export async function proposeTaskIdNormalization(input: {
       line: task.line, taskText: task.text, taskId: newId("task"),
     }));
     const createdAt = new Date().toISOString();
-    created.push(input.store.createProposal({
+    created.push(createEffectProposal({ store: input.store,
       proposalId: newId("prop"), runId: newId("run"), actionId: newId("act"),
       workflow: "normalize_task_ids", sourceType: "obsidian", sourceId: note.relativePath,
       sourceHash: targetHash, targetPath: note.relativePath, targetHash,
-      toolName: "apply_task_id_patch", permissionClass: "yellow",
-      arguments: {
-        patches,
-        preview: patches.map((patch) => `@@ line ${patch.line}\n+  <!-- life-os:task_id=${patch.taskId} -->`).join("\n"),
-      },
+      plan: { type: "task_id_patch", patches },
       createdAt, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     }));
   }

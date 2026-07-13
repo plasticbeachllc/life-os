@@ -75,5 +75,6 @@ test("subscription reasoning rejects a superseded compact state", () => {
   expect(() => submitSubscriptionMorningReasoning({
     store, callId: prepared.callId!, recommendations: [],
   })).toThrow("contextual state changed");
-  expect(store.getModelCall(prepared.callId!)?.status).toBe("prepared");
+  expect(store.getModelCall(prepared.callId!)?.status).toBe("failed");
+  expect(store.getModelCall(prepared.callId!)?.error).toBe("context_changed");
 });

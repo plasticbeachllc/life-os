@@ -69,6 +69,17 @@ export function completeWorkInTransaction(db: DatabaseConnection, input: {
   if (result.changes !== 1) throw new Error("work lease is stale or does not match the completed source");
 }
 
+/** Mark a queued or leased item stale without leaving a lease behind. */
+export function markWorkStaleInTransaction(db: DatabaseConnection, input: {
+  workId: string; updatedAt: string;
+}): boolean {
+  return db.query(`
+    UPDATE work_items SET state = 'stale', lease_owner = NULL, lease_expires_at = NULL,
+      error_category = 'stale_source', updated_at = ?
+    WHERE work_id = ? AND state IN ('pending', 'leased')
+  `).run(input.updatedAt, input.workId).changes === 1;
+}
+
 export class WorkRepository {
   constructor(private readonly store: OperationalStore) {}
 
@@ -163,11 +174,7 @@ export class WorkRepository {
     const db = this.store.open();
     try {
       const updatedAt = input.updatedAt ?? new Date().toISOString();
-      return db.query(`
-        UPDATE work_items SET state = 'stale', lease_owner = NULL, lease_expires_at = NULL,
-          error_category = 'stale_source', updated_at = ?
-        WHERE work_id = ? AND state IN ('pending', 'leased')
-      `).run(updatedAt, input.workId).changes === 1;
+      return markWorkStaleInTransaction(db, { workId: input.workId, updatedAt });
     } finally {
       db.close();
     }
@@ -228,6 +235,10 @@ export class WorkRepository {
       const workflowRows = db.query<{ workflow: WorkWorkflow; count: number }, []>(
         "SELECT workflow, COUNT(*) AS count FROM work_items GROUP BY workflow",
       ).all();
+      const failureRows = db.query<{ error_category: WorkErrorCategory; count: number }, []>(`
+        SELECT error_category, COUNT(*) AS count FROM work_items
+        WHERE state = 'failed' AND error_category IS NOT NULL GROUP BY error_category
+      `).all();
       const oldest = db.query<{ created_at: string | null }, []>(
         "SELECT MIN(created_at) AS created_at FROM work_items WHERE state = 'pending'",
       ).get()?.created_at;
@@ -235,9 +246,11 @@ export class WorkRepository {
       const byWorkflow: WorkStatus["byWorkflow"] = { gmail_extraction: 0, imessage_extraction: 0 };
       for (const row of stateRows) byState[row.state] = row.count;
       for (const row of workflowRows) byWorkflow[row.workflow] = row.count;
+      const failureCategories: WorkStatus["failureCategories"] = {};
+      for (const row of failureRows) failureCategories[row.error_category] = row.count;
       return {
         total: Object.values(byState).reduce((sum, count) => sum + count, 0),
-        byState, byWorkflow,
+        byState, byWorkflow, failureCategories,
         oldestPendingAgeSeconds: oldest
           ? Math.max(0, Math.floor((now.getTime() - new Date(oldest).getTime()) / 1000)) : null,
       };

@@ -447,25 +447,30 @@ A proposal is an exact, inspectable, immutable plan for a possible effect. The m
 finding worth acting on, but deterministic code constructs the effect plan.
 
 ```ts
-export interface EffectPlan {
-  effectType: "append_task" | "frontmatter_patch" | "task_id_patch" | "bootstrap_policy";
-  executor: string;
-  source: { type: string; id: string; hash: string };
-  target: { canonicalId: string; relativePath: string; expectedHash: string };
-  arguments: Record<string, unknown>; // executor-specific, validated, never arbitrary
-  planHash: string;
-  policyVersion: string;
-}
+export type EffectPlan =
+  | { type: "frontmatter_patch"; additions: Record<string, string> }
+  | { type: "task_id_patch"; patches: TaskIdPatch[] }
+  | { type: "policy_bootstrap"; content: string; sourcePath?: string }
+  | { type: "finding_task_append"; findingId: string; taskId: string; taskLine: string };
 
 export interface Proposal {
   proposalId: string;
-  plan: EffectPlan;
+  effectType: EffectPlan["type"];
+  effectPlan: EffectPlan;
+  effectPlanHash: string;
+  executorVersion: string;
+  source: { type: string; id: string; hash: string };
+  target: { relativePath: string; expectedHash: string };
   state: "pending" | "approved" | "rejected" | "expired" | "applied" | "stale";
-  review: SanitizedProposalReview;
   createdAt: string;
   expiresAt?: string;
 }
 ```
+
+The plan hash covers the validated plan, executor version, source identity/hash, and target path/hash.
+Executor selection is derived from the discriminant through a closed code registry; it is never stored
+as caller-controlled data. Reviews are projections produced by the registered executor, not persisted
+prompt blobs or generic argument rendering.
 
 Proposal lifecycle:
 
@@ -914,17 +919,20 @@ The last evaluation is authoritative. A policy change invalidates older authoriz
 
 ```ts
 export interface EffectExecutor<Plan extends EffectPlan, Result> {
-  readonly effectType: Plan["effectType"];
+  readonly effectType: Plan["type"];
+  readonly version: string;
+  readonly permissionClass: "yellow";
+  readonly policyAction?: string;
   validatePlan(plan: unknown): asserts plan is Plan;
   review(plan: Plan): SanitizedProposalReview;
-  currentTargetHash(plan: Plan): Promise<string>;
-  apply(plan: Plan, authorization: ConsumedAuthorization): Promise<Result>;
-  prepareUndo?(result: Result): Promise<UndoPlan>;
+  assertSourceCurrent(proposal: Proposal, plan: Plan): Promise<void>;
+  apply(input: BoundEffectApplication): Promise<Result>;
 }
 ```
 
 Executors are registered in code through an exact allowlist. MCP never accepts an executor name from a
-free-form caller and never accepts generic effect arguments.
+free-form caller and never accepts generic effect arguments. Authorization is bound to both the plan
+hash and executor version; a code-version change or plan mutation requires proposal regeneration.
 
 ## 11. Application surfaces
 
@@ -1140,24 +1148,27 @@ them rather than replacing them wholesale.
 This plan minimizes risky simultaneous edits. Each phase should merge independently and preserve
 current behavior unless its acceptance criteria explicitly state otherwise.
 
+Roadmap status: complete. See `docs/roadmap-completion.md` for local/live sign-off and
+`docs/conformance-matrix.md` for executable evidence.
+
 ### Phase 0: architectural contracts and characterization
 
 Goal: make current behavior measurable before refactoring.
 
-- [ ] Add architecture decision records for source identity, reasoning lifecycle, findings, projections,
+- [x] Add architecture decision records for source identity, reasoning lifecycle, findings, projections,
   and effects.
-- [ ] Characterize current Gmail and Messages prepare/submit behavior with cross-workflow tests.
-- [ ] Record current retention and sanitized output fixtures.
-- [ ] Record current cache and invalidation inputs per workflow.
-- [ ] Document current reasoning states (`prepared`, `completed`, `failed`) and gaps.
-- [ ] Add injected-clock helpers where tests currently depend on wall time.
+- [x] Characterize current Gmail and Messages prepare/submit behavior with cross-workflow tests.
+- [x] Record current retention and sanitized output fixtures.
+- [x] Record current cache and invalidation inputs per workflow.
+- [x] Document current reasoning states (`prepared`, `completed`, `failed`) and gaps.
+- [x] Add injected-clock helpers where tests currently depend on wall time.
 
 Acceptance criteria:
 
-- [ ] No production behavior or schema change.
-- [ ] Tests prove stale source/container, prompt version, policy version, invalid evidence, and injection
+- [x] No production behavior or schema change.
+- [x] Tests prove stale source/container, prompt version, policy version, invalid evidence, and injection
   consistency rejection for both extraction workflows.
-- [ ] Tests prove unchanged replay causes zero duplicate extraction/model work.
+- [x] Tests prove unchanged replay causes zero duplicate extraction/model work.
 
 Ownership: orchestration test owner; no concurrent schema/MCP/CLI edits.
 
@@ -1165,26 +1176,26 @@ Ownership: orchestration test owner; no concurrent schema/MCP/CLI edits.
 
 Goal: remove duplicated lifecycle bookkeeping while keeping provider-specific behavior.
 
-- [ ] Define transport-independent reasoning run states and sanitized error categories.
-- [ ] Define separate `LiveContextManifest` and `PersistableContextManifest` types.
-- [ ] Implement the generic prepared-workflow coordinator.
-- [ ] Move model-call status, manifest persistence, prompt/policy identity checks, and usage completion into
+- [x] Define transport-independent reasoning run states and sanitized error categories.
+- [x] Define separate `LiveContextManifest` and `PersistableContextManifest` types.
+- [x] Implement the generic prepared-workflow coordinator.
+- [x] Move model-call status, manifest persistence, prompt/policy identity checks, and usage completion into
   the coordinator.
-- [ ] Keep exact refetch, source selection, evidence construction, and retention sanitizers in provider
+- [x] Keep exact refetch, source selection, evidence construction, and retention sanitizers in provider
   definitions.
-- [ ] Migrate Gmail extraction.
-- [ ] Migrate Messages extraction.
-- [ ] Migrate morning reasoning after extraction parity is proven.
-- [ ] Decide whether `ModelGateway` becomes a transport implementation or a lower-level audit service;
+- [x] Migrate Gmail extraction.
+- [x] Migrate Messages extraction.
+- [x] Migrate morning reasoning after extraction parity is proven.
+- [x] Decide whether `ModelGateway` becomes a transport implementation or a lower-level audit service;
   remove competing lifecycle ownership.
 
 Acceptance criteria:
 
-- [ ] Deliberate MCP and CLI removals are documented in the prototype changelog.
-- [ ] Gmail and Messages retain their distinct delta/evidence validation.
-- [ ] Persisted manifests contain no transient source text.
-- [ ] All prepare/submit invalidation tests pass across workflows.
-- [ ] No new model transport or API key is introduced.
+- [x] Deliberate MCP and CLI removals are documented in the prototype changelog.
+- [x] Gmail and Messages retain their distinct delta/evidence validation.
+- [x] Persisted manifests contain no transient source text.
+- [x] All prepare/submit invalidation tests pass across workflows.
+- [x] No new model transport or API key is introduced.
 
 Ownership: one orchestration owner for `src/orchestration/` and shared tests. Provider agents may prepare
 definitions but should not concurrently modify the coordinator.
@@ -1193,24 +1204,24 @@ definitions but should not concurrently modify the coordinator.
 
 Goal: let downstream state operate on semantic records rather than provider tables.
 
-- [ ] Finalize finding enums and normalization rules from existing prompt contracts.
-- [ ] Add the coordinated finding and status-event schema.
-- [ ] Implement deterministic provider-extraction-to-finding projectors.
-- [ ] Backfill existing Gmail and Messages extractions without model calls.
-- [ ] Preserve links to provider extraction and reasoning call internally.
-- [ ] Add sanitized review queries that operate on findings.
-- [ ] Support dismiss, supersede, and convert as explicit lifecycle events.
-- [ ] Generalize fixed-inbox task proposal from eligible extraction items to eligible findings while
+- [x] Finalize finding enums and normalization rules from existing prompt contracts.
+- [x] Add the coordinated finding and status-event schema.
+- [x] Implement deterministic provider-extraction-to-finding projectors.
+- [x] Backfill existing Gmail and Messages extractions without model calls.
+- [x] Preserve links to provider extraction and reasoning call internally.
+- [x] Add sanitized review queries that operate on findings.
+- [x] Support dismiss, supersede, and convert as explicit lifecycle events.
+- [x] Generalize fixed-inbox task proposal from eligible extraction items to eligible findings while
   retaining deterministic text/target/ID derivation.
 
 Acceptance criteria:
 
-- [ ] Provider-specific retention tests still pass.
-- [ ] Backfill is idempotent and resumable.
-- [ ] Equivalent provider extraction replays create no duplicate findings.
-- [ ] Every finding has valid evidence and at least one delta source where required.
-- [ ] Finding review leaks no provider IDs, hashes, addresses, headers, or excerpts.
-- [ ] Finding creation alone creates no proposal or mutation.
+- [x] Provider-specific retention tests still pass.
+- [x] Backfill is idempotent and resumable.
+- [x] Equivalent provider extraction replays create no duplicate findings.
+- [x] Every finding has valid evidence and at least one delta source where required.
+- [x] Finding review leaks no provider IDs, hashes, addresses, headers, or excerpts.
+- [x] Finding creation alone creates no proposal or mutation.
 
 Ownership: one schema owner; coordinate proposal changes with the policy/effect owner.
 
@@ -1262,21 +1273,27 @@ Ownership: one schema and orchestration owner. Do not implement independently pe
 
 Goal: make the proposal/effect boundary reusable without making it generic or permissive.
 
-- [ ] Define typed effect-plan union for currently registered proposal tools.
-- [ ] Add plan hash and executor version to proposal invalidation identity if not already represented.
-- [ ] Implement explicit executor registry.
-- [ ] Move review projection into each typed executor.
-- [ ] Retain policy compilation at prepare-authorization and apply time.
-- [ ] Preserve short-lived single-use tokens, exact target hashes, atomic writes, backups, and undo.
-- [ ] Migrate existing frontmatter, task-ID, policy-bootstrap, and inbox-append actions one at a time.
+- [x] Define typed effect-plan union for currently registered proposal tools.
+- [x] Add plan hash and executor version to proposal invalidation identity.
+- [x] Implement explicit executor registry.
+- [x] Move review projection into each typed executor.
+- [x] Retain policy compilation at prepare-authorization and apply time.
+- [x] Preserve short-lived single-use tokens, exact target hashes, atomic writes, backups, and undo.
+- [x] Migrate existing frontmatter, task-ID, policy-bootstrap, and inbox-append actions.
 
 Acceptance criteria:
 
-- [ ] No MCP/CLI caller can supply arbitrary path, patch, SQL, URL, command, or executor.
-- [ ] Existing stale target/source tests continue to reject.
-- [ ] Apply is idempotent per approved action.
-- [ ] Undo rejects a changed target.
-- [ ] Red actions and unknown effect types cannot be registered through data.
+- [x] No MCP/CLI caller can supply arbitrary path, patch, SQL, URL, command, or executor.
+- [x] Existing stale target/source tests continue to reject.
+- [x] Apply is idempotent per approved action.
+- [x] Undo rejects a changed target.
+- [x] Red actions and unknown effect types cannot be registered through data.
+
+Implemented in schema version 18. This is intentionally a breaking prototype reset: legacy
+`tool_name`/`arguments_json` action storage is replaced by validated `effect_type`, `effect_plan_json`,
+`effect_plan_hash`, and `executor_version` fields. Proposal identity and authorization-token consumption
+include the immutable plan hash and executor version. The CLI, MCP review, UI notifications, policy
+authorization, apply router, and undo bookkeeping now consume the same typed contract.
 
 Ownership: single policy/effect owner; no parallel authorization edits.
 
@@ -1284,21 +1301,37 @@ Ownership: single policy/effect owner; no parallel authorization edits.
 
 Goal: reduce large coordination hotspots after domain contracts stabilize.
 
-- [ ] Extract narrow repository interfaces from `OperationalStore` without changing the database.
-- [ ] Introduce transaction-scoped repository composition.
-- [ ] Extend integration registrations with safe CLI/MCP status and ingestion metadata.
-- [ ] Generate repetitive read-only status/ingestion registration.
-- [ ] Keep mutation, authorization, credentials, and exact refetch tools explicit.
-- [ ] Split MCP tool implementations into domain modules while preserving one allowlist.
-- [ ] Split CLI handlers into domain modules while preserving documented commands.
+- [x] Extract narrow repository interfaces from `OperationalStore` without changing the database.
+- [x] Introduce transaction-scoped repository composition.
+- [x] Extend integration registrations with safe CLI/MCP status and ingestion metadata.
+- [x] Generate repetitive read-only status/ingestion registration.
+- [x] Keep mutation, authorization, credentials, and exact refetch tools explicit.
+- [x] Split MCP tool implementations into domain modules while preserving one allowlist.
+- [x] Split CLI handlers into domain modules while preserving documented commands.
 
 Acceptance criteria:
 
-- [ ] No circular dependency from provider stores into MCP/CLI.
-- [ ] All current tool names and annotations remain exact unless deliberately migrated.
-- [ ] MCP allowlist tests detect additions/removals.
-- [ ] Generated registrations cannot expose mutation-capable handlers.
-- [ ] Store splitting does not create multiple SQLite connections inside one required transaction.
+- [x] No circular dependency from provider stores into MCP/CLI.
+- [x] All current tool names and annotations remain exact unless deliberately migrated.
+- [x] MCP allowlist tests detect additions/removals.
+- [x] Generated registrations cannot expose mutation-capable handlers.
+- [x] Store splitting does not create multiple SQLite connections inside one required transaction.
+
+The first Phase 6 slice adds immutable application metadata to each integration registration and uses
+it to generate the four provider status/ingestion pairs for both MCP and CLI. Registration validates
+the exact derived MCP names, unique CLI command ownership, and `providerMutation: false`. Generated
+CLI handlers accept only `--vault` and the registration's bounded `--limit`; credentials, transient
+refetch, extraction, linking, triage, policy, authorization, and mutation remain explicit handlers.
+
+`withRepositoryTransaction` composes narrow findings, work, and prepared-reasoning repositories over
+one unexposed SQLite connection and one transaction. Coordinators receive domain methods rather than
+raw SQL access, and an exception rolls the entire cross-domain operation back. This is additive code
+organization only; schema version 18 is unchanged.
+
+The final Phase 6 slice moves the complete proposal/action MCP surface into `mcp/proposal-tools.ts`
+and CLI review/approve/apply/undo routing into `cli/proposal-commands.ts`. Integration status/ingestion
+remain in their generated domain modules, while `mcp/server.ts` and `cli.ts` retain composition and
+explicit non-generic workflows. The single MCP allowlist test remains authoritative for every module.
 
 Ownership: application-surface owner; coordinate `src/mcp/server.ts` and `src/cli.ts` as shared files.
 
@@ -1306,20 +1339,32 @@ Ownership: application-surface owner; coordinate `src/mcp/server.ts` and `src/cl
 
 Goal: expose the product model cleanly.
 
-- [ ] Organize UI around sources, findings, state, and proposals.
-- [ ] Add attention queues for reply/open-loop/date/relationship/project categories.
-- [ ] Show freshness and provenance without raw identifiers.
-- [ ] Show proposal previews and explicit approval state.
-- [ ] Show action result and undo availability.
-- [ ] Add provider health, work backlog, and sanitized failure categories.
-- [ ] Add feedback capture for finding usefulness and proposal acceptance.
+- [x] Organize UI around sources, findings, state, and proposals.
+- [x] Add attention queues for reply/open-loop/date/relationship/project categories.
+- [x] Show freshness and provenance without raw identifiers.
+- [x] Show proposal previews and explicit approval state.
+- [x] Show action result and undo availability.
+- [x] Add provider health, work backlog, and sanitized failure categories.
+- [x] Add feedback capture for finding usefulness and proposal acceptance.
 
 Acceptance criteria:
 
-- [ ] Chat cannot bypass proposal authorization.
-- [ ] UI and MCP review projections share sanitization tests.
-- [ ] No provider IDs, source hashes, raw addresses, subjects, or excerpts appear in browser payloads.
-- [ ] Empty, stale, loading, partial-provider, and failed states are represented.
+- [x] Chat cannot bypass proposal authorization.
+- [x] UI and MCP review projections share sanitization tests.
+- [x] No provider IDs, source hashes, raw addresses, subjects, or excerpts appear in browser payloads.
+- [x] Empty, stale, loading, partial-provider, and failed states are represented.
+
+Implemented in schema version 19. The server builds one sanitized workspace projection; the browser
+never opens SQLite. Source cards contain generic provider labels and health only. Attention queues and
+findings expose categories, counts, due-state metadata, and opaque UI IDs rather than source text or
+provider identity. Browser proposal previews reuse the MCP-validated effect contract but reduce exact
+plans to safe effect summaries. Recent actions expose result and undo state under opaque IDs.
+
+Feedback is append-only and accepts only opaque UI subjects with closed finding-usefulness or
+proposal-acceptance outcomes. The endpoint requires exact same-origin JSON and a short-lived random token
+bound to the HttpOnly session plus the exact subject ID/kind emitted in that workspace snapshot. Chat retains an exact enabled read-only MCP allowlist, a read-only
+sandbox, no shell or network, and an explicit deny list containing every authorization and mutation
+tool. Workspace modes cover loading, empty, stale, partial, failed, setup-required, and live states.
 
 Ownership: UI owner consuming stable domain APIs; no direct SQLite access from client code.
 
@@ -1329,49 +1374,49 @@ Every integration or shared-lifecycle change must cover the applicable cases bel
 
 ### 17.1 Provider and ingestion
 
-- [ ] Exact permission scope and configured selection.
-- [ ] Fixed query/path boundaries; rejection of arbitrary inputs.
-- [ ] Deterministic normalization and stable hashes.
-- [ ] First ingest, unchanged replay, changed source, deletion/unavailability.
-- [ ] Container/thread/conversation invalidation.
-- [ ] Partial provider failure and safe cursor behavior.
-- [ ] No forbidden body or provider payload retention.
-- [ ] Sanitized status and error categories.
+- [x] Exact permission scope and configured selection.
+- [x] Fixed query/path boundaries; rejection of arbitrary inputs.
+- [x] Deterministic normalization and stable hashes.
+- [x] First ingest, unchanged replay, changed source, deletion/unavailability.
+- [x] Container/thread/conversation invalidation.
+- [x] Partial provider failure and safe cursor behavior.
+- [x] No forbidden body or provider payload retention.
+- [x] Sanitized status and error categories.
 
 ### 17.2 Context and reasoning
 
-- [ ] Per-category and total token budgets.
-- [ ] Stable ranking and deduplication.
-- [ ] Included/omitted audit manifest and omission reasons.
-- [ ] Live context is not persisted by audit recording.
-- [ ] Prompt, schema, policy, source, container, context, redaction, and builder version invalidation.
-- [ ] Prompt injection treatment and deterministic flag consistency.
-- [ ] Evidence allowlist, delta evidence, enum, bound, and schema rejection.
-- [ ] Prepared-call expiry and stale submission.
-- [ ] Cached output revalidation and invalid-cache eviction.
-- [ ] Zero model work for unchanged inputs.
+- [x] Per-category and total token budgets.
+- [x] Stable ranking and deduplication.
+- [x] Included/omitted audit manifest and omission reasons.
+- [x] Live context is not persisted by audit recording.
+- [x] Prompt, schema, policy, source, container, context, redaction, and builder version invalidation.
+- [x] Prompt injection treatment and deterministic flag consistency.
+- [x] Evidence allowlist, delta evidence, enum, bound, and schema rejection.
+- [x] Prepared-call expiry and stale submission.
+- [x] Cached output revalidation and invalid-cache eviction.
+- [x] Zero model work for unchanged inputs.
 
 ### 17.3 Findings and projections
 
-- [ ] Idempotent extraction-to-finding projection and backfill.
-- [ ] Immutable finding plus explicit status events.
-- [ ] Supersession and dismissal effects on current state.
-- [ ] Stable projection rebuild and provenance.
-- [ ] No model call during deterministic rebuild.
-- [ ] Bounded recursive compression.
-- [ ] No automatic proposal or mutation.
+- [x] Idempotent extraction-to-finding projection and backfill.
+- [x] Immutable finding plus explicit status events.
+- [x] Supersession and dismissal effects on current state.
+- [x] Stable projection rebuild and provenance.
+- [x] No model call during deterministic rebuild.
+- [x] Bounded recursive compression (depth zero; projections never summarize projections recursively).
+- [x] No automatic proposal or mutation.
 
 ### 17.4 Proposal and effects
 
-- [ ] Eligible and ineligible finding kinds/owners.
-- [ ] Deterministic plan text, target, ID, due date, and preview.
-- [ ] Policy absent, denied, changed, and permitted-with-approval cases.
-- [ ] Short-lived single-use token bound to exact action and hashes.
-- [ ] Stale source and stale target rejection at authorization and apply.
-- [ ] Atomic application, backup, audit, and stable provenance.
-- [ ] Duplicate apply rejection.
-- [ ] Undo success and changed-target rejection.
-- [ ] Sanitized MCP, CLI, and UI output.
+- [x] Eligible and ineligible finding kinds/owners.
+- [x] Deterministic plan text, target, ID, due date, and preview.
+- [x] Policy absent, denied, changed, and permitted-with-approval cases.
+- [x] Short-lived single-use token bound to exact action and hashes.
+- [x] Stale source and stale target rejection at authorization and apply.
+- [x] Atomic application, backup, audit, and stable provenance.
+- [x] Duplicate apply rejection.
+- [x] Undo success and changed-target rejection.
+- [x] Sanitized MCP, CLI, and UI output.
 
 ### 17.5 Required handoff checks
 

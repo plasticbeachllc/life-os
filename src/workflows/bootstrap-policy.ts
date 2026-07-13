@@ -5,6 +5,7 @@ import type { OperationalStore, ProposalRecord } from "../db/store";
 import { mandatoryPolicyFiles, parsePermissions } from "../policy/loader";
 import { sha256Text } from "../util/hashing";
 import { newId } from "../util/ids";
+import { createEffectProposal, findCurrentEffectProposal } from "../effects/proposals";
 
 const copiedPolicySources: Partial<Record<keyof typeof mandatoryPolicyFiles, string>> = {
   constitution: "90 System/AI/Agent Constitution.md",
@@ -79,21 +80,20 @@ export async function proposePolicyBootstrap(input: {
     const content = sourcePath ? await Bun.file(input.vault.path(sourcePath)).text() : generatedContent(name);
     if (name === "permissionsToml") parsePermissions(content);
     const sourceHash = sha256Text(content);
-    const prior = input.store.findProposal("bootstrap_policy", targetPath, "missing");
+    const prior = findCurrentEffectProposal({
+      store: input.store, workflow: "bootstrap_policy", targetPath,
+      targetHash: "missing", effectType: "policy_bootstrap",
+    });
     if (prior) {
       existing.push(prior);
       continue;
     }
     const createdAt = new Date().toISOString();
-    created.push(input.store.createProposal({
+    created.push(createEffectProposal({ store: input.store,
       proposalId: newId("prop"), runId: newId("run"), actionId: newId("act"),
       workflow: "bootstrap_policy", sourceType: sourcePath ? "obsidian" : "builtin",
       sourceId: sourcePath ?? `builtin:${name}`, sourceHash, targetPath, targetHash: "missing",
-      toolName: "bootstrap_policy_file", permissionClass: "yellow",
-      arguments: {
-        content, ...(sourcePath ? { sourcePath } : {}),
-        preview: `+ create ${targetPath}\n+ ${content.split(/\r?\n/).length} lines`,
-      },
+      plan: { type: "policy_bootstrap", content, ...(sourcePath ? { sourcePath } : {}) },
       createdAt, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     }));
   }

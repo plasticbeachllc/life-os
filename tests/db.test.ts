@@ -14,7 +14,7 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(17);
+  expect(store.getSchemaVersion()).toBe(20);
   expect(store.countRows("schema_migrations")).toBe(1);
 });
 
@@ -29,7 +29,7 @@ test("rejects an incompatible prototype database with an explicit reset instruct
 
   const store = new OperationalStore(path);
   expect(() => store.migrate()).toThrow(
-    "prototype database schema 7 is incompatible with 17; delete the operational database and rebuild",
+    "prototype database schema 7 is incompatible with 20; delete the operational database and rebuild",
   );
   expect(store.getSchemaVersion()).toBe(7);
 });
@@ -49,10 +49,12 @@ test("records runs, actions, and action results", () => {
   store.recordAction({
     actionId: "act_test",
     runId: "run_test",
-    toolName: "write_audit_projection",
+    effectType: "frontmatter_patch",
+    effectPlan: { type: "frontmatter_patch", additions: {} },
+    effectPlanHash: "sha256:test-plan",
+    executorVersion: "frontmatter-patch-v1",
     lifecycleState: "applied",
     permissionClass: "green",
-    arguments: { runId: "run_test" },
   });
   store.recordActionResult({
     actionId: "act_test",
@@ -65,4 +67,15 @@ test("records runs, actions, and action results", () => {
   expect(store.countRows("runs")).toBe(1);
   expect(store.countRows("actions")).toBe(1);
   expect(store.countRows("action_results")).toBe(1);
+});
+
+test("concurrent processes can verify the same current schema", async () => {
+  const databasePath = join(mkdtempSync(join(tmpdir(), "life-os-db-concurrent-")), "store.db");
+  new OperationalStore(databasePath).migrate();
+  const script = `import { OperationalStore } from ${JSON.stringify(join(import.meta.dir, "../src/db/store.ts"))}; new OperationalStore(${JSON.stringify(databasePath)}).migrate();`;
+  const processes = Array.from({ length: 4 }, () => Bun.spawn(["bun", "-e", script], {
+    stdout: "pipe", stderr: "pipe",
+  }));
+  const exits = await Promise.all(processes.map((process) => process.exited));
+  expect(exits).toEqual([0, 0, 0, 0]);
 });

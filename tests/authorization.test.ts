@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -13,6 +13,8 @@ import {
 import { applyProposalWithAuthorization } from "../src/tools/apply-proposal";
 import { undoAction } from "../src/tools/undo-action";
 import { proposeMetadataNormalization } from "../src/workflows/normalize-metadata";
+import { effectPlanHash } from "../src/effects/contract";
+import { sha256Text } from "../src/util/hashing";
 
 function write(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -48,6 +50,15 @@ test("authorization rejects wrong, expired, cross-action, and stale tokens witho
   const originalSecond = await Bun.file(context.secondPath).text();
 
   const authorization = await prepareProposalAuthorization({ ...context, proposalId: first.proposalId });
+  expect(authorization).toMatchObject({
+    expectedPlanHash: first.effectPlanHash, executorVersion: first.executorVersion,
+  });
+  expect(() => context.store.consumeAuthorizationToken({
+    tokenHash: sha256Text(authorization.token), purpose: "apply_proposal",
+    proposalId: first.proposalId, actionId: first.actionId,
+    expectedTargetHash: first.targetHash, expectedPlanHash: "sha256:different",
+    executorVersion: first.executorVersion, now: new Date().toISOString(),
+  })).toThrow("does not match");
   expect(applyProposalWithAuthorization({
     ...context, token: "confirm_wrong", proposalId: first.proposalId, actionId: first.actionId,
   })).rejects.toThrow("invalid");
@@ -95,11 +106,43 @@ test("red proposals can never receive an authorization token", async () => {
   const context = fixture();
   context.store.migrate();
   const createdAt = new Date().toISOString();
+  const plan = { type: "frontmatter_patch" as const, additions: { type: "person" } };
   const proposal = context.store.createProposal({
     proposalId: "prop_red", runId: "run_red", actionId: "act_red", workflow: "test",
     sourceType: "user", sourceId: "test", sourceHash: "missing",
-    targetPath: "30 People/First.md", targetHash: "missing", toolName: "delete_note",
-    permissionClass: "red", arguments: { preview: "delete" }, createdAt,
+    targetPath: "30 People/First.md", targetHash: "missing",
+    effectType: plan.type, effectPlan: plan,
+    effectPlanHash: effectPlanHash({
+      plan, executorVersion: "frontmatter-patch-v1",
+      sourceType: "user", sourceId: "test", sourceHash: "missing",
+      targetPath: "30 People/First.md", targetHash: "missing",
+    }),
+    executorVersion: "frontmatter-patch-v1", permissionClass: "red", createdAt,
   });
   expect(prepareProposalAuthorization({ ...context, proposalId: proposal.proposalId })).rejects.toThrow("red action");
+});
+
+test("authorization fails closed for absent, denied, and changed policy", async () => {
+  const absent = fixture();
+  const absentProposal = (await proposeMetadataNormalization(absent)).created[0]!;
+  unlinkSync(absent.vault.path("90 System/AI/permissions.toml"));
+  await expect(prepareProposalAuthorization({ ...absent, proposalId: absentProposal.proposalId }))
+    .rejects.toThrow();
+
+  const denied = fixture();
+  const deniedProposal = (await proposeMetadataNormalization(denied)).created[0]!;
+  write(denied.vault.path("90 System/AI/permissions.toml"),
+    `[actions.create_task]\nenabled = true\nmode = "proposal"\n`);
+  await expect(prepareProposalAuthorization({ ...denied, proposalId: deniedProposal.proposalId }))
+    .rejects.toThrow("does not permit");
+
+  const changed = fixture();
+  const changedProposal = (await proposeMetadataNormalization(changed)).created[0]!;
+  const token = await prepareProposalAuthorization({ ...changed, proposalId: changedProposal.proposalId });
+  write(changed.vault.path("90 System/AI/permissions.toml"),
+    `[actions.create_task]\nenabled = true\nmode = "proposal"\n`);
+  await expect(applyProposalWithAuthorization({
+    ...changed, token: token.token, proposalId: changedProposal.proposalId,
+    actionId: changedProposal.actionId,
+  })).rejects.toThrow("does not permit");
 });

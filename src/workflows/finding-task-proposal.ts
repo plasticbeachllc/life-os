@@ -3,6 +3,7 @@ import type { OperationalStore, ProposalRecord } from "../db/store";
 import { FindingStore } from "../findings/store";
 import { sha256Text } from "../util/hashing";
 import { newId } from "../util/ids";
+import { createEffectProposal } from "../effects/proposals";
 
 const taskInbox = "00 Inbox/Inbox.md";
 const eligibleKinds = new Set(["explicit_request", "open_loop", "user_commitment"]);
@@ -22,16 +23,12 @@ export async function proposeFindingTask(input: {
   const taskId = newId("task");
   const taskLine = taskLineForFinding(finding.statement, finding.dueDate);
   const createdAt = new Date().toISOString();
-  return input.store.createProposal({
+  return createEffectProposal({ store: input.store,
     proposalId: newId("prop"), runId: newId("run"), actionId: newId("act"),
     workflow: `finding_task_${finding.findingId}`,
     sourceType: "finding", sourceId: finding.findingId, sourceHash: finding.contentHash,
     targetPath: taskInbox, targetHash,
-    toolName: "append_finding_task", permissionClass: "yellow",
-    arguments: {
-      taskLine, taskId, findingId: finding.findingId,
-      preview: `+ ${taskLine}\n+   <!-- life-os:task_id=${taskId} source=${finding.findingId} -->`,
-    },
+    plan: { type: "finding_task_append", taskLine, taskId, findingId: finding.findingId },
     createdAt, expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
   });
 }

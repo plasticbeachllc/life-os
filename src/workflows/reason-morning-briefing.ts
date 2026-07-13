@@ -92,6 +92,7 @@ export async function reasonAboutMorningBriefing(input: {
     },
     cache: {
       schemaVersion: input.schemaVersion, policyVersion: input.policyVersion,
+      redactionVersion: "stock-presidio-v1", builderVersion: "morning-briefing-v1",
       expiresAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
     },
   });

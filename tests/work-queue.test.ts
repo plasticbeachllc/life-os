@@ -109,6 +109,7 @@ test("retry categories are bounded and status retains no work identities", () =>
     byState: { pending: 0, leased: 0, completed: 0, stale: 0, failed: 1 },
     byWorkflow: { gmail_extraction: 1, imessage_extraction: 0 },
     oldestPendingAgeSeconds: null,
+    failureCategories: { retry_exhausted: 1 },
   });
   expect(serializedStatus).not.toContain("account_internal");
   expect(serializedStatus).not.toContain("message_internal");

@@ -12,6 +12,7 @@ import { proposeFindingTask } from "../src/workflows/finding-task-proposal";
 import { prepareProposalAuthorization } from "../src/policy/authorization";
 import { applyProposalWithAuthorization } from "../src/tools/apply-proposal";
 import { undoAction } from "../src/tools/undo-action";
+import { requireEffectPlan } from "../src/effects/contract";
 
 test("multiple active findings create distinct fixed-inbox proposals idempotently", async () => {
   const { store, vault, root } = fixture();
@@ -26,10 +27,11 @@ test("multiple active findings create distinct fixed-inbox proposals idempotentl
   expect(firstReplay.proposalId).toBe(first.proposalId);
   expect(second.proposalId).not.toBe(first.proposalId);
   expect(first).toMatchObject({
-    toolName: "append_finding_task", sourceType: "finding",
+    effectType: "finding_task_append", executorVersion: "finding-task-append-v1",
+    sourceType: "finding",
     sourceId: firstFinding.findingId, targetPath: "00 Inbox/Inbox.md",
   });
-  expect(first.arguments.taskLine).toBe("- [ ] First task 📅 2026-07-15");
+  expect(requireEffectPlan(first, "finding_task_append").taskLine).toBe("- [ ] First task 📅 2026-07-15");
   expect(await Bun.file(join(root, "00 Inbox/Inbox.md")).text()).toBe("# Inbox\n");
   expect(store.listPendingProposals()).toHaveLength(2);
   await expect(proposeFindingTask({

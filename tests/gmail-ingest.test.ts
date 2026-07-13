@@ -312,7 +312,8 @@ test("subscription extraction rejects source drift", async () => {
   })).rejects.toThrow("ingested Gmail source or thread changed");
   expect(store.countRows("gmail_extractions")).toBe(0);
   expect(store.countRows("findings")).toBe(0);
-  expect(store.getModelCall(String(prepared.callId))?.status).toBe("prepared");
+  expect(store.getModelCall(String(prepared.callId))?.status).toBe("failed");
+  expect(store.getModelCall(String(prepared.callId))?.error).toBe("stale_source");
   expect(new WorkRepository(store).status().byState).toMatchObject({ stale: 1, pending: 1 });
 }, 15_000);
 

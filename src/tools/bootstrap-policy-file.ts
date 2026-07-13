@@ -6,6 +6,7 @@ import type { OperationalStore } from "../db/store";
 import { mandatoryPolicyFiles, parsePermissions } from "../policy/loader";
 import { sha256Text } from "../util/hashing";
 import { newId } from "../util/ids";
+import { requireEffectPlan } from "../effects/contract";
 
 const bootstrapTargets = new Set(Object.values(mandatoryPolicyFiles));
 
@@ -14,15 +15,15 @@ export async function applyPolicyBootstrapProposal(input: {
 }): Promise<{ actionId: string; targetPath: string; afterHash: string; backupPath: string }> {
   const proposal = input.store.getProposal(input.proposalId);
   if (!proposal) throw new Error(`proposal not found: ${input.proposalId}`);
-  if (proposal.workflow !== "bootstrap_policy" || proposal.toolName !== "bootstrap_policy_file") throw new Error("not a policy bootstrap proposal");
+  if (proposal.workflow !== "bootstrap_policy") throw new Error("not a policy bootstrap proposal");
+  const plan = requireEffectPlan(proposal, "policy_bootstrap");
   if (proposal.lifecycleState !== "approved" || !proposal.approved) throw new Error("proposal action requires explicit approval");
   if (proposal.expiresAt && new Date(proposal.expiresAt).getTime() <= Date.now()) throw new Error("proposal has expired");
   if (!bootstrapTargets.has(proposal.targetPath as never)) throw new Error("target is outside bootstrap allowlist");
   if (proposal.targetHash !== "missing") throw new Error("bootstrap target must have been absent");
-  const content = proposal.arguments.content;
-  if (typeof content !== "string" || content.trim() === "") throw new Error("bootstrap content is invalid");
+  const content = plan.content;
   if (proposal.targetPath.endsWith("permissions.toml")) parsePermissions(content);
-  const sourcePath = proposal.arguments.sourcePath;
+  const sourcePath = plan.sourcePath;
   if (sourcePath !== undefined) {
     if (typeof sourcePath !== "string" || !sourcePath.startsWith("90 System/AI/")) throw new Error("bootstrap source is invalid");
     const currentSource = await Bun.file(input.vault.path(sourcePath)).text();

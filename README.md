@@ -78,6 +78,12 @@ bun test
 uv uses the interpreter pinned in `.python-version`. Presidio and its spaCy model are pinned in
 `pyproject.toml` and `uv.lock`.
 
+## iPhone prototype
+
+The native, read-only SwiftUI prototype lives in [`iphone/`](iphone/). Open
+`iphone/LifeOS.xcodeproj` in Xcode to run its fabricated Today, Inbox, Tasks, and More screens in an
+iPhone simulator. It is not connected to the vault, SQLite, providers, MCP, or mutation workflows.
+
 ## Configuration
 
 Runtime secrets and machine-specific configuration belong in `~/.config/life-os/.env`, mode `600`.

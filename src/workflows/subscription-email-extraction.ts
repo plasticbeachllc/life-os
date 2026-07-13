@@ -11,7 +11,7 @@ import { semanticFindingsForExtraction } from "../findings/projector";
 import { newId } from "../util/ids";
 import { extractionClassifications as classifications, extractionItemKinds as itemKinds, extractionOwners, gmailPromptSpec } from "../orchestration/prompt-contracts";
 import { renderInstructions, type CompiledPolicyPrompt, type EvidenceDescriptor } from "../orchestration/prompt-spec";
-import { prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
+import { failPreparedCallAndMarkWorkStale, prepareReasoningCall, requirePreparedReasoningCall } from "../orchestration/prepared-reasoning";
 import { previewGmailExtractionContext } from "./gmail-extraction-preview";
 import { WorkRepository } from "../work/repository";
 import {
@@ -151,7 +151,9 @@ export async function submitSubscriptionEmailExtraction(input: {
     || preparedSource.threadStateHash !== input.threadStateHash
     || gmailStore.currentMessageHash(input.accountId, preparedSource.messageId) !== call.sourceHash
     || gmailStore.currentThreadHash(input.accountId, preparedSource.threadId) !== input.threadStateHash) {
-    workRepository.markStale({ workId });
+    failPreparedCallAndMarkWorkStale({
+      store: input.store, call, workId, category: "stale_source",
+    });
     throw new Error("ingested Gmail source or thread changed; prepare extraction again");
   }
   workRepository.requireLease({

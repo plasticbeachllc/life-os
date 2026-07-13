@@ -1,5 +1,8 @@
 import { OAuth2Client } from "google-auth-library";
 
+/** Google Calendar events.list permits at most 2,500 instances per request. */
+export const googleCalendarMaxResults = 2500;
+
 export interface CalendarApiEvent {
   id: string; status?: string; summary?: string; location?: string; updated?: string;
   start?: { date?: string; dateTime?: string; timeZone?: string };
@@ -8,7 +11,7 @@ export interface CalendarApiEvent {
 
 export interface CalendarSourceAdapter {
   getPrimaryCalendar(): Promise<{ id: string; timeZone?: string }>;
-  listEvents(input: { calendarId: string; timeMin: string; timeMax: string; pageToken?: string }): Promise<{
+  listEvents(input: { calendarId: string; timeMin: string; timeMax: string; pageToken?: string; maxResults?: number }): Promise<{
     events: CalendarApiEvent[]; nextPageToken?: string;
   }>;
 }
@@ -22,12 +25,13 @@ export class GoogleCalendarRestAdapter implements CalendarSourceAdapter {
   getPrimaryCalendar(): Promise<{ id: string; timeZone?: string }> {
     return this.request("/calendars/primary");
   }
-  async listEvents(input: { calendarId: string; timeMin: string; timeMax: string; pageToken?: string }): Promise<{
+  async listEvents(input: { calendarId: string; timeMin: string; timeMax: string; pageToken?: string; maxResults?: number }): Promise<{
     events: CalendarApiEvent[]; nextPageToken?: string;
   }> {
     const query = new URLSearchParams({
       timeMin: input.timeMin, timeMax: input.timeMax, singleEvents: "true",
-      orderBy: "startTime", showDeleted: "true", maxResults: "250",
+      orderBy: "startTime", showDeleted: "true",
+      maxResults: String(Math.min(Math.max(input.maxResults ?? 250, 1), googleCalendarMaxResults)),
     });
     if (input.pageToken) query.set("pageToken", input.pageToken);
     const result = await this.request<{ items?: CalendarApiEvent[]; nextPageToken?: string }>(

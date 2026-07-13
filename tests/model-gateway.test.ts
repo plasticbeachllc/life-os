@@ -41,7 +41,7 @@ test("model gateway caches versioned intermediate output and audits cache hits",
     manifest: buildContext([
       { id: "project", category: "entity_state" as const, retrievalLevel: 1 as const, content: { status: "active" }, tokenEstimate: 10, relevance: 1, sourceRefs: ["project_1"] },
     ], { maxInputTokens: 50, reservedOutputTokens: 10, sourceTokens: 5, entityStateTokens: 20, recentChangeTokens: 5, policyTokens: 5, contingencyTokens: 5 }),
-    cache: { schemaVersion: "4", policyVersion: "policy-v1" },
+    cache: { schemaVersion: "4", policyVersion: "policy-v1", redactionVersion: "r1", builderVersion: "b1" },
   });
 
   expect(await gateway.complete(input())).toEqual({ summary: "stable" });
@@ -90,7 +90,7 @@ test("model gateway evicts invalid cached output, audits failure, and recomputes
       maxInputTokens: 10, reservedOutputTokens: 0, sourceTokens: 0, entityStateTokens: 0,
       recentChangeTokens: 0, policyTokens: 0, contingencyTokens: 0,
     }),
-    cache: { schemaVersion: "1", policyVersion: "policy-v1" },
+    cache: { schemaVersion: "1", policyVersion: "policy-v1", redactionVersion: "r1", builderVersion: "b1" },
     ...(validate ? { validateOutput: (output: unknown) => {
       if (!output || typeof output !== "object" || !("ok" in output)) throw new Error("invalid output");
     } } : {}),

@@ -2,7 +2,7 @@ import type { ObsidianVault, VaultNote } from "../adapters/obsidian";
 import type { OperationalStore, ProposalRecord } from "../db/store";
 import { sha256Text } from "../util/hashing";
 import { newId } from "../util/ids";
-import { frontmatterPatchPreview } from "../util/frontmatter-patch";
+import { createEffectProposal, findCurrentEffectProposal } from "../effects/proposals";
 
 export interface NormalizationProposalReport {
   scanned: number;
@@ -28,18 +28,20 @@ export async function proposeMetadataNormalization(input: {
     const additions = missingCanonicalMetadata(note);
     if (Object.keys(additions).length === 0) continue;
     const targetHash = sha256Text(note.raw);
-    const prior = input.store.findProposal("normalize_metadata", note.relativePath, targetHash);
+    const prior = findCurrentEffectProposal({
+      store: input.store, workflow: "normalize_metadata", targetPath: note.relativePath,
+      targetHash, effectType: "frontmatter_patch",
+    });
     if (prior) {
       report.existing.push(prior);
       continue;
     }
     const createdAt = new Date().toISOString();
-    const proposal = input.store.createProposal({
+    const proposal = createEffectProposal({ store: input.store,
       proposalId: newId("prop"), runId: newId("run"), actionId: newId("act"),
       workflow: "normalize_metadata", sourceType: "obsidian", sourceId: note.relativePath,
       sourceHash: targetHash, targetPath: note.relativePath, targetHash,
-      toolName: "apply_frontmatter_patch", permissionClass: "yellow",
-      arguments: { additions, preview: frontmatterPatchPreview({ additions }) },
+      plan: { type: "frontmatter_patch", additions },
       createdAt,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     });

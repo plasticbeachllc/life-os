@@ -7,22 +7,24 @@ import { compileActionPolicy, loadPolicy } from "../policy/loader";
 import { sha256Text } from "../util/hashing";
 import { newId } from "../util/ids";
 import { taskLineForFinding } from "../workflows/finding-task-proposal";
+import { requireEffectPlan } from "../effects/contract";
 
 export async function applyFindingTaskProposal(input: {
   proposalId: string; vault: ObsidianVault; store: OperationalStore; backupRoot: string;
 }): Promise<{ actionId: string; targetPath: string; backupPath: string }> {
   const proposal = input.store.getProposal(input.proposalId);
-  if (!proposal || proposal.toolName !== "append_finding_task"
+  if (!proposal
     || proposal.sourceType !== "finding" || proposal.workflow !== `finding_task_${proposal.sourceId}`) {
     throw new Error("not a finding task proposal");
   }
+  const plan = requireEffectPlan(proposal, "finding_task_append");
   const finding = new FindingStore(input.store).get(proposal.sourceId);
   if (!finding || finding.status !== "active" || finding.contentHash !== proposal.sourceHash) {
     throw new Error("finding changed; regenerate task proposal");
   }
-  const taskId = String(proposal.arguments.taskId ?? "");
-  if (proposal.arguments.findingId !== finding.findingId
-    || proposal.arguments.taskLine !== taskLineForFinding(finding.statement, finding.dueDate)) {
+  const taskId = plan.taskId;
+  if (plan.findingId !== finding.findingId
+    || plan.taskLine !== taskLineForFinding(finding.statement, finding.dueDate)) {
     throw new Error("finding task proposal arguments are stale or invalid");
   }
   const conversion = new FindingStore(input.store).prepareTaskConversion({
@@ -44,7 +46,7 @@ export async function applyFindingTaskProposal(input: {
   const before = await Bun.file(path).text();
   const beforeHash = sha256Text(before);
   if (beforeHash !== proposal.targetHash) throw new Error("task inbox changed; regenerate proposal");
-  const taskLine = String(proposal.arguments.taskLine ?? "");
+  const taskLine = plan.taskLine;
   if (!/^- \[ \] \S/.test(taskLine) || !/^task_[a-f0-9]+$/.test(taskId)) {
     throw new Error("task proposal arguments are invalid");
   }

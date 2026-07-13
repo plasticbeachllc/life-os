@@ -1,4 +1,4 @@
-export const schemaVersion = 17;
+export const schemaVersion = 20;
 
 export const ddl = [
   `
@@ -25,14 +25,18 @@ export const ddl = [
   CREATE TABLE IF NOT EXISTS actions (
     action_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(run_id),
-    tool_name TEXT NOT NULL,
+    effect_type TEXT NOT NULL CHECK(effect_type IN (
+      'frontmatter_patch', 'task_id_patch', 'policy_bootstrap', 'finding_task_append'
+    )),
+    effect_plan_json TEXT NOT NULL,
+    effect_plan_hash TEXT NOT NULL,
+    executor_version TEXT NOT NULL,
     lifecycle_state TEXT NOT NULL,
     permission_class TEXT NOT NULL,
     target_entity_id TEXT,
     target_path TEXT,
     source_hash TEXT,
     target_hash TEXT,
-    arguments_json TEXT NOT NULL,
     created_at TEXT NOT NULL
   )
   `,
@@ -285,10 +289,12 @@ export const ddl = [
     source_hash TEXT NOT NULL,
     target_path TEXT NOT NULL,
     target_hash TEXT NOT NULL,
+    effect_plan_hash TEXT NOT NULL,
+    executor_version TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT,
     applied_at TEXT,
-    UNIQUE(workflow, target_path, target_hash)
+    UNIQUE(workflow, target_path, target_hash, effect_plan_hash, executor_version)
   )
   `,
   `
@@ -339,6 +345,8 @@ export const ddl = [
     proposal_id TEXT,
     action_id TEXT NOT NULL,
     expected_target_hash TEXT NOT NULL,
+    expected_plan_hash TEXT,
+    executor_version TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     used_at TEXT
@@ -590,6 +598,16 @@ export const ddl = [
   )
   `,
   `
+  CREATE TABLE IF NOT EXISTS calendar_ingestion_cursors (
+    account_id TEXT PRIMARY KEY,
+    calendar_id TEXT NOT NULL,
+    time_min TEXT NOT NULL,
+    time_max TEXT NOT NULL,
+    next_page_token TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+  `,
+  `
   CREATE TABLE IF NOT EXISTS calendar_events (
     account_id TEXT NOT NULL,
     calendar_id TEXT NOT NULL,
@@ -715,4 +733,14 @@ export const ddl = [
   CREATE INDEX IF NOT EXISTS idx_telegram_messages_candidates
   ON telegram_messages(source_id, last_extraction_hash, sent_at)
   `,
+  `
+  CREATE TABLE IF NOT EXISTS ui_feedback (
+    feedback_id TEXT PRIMARY KEY,
+    subject_kind TEXT NOT NULL CHECK(subject_kind IN ('finding', 'proposal')),
+    subject_ui_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('useful', 'not_useful', 'accepted', 'rejected')),
+    created_at TEXT NOT NULL
+  )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_ui_feedback_subject ON ui_feedback(subject_kind, subject_ui_id, created_at)`,
 ];
