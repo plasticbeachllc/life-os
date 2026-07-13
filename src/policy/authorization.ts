@@ -7,37 +7,34 @@ import type { OperationalStore, ProposalRecord } from "../db/store";
 import { compileActionPolicy, loadPolicy } from "./loader";
 import { disabledActions } from "./invariants";
 import { sha256File, sha256Text } from "../util/hashing";
-import { FindingStore } from "../findings/store";
-
-const registeredProposalTools = new Set([
-  "apply_frontmatter_patch",
-  "apply_task_id_patch",
-  "bootstrap_policy_file",
-  "append_finding_task",
-]);
+import { assertEffectSourceCurrent, getEffectExecutor, reviewEffectProposal } from "../effects/registry";
 
 export async function prepareProposalAuthorization(input: {
   proposalId: string; vault: ObsidianVault; store: OperationalStore; ttlSeconds?: number;
 }): Promise<{
   token: string; expiresAt: string; proposalId: string; actionId: string;
   targetPath: string; preview: string; expectedTargetHash: string;
+  expectedPlanHash: string; executorVersion: string;
 }> {
   const proposal = requireApplicableProposal(input.store, input.proposalId);
   await assertProposalPolicy(proposal, input.vault);
-  assertProposalSourceCurrent(proposal, input.store);
+  await assertEffectSourceCurrent({ proposal, vault: input.vault, store: input.store });
   await assertProposalTargetCurrent(proposal, input.vault);
+  const review = reviewEffectProposal(proposal);
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + (input.ttlSeconds ?? 300) * 1000).toISOString();
   const token = `confirm_${randomBytes(24).toString("hex")}`;
   input.store.saveAuthorizationToken({
     tokenHash: sha256Text(token), purpose: "apply_proposal",
     proposalId: proposal.proposalId, actionId: proposal.actionId,
-    expectedTargetHash: proposal.targetHash, createdAt: createdAt.toISOString(), expiresAt,
+    expectedTargetHash: proposal.targetHash, expectedPlanHash: proposal.effectPlanHash,
+    executorVersion: proposal.executorVersion, createdAt: createdAt.toISOString(), expiresAt,
   });
   return {
     token, expiresAt, proposalId: proposal.proposalId, actionId: proposal.actionId,
-    targetPath: proposal.targetPath, preview: String(proposal.arguments.preview ?? "(no preview)"),
-    expectedTargetHash: proposal.targetHash,
+    targetPath: proposal.targetPath, preview: review.preview,
+    expectedTargetHash: proposal.targetHash, expectedPlanHash: proposal.effectPlanHash,
+    executorVersion: proposal.executorVersion,
   };
 }
 
@@ -48,12 +45,13 @@ export async function consumeProposalAuthorization(input: {
   const proposal = requireApplicableProposal(input.store, input.proposalId);
   if (proposal.actionId !== input.actionId) throw new Error("action does not belong to proposal");
   await assertProposalPolicy(proposal, input.vault);
-  assertProposalSourceCurrent(proposal, input.store);
+  await assertEffectSourceCurrent({ proposal, vault: input.vault, store: input.store });
   await assertProposalTargetCurrent(proposal, input.vault);
   input.store.consumeAuthorizationToken({
     tokenHash: sha256Text(input.token), purpose: "apply_proposal",
     proposalId: proposal.proposalId, actionId: proposal.actionId,
-    expectedTargetHash: proposal.targetHash, now: new Date().toISOString(),
+    expectedTargetHash: proposal.targetHash, expectedPlanHash: proposal.effectPlanHash,
+    executorVersion: proposal.executorVersion, now: new Date().toISOString(),
   });
   if (!proposal.approved) {
     input.store.approveProposalAction(proposal.proposalId, proposal.actionId, new Date().toISOString());
@@ -98,15 +96,14 @@ function requireApplicableProposal(store: OperationalStore, proposalId: string):
   if (!proposal) throw new Error(`proposal not found: ${proposalId}`);
   if (!["pending", "approved"].includes(proposal.lifecycleState)) throw new Error(`proposal cannot be applied from state: ${proposal.lifecycleState}`);
   if (proposal.expiresAt && new Date(proposal.expiresAt).getTime() <= Date.now()) throw new Error("proposal has expired");
-  if (proposal.permissionClass === "red" || disabledActions.has(proposal.toolName)) throw new Error("red action cannot be authorized");
-  if (!registeredProposalTools.has(proposal.toolName)) throw new Error(`proposal tool is not registered: ${proposal.toolName}`);
+  if (proposal.permissionClass === "red" || disabledActions.has(proposal.effectType)) throw new Error("red action cannot be authorized");
+  reviewEffectProposal(proposal);
   return proposal;
 }
 
 async function assertProposalPolicy(proposal: ProposalRecord, vault: ObsidianVault): Promise<void> {
-  if (proposal.toolName === "bootstrap_policy_file") return;
-  const actionName = ["apply_task_id_patch", "append_finding_task"]
-    .includes(proposal.toolName) ? "create_task" : proposal.toolName;
+  const actionName = getEffectExecutor(proposal.effectType).policyAction;
+  if (!actionName) return;
   const decision = compileActionPolicy(await loadPolicy(vault), actionName);
   if (!decision.allowed || !decision.requiresApproval) throw new Error(`policy does not permit approval for ${actionName}`);
 }
@@ -114,15 +111,6 @@ async function assertProposalPolicy(proposal: ProposalRecord, vault: ObsidianVau
 async function assertProposalTargetCurrent(proposal: ProposalRecord, vault: ObsidianVault): Promise<void> {
   if (await currentTargetHash(vault, proposal.targetPath) !== proposal.targetHash) {
     throw new Error("proposal target changed; regenerate proposal");
-  }
-}
-
-function assertProposalSourceCurrent(proposal: ProposalRecord, store: OperationalStore): void {
-  if (proposal.toolName !== "append_finding_task") return;
-  const finding = new FindingStore(store).get(proposal.sourceId);
-  if (!finding || finding.status !== "active" || finding.contentHash !== proposal.sourceHash
-    || proposal.arguments.findingId !== finding.findingId) {
-    throw new Error("finding changed; regenerate task proposal");
   }
 }
 

@@ -4,6 +4,7 @@ import { loadConfig } from "../config";
 import { CalendarStore } from "../calendar/store";
 import { OperationalStore } from "../db/store";
 import { schemaVersion } from "../db/schema";
+import { reviewEffectProposal } from "../effects/registry";
 import { GmailStore } from "../gmail/store";
 import { currentEmailExtractionIdentity } from "../gmail/extraction-contract";
 import { sha256Text } from "../util/hashing";
@@ -61,7 +62,7 @@ export function compileUiNotifications(now = new Date()): UiNotificationSnapshot
         tone: "question",
         status: "open",
         title: "Internal change awaits review",
-        summary: compactText(String(proposal.arguments.preview ?? "A LifeOS change is ready for review."), 180),
+        summary: compactText(reviewEffectProposal(proposal).preview, 180),
         detail: "Current policy still requires approval for this internal change.",
         relativeTime: relativeTime(proposal.createdAt, now),
         primaryAction: { kind: "discuss", label: "Discuss" },

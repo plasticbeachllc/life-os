@@ -14,7 +14,7 @@ test("migrates operational sqlite store", () => {
 
   store.migrate();
 
-  expect(store.getSchemaVersion()).toBe(17);
+  expect(store.getSchemaVersion()).toBe(18);
   expect(store.countRows("schema_migrations")).toBe(1);
 });
 
@@ -29,7 +29,7 @@ test("rejects an incompatible prototype database with an explicit reset instruct
 
   const store = new OperationalStore(path);
   expect(() => store.migrate()).toThrow(
-    "prototype database schema 7 is incompatible with 17; delete the operational database and rebuild",
+    "prototype database schema 7 is incompatible with 18; delete the operational database and rebuild",
   );
   expect(store.getSchemaVersion()).toBe(7);
 });
@@ -49,10 +49,12 @@ test("records runs, actions, and action results", () => {
   store.recordAction({
     actionId: "act_test",
     runId: "run_test",
-    toolName: "write_audit_projection",
+    effectType: "frontmatter_patch",
+    effectPlan: { type: "frontmatter_patch", additions: {} },
+    effectPlanHash: "sha256:test-plan",
+    executorVersion: "frontmatter-patch-v1",
     lifecycleState: "applied",
     permissionClass: "green",
-    arguments: { runId: "run_test" },
   });
   store.recordActionResult({
     actionId: "act_test",

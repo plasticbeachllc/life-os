@@ -1,4 +1,4 @@
-export const schemaVersion = 17;
+export const schemaVersion = 18;
 
 export const ddl = [
   `
@@ -25,14 +25,18 @@ export const ddl = [
   CREATE TABLE IF NOT EXISTS actions (
     action_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(run_id),
-    tool_name TEXT NOT NULL,
+    effect_type TEXT NOT NULL CHECK(effect_type IN (
+      'frontmatter_patch', 'task_id_patch', 'policy_bootstrap', 'finding_task_append'
+    )),
+    effect_plan_json TEXT NOT NULL,
+    effect_plan_hash TEXT NOT NULL,
+    executor_version TEXT NOT NULL,
     lifecycle_state TEXT NOT NULL,
     permission_class TEXT NOT NULL,
     target_entity_id TEXT,
     target_path TEXT,
     source_hash TEXT,
     target_hash TEXT,
-    arguments_json TEXT NOT NULL,
     created_at TEXT NOT NULL
   )
   `,
@@ -285,10 +289,12 @@ export const ddl = [
     source_hash TEXT NOT NULL,
     target_path TEXT NOT NULL,
     target_hash TEXT NOT NULL,
+    effect_plan_hash TEXT NOT NULL,
+    executor_version TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT,
     applied_at TEXT,
-    UNIQUE(workflow, target_path, target_hash)
+    UNIQUE(workflow, target_path, target_hash, effect_plan_hash, executor_version)
   )
   `,
   `
@@ -339,6 +345,8 @@ export const ddl = [
     proposal_id TEXT,
     action_id TEXT NOT NULL,
     expected_target_hash TEXT NOT NULL,
+    expected_plan_hash TEXT,
+    executor_version TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     used_at TEXT

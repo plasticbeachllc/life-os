@@ -7,6 +7,7 @@ import { loadPolicy } from "../policy/loader";
 import { sha256Text } from "../util/hashing";
 import { applyFrontmatterPatch } from "../util/frontmatter-patch";
 import { newId } from "../util/ids";
+import { requireEffectPlan } from "../effects/contract";
 
 export async function applyApprovedProposal(input: {
   proposalId: string;
@@ -18,7 +19,7 @@ export async function applyApprovedProposal(input: {
   if (!proposal) throw new Error(`proposal not found: ${input.proposalId}`);
   if (proposal.lifecycleState !== "approved" || !proposal.approved) throw new Error("proposal action requires explicit approval");
   if (proposal.expiresAt && new Date(proposal.expiresAt).getTime() <= Date.now()) throw new Error("proposal has expired");
-  if (proposal.toolName !== "apply_frontmatter_patch") throw new Error(`unsupported proposal tool: ${proposal.toolName}`);
+  const plan = requireEffectPlan(proposal, "frontmatter_patch");
   if (!proposal.targetPath.startsWith("20 Projects/") && !proposal.targetPath.startsWith("30 People/")) {
     throw new Error("target is outside the canonical metadata allowlist");
   }
@@ -33,9 +34,7 @@ export async function applyApprovedProposal(input: {
   if (beforeHash !== proposal.sourceHash || beforeHash !== proposal.targetHash) {
     throw new Error("target changed since proposal creation; regenerate proposal");
   }
-  const additions = proposal.arguments.additions;
-  if (!isStringRecord(additions)) throw new Error("proposal frontmatter patch is invalid");
-  const after = applyFrontmatterPatch(before, { additions });
+  const after = applyFrontmatterPatch(before, { additions: plan.additions });
   const afterHash = sha256Text(after);
   if (afterHash === beforeHash) throw new Error("proposal produces no change");
 
@@ -64,9 +63,4 @@ export async function applyApprovedProposal(input: {
     message: "frontmatter patch applied", filesModified: [proposal.targetPath],
   });
   return { actionId: proposal.actionId, targetPath: proposal.targetPath, beforeHash, afterHash, backupPath };
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    && Object.values(value).every((item) => typeof item === "string");
 }

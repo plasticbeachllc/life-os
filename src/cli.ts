@@ -8,9 +8,6 @@ import { loadConfig, loadGmailAuthConfig, loadGmailClientConfig } from "./config
 import { OperationalStore } from "./db/store";
 import type { ProposalRecord } from "./db/store";
 import type { Finding, HealthReport, Severity } from "./models/common";
-import { applyApprovedProposal } from "./tools/apply-frontmatter-patch";
-import { applyPolicyBootstrapProposal } from "./tools/bootstrap-policy-file";
-import { applyTaskIdProposal } from "./tools/apply-task-id-patch";
 import { undoAction } from "./tools/undo-action";
 import { proposePolicyBootstrap } from "./workflows/bootstrap-policy";
 import { applyPolicyBootstrapSet, pendingPolicyBootstrapSet } from "./workflows/apply-policy-bootstrap-set";
@@ -41,7 +38,8 @@ import { ingestTelegramChanges } from "./workflows/telegram-ingest";
 import { FindingStore } from "./findings/store";
 import { rebuildFindingAttentionState } from "./state/finding-attention";
 import { rebuildChiefOfStaffState } from "./state/chief-of-staff";
-import { applyFindingTaskProposal } from "./tools/append-finding-task";
+import { applyEffectProposal } from "./tools/apply-proposal";
+import { reviewEffectProposal } from "./effects/registry";
 import { WorkRepository } from "./work/repository";
 
 const symbols: Record<Severity, string> = {
@@ -267,16 +265,8 @@ async function main(argv: string[]): Promise<number> {
     const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
     const store = new OperationalStore(config.databasePath);
     store.migrate();
-    const proposal = store.getProposal(proposalId);
-    if (!proposal) throw new Error(`proposal not found: ${proposalId}`);
     const toolInput = { proposalId, vault: new ObsidianVault(config.vaultPath), store, backupRoot: config.backupPath };
-    const result = proposal.toolName === "bootstrap_policy_file"
-      ? await applyPolicyBootstrapProposal(toolInput)
-      : proposal.toolName === "apply_task_id_patch"
-        ? await applyTaskIdProposal(toolInput)
-        : proposal.toolName === "append_finding_task"
-            ? await applyFindingTaskProposal(toolInput)
-            : await applyApprovedProposal(toolInput);
+    const result = await applyEffectProposal(toolInput);
     console.log(`Applied ${result.actionId} to ${result.targetPath}\nBackup: ${result.backupPath}`);
     return 0;
   }
@@ -626,6 +616,7 @@ function formatStateReport(report: StateRebuildReport): string {
 }
 
 function formatProposal(proposal: ProposalRecord): string {
+  const review = reviewEffectProposal(proposal);
   return [
     "",
     `Proposal: ${proposal.proposalId} [${proposal.lifecycleState}]`,
@@ -633,7 +624,7 @@ function formatProposal(proposal: ProposalRecord): string {
     `Target: ${proposal.targetPath}`,
     `Expected hash: ${proposal.targetHash}`,
     "Proposed diff:",
-    String(proposal.arguments.preview ?? "(no preview)"),
+    review.preview,
     `Approve: life-os approve ${proposal.proposalId} --action ${proposal.actionId} --vault <path>`,
   ].join("\n");
 }

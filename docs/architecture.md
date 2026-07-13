@@ -447,25 +447,30 @@ A proposal is an exact, inspectable, immutable plan for a possible effect. The m
 finding worth acting on, but deterministic code constructs the effect plan.
 
 ```ts
-export interface EffectPlan {
-  effectType: "append_task" | "frontmatter_patch" | "task_id_patch" | "bootstrap_policy";
-  executor: string;
-  source: { type: string; id: string; hash: string };
-  target: { canonicalId: string; relativePath: string; expectedHash: string };
-  arguments: Record<string, unknown>; // executor-specific, validated, never arbitrary
-  planHash: string;
-  policyVersion: string;
-}
+export type EffectPlan =
+  | { type: "frontmatter_patch"; additions: Record<string, string> }
+  | { type: "task_id_patch"; patches: TaskIdPatch[] }
+  | { type: "policy_bootstrap"; content: string; sourcePath?: string }
+  | { type: "finding_task_append"; findingId: string; taskId: string; taskLine: string };
 
 export interface Proposal {
   proposalId: string;
-  plan: EffectPlan;
+  effectType: EffectPlan["type"];
+  effectPlan: EffectPlan;
+  effectPlanHash: string;
+  executorVersion: string;
+  source: { type: string; id: string; hash: string };
+  target: { relativePath: string; expectedHash: string };
   state: "pending" | "approved" | "rejected" | "expired" | "applied" | "stale";
-  review: SanitizedProposalReview;
   createdAt: string;
   expiresAt?: string;
 }
 ```
+
+The plan hash covers the validated plan, executor version, source identity/hash, and target path/hash.
+Executor selection is derived from the discriminant through a closed code registry; it is never stored
+as caller-controlled data. Reviews are projections produced by the registered executor, not persisted
+prompt blobs or generic argument rendering.
 
 Proposal lifecycle:
 
@@ -914,17 +919,20 @@ The last evaluation is authoritative. A policy change invalidates older authoriz
 
 ```ts
 export interface EffectExecutor<Plan extends EffectPlan, Result> {
-  readonly effectType: Plan["effectType"];
+  readonly effectType: Plan["type"];
+  readonly version: string;
+  readonly permissionClass: "yellow";
+  readonly policyAction?: string;
   validatePlan(plan: unknown): asserts plan is Plan;
   review(plan: Plan): SanitizedProposalReview;
-  currentTargetHash(plan: Plan): Promise<string>;
-  apply(plan: Plan, authorization: ConsumedAuthorization): Promise<Result>;
-  prepareUndo?(result: Result): Promise<UndoPlan>;
+  assertSourceCurrent(proposal: Proposal, plan: Plan): Promise<void>;
+  apply(input: BoundEffectApplication): Promise<Result>;
 }
 ```
 
 Executors are registered in code through an exact allowlist. MCP never accepts an executor name from a
-free-form caller and never accepts generic effect arguments.
+free-form caller and never accepts generic effect arguments. Authorization is bound to both the plan
+hash and executor version; a code-version change or plan mutation requires proposal regeneration.
 
 ## 11. Application surfaces
 
@@ -1262,21 +1270,27 @@ Ownership: one schema and orchestration owner. Do not implement independently pe
 
 Goal: make the proposal/effect boundary reusable without making it generic or permissive.
 
-- [ ] Define typed effect-plan union for currently registered proposal tools.
-- [ ] Add plan hash and executor version to proposal invalidation identity if not already represented.
-- [ ] Implement explicit executor registry.
-- [ ] Move review projection into each typed executor.
-- [ ] Retain policy compilation at prepare-authorization and apply time.
-- [ ] Preserve short-lived single-use tokens, exact target hashes, atomic writes, backups, and undo.
-- [ ] Migrate existing frontmatter, task-ID, policy-bootstrap, and inbox-append actions one at a time.
+- [x] Define typed effect-plan union for currently registered proposal tools.
+- [x] Add plan hash and executor version to proposal invalidation identity.
+- [x] Implement explicit executor registry.
+- [x] Move review projection into each typed executor.
+- [x] Retain policy compilation at prepare-authorization and apply time.
+- [x] Preserve short-lived single-use tokens, exact target hashes, atomic writes, backups, and undo.
+- [x] Migrate existing frontmatter, task-ID, policy-bootstrap, and inbox-append actions.
 
 Acceptance criteria:
 
-- [ ] No MCP/CLI caller can supply arbitrary path, patch, SQL, URL, command, or executor.
-- [ ] Existing stale target/source tests continue to reject.
-- [ ] Apply is idempotent per approved action.
-- [ ] Undo rejects a changed target.
-- [ ] Red actions and unknown effect types cannot be registered through data.
+- [x] No MCP/CLI caller can supply arbitrary path, patch, SQL, URL, command, or executor.
+- [x] Existing stale target/source tests continue to reject.
+- [x] Apply is idempotent per approved action.
+- [x] Undo rejects a changed target.
+- [x] Red actions and unknown effect types cannot be registered through data.
+
+Implemented in schema version 18. This is intentionally a breaking prototype reset: legacy
+`tool_name`/`arguments_json` action storage is replaced by validated `effect_type`, `effect_plan_json`,
+`effect_plan_hash`, and `executor_version` fields. Proposal identity and authorization-token consumption
+include the immutable plan hash and executor version. The CLI, MCP review, UI notifications, policy
+authorization, apply router, and undo bookkeeping now consume the same typed contract.
 
 Ownership: single policy/effect owner; no parallel authorization edits.
 

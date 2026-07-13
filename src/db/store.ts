@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 import { ddl, schemaVersion } from "./schema";
+import type { EffectPlan, EffectType } from "../effects/contract";
 
 export interface RunRecord {
   runId: string;
@@ -19,10 +20,12 @@ export interface RunRecord {
 export interface ActionRecord {
   actionId: string;
   runId: string;
-  toolName: string;
+  effectType: EffectType;
+  effectPlan: EffectPlan;
+  effectPlanHash: string;
+  executorVersion: string;
   lifecycleState: string;
   permissionClass: string;
-  arguments: Record<string, unknown>;
   targetEntityId?: string;
   targetPath?: string;
   sourceHash?: string;
@@ -79,8 +82,10 @@ export interface ProposalRecord {
   targetPath: string;
   targetHash: string;
   permissionClass: string;
-  toolName: string;
-  arguments: Record<string, unknown>;
+  effectType: EffectType;
+  effectPlan: EffectPlan;
+  effectPlanHash: string;
+  executorVersion: string;
   createdAt: string;
   expiresAt?: string;
   approved: boolean;
@@ -110,6 +115,8 @@ export interface AuthorizationTokenRecord {
   proposalId?: string;
   actionId: string;
   expectedTargetHash: string;
+  expectedPlanHash?: string;
+  executorVersion?: string;
   createdAt: string;
   expiresAt: string;
   usedAt?: string;
@@ -200,23 +207,25 @@ export class OperationalStore {
       db.query(
         `
         INSERT OR REPLACE INTO actions (
-          action_id, run_id, tool_name, lifecycle_state, permission_class,
-          target_entity_id, target_path, source_hash, target_hash,
-          arguments_json, created_at
+          action_id, run_id, effect_type, effect_plan_json, effect_plan_hash,
+          executor_version, lifecycle_state, permission_class,
+          target_entity_id, target_path, source_hash, target_hash, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       ).run(
         record.actionId,
         record.runId,
-        record.toolName,
+        record.effectType,
+        JSON.stringify(record.effectPlan),
+        record.effectPlanHash,
+        record.executorVersion,
         record.lifecycleState,
         record.permissionClass,
         record.targetEntityId ?? null,
         record.targetPath ?? null,
         record.sourceHash ?? null,
         record.targetHash ?? null,
-        JSON.stringify(record.arguments),
         new Date().toISOString(),
       );
     } finally {
@@ -258,10 +267,13 @@ export class OperationalStore {
   createProposal(input: {
     proposalId: string; runId: string; actionId: string; workflow: string;
     sourceType: string; sourceId: string; sourceHash: string; targetPath: string;
-    targetHash: string; toolName: string; permissionClass: string;
-    arguments: Record<string, unknown>; createdAt: string; expiresAt?: string;
+    targetHash: string; effectType: EffectType; effectPlan: EffectPlan;
+    effectPlanHash: string; executorVersion: string; permissionClass: string;
+    createdAt: string; expiresAt?: string;
   }): ProposalRecord {
-    const existing = this.findProposal(input.workflow, input.targetPath, input.targetHash);
+    const existing = this.findProposal(
+      input.workflow, input.targetPath, input.targetHash, input.effectType, input.executorVersion,
+    );
     if (existing) return existing;
     const db = this.open();
     try {
@@ -273,22 +285,25 @@ export class OperationalStore {
         db.query(
           `INSERT INTO proposals (
             proposal_id, run_id, workflow, mode, lifecycle_state, source_type, source_id,
-            source_hash, target_path, target_hash, created_at, expires_at
-          ) VALUES (?, ?, ?, 'proposal', 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+            source_hash, target_path, target_hash, effect_plan_hash, executor_version,
+            created_at, expires_at
+          ) VALUES (?, ?, ?, 'proposal', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           input.proposalId, input.runId, input.workflow, input.sourceType, input.sourceId,
-          input.sourceHash, input.targetPath, input.targetHash, input.createdAt,
+          input.sourceHash, input.targetPath, input.targetHash,
+          input.effectPlanHash, input.executorVersion, input.createdAt,
           input.expiresAt ?? null,
         );
         db.query(
           `INSERT INTO actions (
-            action_id, run_id, tool_name, lifecycle_state, permission_class,
-            target_path, source_hash, target_hash, arguments_json, created_at
-          ) VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?)`,
+            action_id, run_id, effect_type, effect_plan_json, effect_plan_hash,
+            executor_version, lifecycle_state, permission_class,
+            target_path, source_hash, target_hash, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?)`,
         ).run(
-          input.actionId, input.runId, input.toolName, input.permissionClass,
-          input.targetPath, input.sourceHash, input.targetHash,
-          JSON.stringify(input.arguments), input.createdAt,
+          input.actionId, input.runId, input.effectType, JSON.stringify(input.effectPlan),
+          input.effectPlanHash, input.executorVersion, input.permissionClass,
+          input.targetPath, input.sourceHash, input.targetHash, input.createdAt,
         );
       })();
     } finally {
@@ -297,10 +312,15 @@ export class OperationalStore {
     return this.getProposal(input.proposalId)!;
   }
 
-  findProposal(workflow: string, targetPath: string, targetHash: string): ProposalRecord | undefined {
+  findProposal(
+    workflow: string, targetPath: string, targetHash: string,
+    effectType?: EffectType, executorVersion?: string,
+  ): ProposalRecord | undefined {
+    const effectWhere = effectType && executorVersion
+      ? " AND a.effect_type = ? AND a.executor_version = ?" : "";
     return this.queryProposal(
-      "WHERE p.workflow = ? AND p.target_path = ? AND p.target_hash = ?",
-      [workflow, targetPath, targetHash],
+      `WHERE p.workflow = ? AND p.target_path = ? AND p.target_hash = ?${effectWhere}`,
+      [workflow, targetPath, targetHash, ...(effectType && executorVersion ? [effectType, executorVersion] : [])],
     );
   }
 
@@ -403,17 +423,17 @@ export class OperationalStore {
     try {
       db.transaction(() => {
         const findingTask = db.query<{
-          tool_name: string; source_id: string; arguments_json: string;
+          effect_type: EffectType; source_id: string; effect_plan_json: string;
         }, [string]>(`
-          SELECT action.tool_name, proposal.source_id, action.arguments_json
+          SELECT action.effect_type, proposal.source_id, action.effect_plan_json
           FROM actions action JOIN proposals proposal ON proposal.run_id = action.run_id
           WHERE action.action_id = ?
         `).get(actionId);
         db.query("UPDATE undo_records SET undone_at = ? WHERE action_id = ? AND undone_at IS NULL").run(undoneAt, actionId);
         db.query("UPDATE actions SET lifecycle_state = 'undone' WHERE action_id = ?").run(actionId);
-        if (findingTask?.tool_name === "append_finding_task") {
-          const args = JSON.parse(findingTask.arguments_json) as Record<string, unknown>;
-          const taskId = typeof args.taskId === "string" ? args.taskId : undefined;
+        if (findingTask?.effect_type === "finding_task_append") {
+          const plan = JSON.parse(findingTask.effect_plan_json) as Record<string, unknown>;
+          const taskId = typeof plan.taskId === "string" ? plan.taskId : undefined;
           if (!taskId) throw new Error("finding task action lacks a stable task ID");
           db.query(`INSERT INTO finding_status_events (
             event_id, finding_id, status, related_entity_type, related_entity_id, reason, created_at
@@ -694,11 +714,13 @@ export class OperationalStore {
     try {
       db.query(
         `INSERT INTO authorization_tokens (
-          token_hash, purpose, proposal_id, action_id, expected_target_hash, created_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          token_hash, purpose, proposal_id, action_id, expected_target_hash,
+          expected_plan_hash, executor_version, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.tokenHash, record.purpose, record.proposalId ?? null, record.actionId,
-        record.expectedTargetHash, record.createdAt, record.expiresAt,
+        record.expectedTargetHash, record.expectedPlanHash ?? null,
+        record.executorVersion ?? null, record.createdAt, record.expiresAt,
       );
     } finally {
       db.close();
@@ -707,21 +729,25 @@ export class OperationalStore {
 
   consumeAuthorizationToken(input: {
     tokenHash: string; purpose: "apply_proposal" | "undo_action";
-    proposalId?: string; actionId: string; expectedTargetHash: string; now: string;
+    proposalId?: string; actionId: string; expectedTargetHash: string;
+    expectedPlanHash?: string; executorVersion?: string; now: string;
   }): void {
     const db = this.open();
     try {
       db.transaction(() => {
         const row = db.query<{
           purpose: string; proposal_id: string | null; action_id: string;
-          expected_target_hash: string; expires_at: string; used_at: string | null;
+          expected_target_hash: string; expected_plan_hash: string | null;
+          executor_version: string | null; expires_at: string; used_at: string | null;
         }, [string]>("SELECT * FROM authorization_tokens WHERE token_hash = ?").get(input.tokenHash);
         if (!row) throw new Error("authorization token is invalid");
         if (row.used_at) throw new Error("authorization token has already been used");
         if (new Date(row.expires_at).getTime() <= new Date(input.now).getTime()) throw new Error("authorization token has expired");
         if (row.purpose !== input.purpose || row.action_id !== input.actionId
           || row.proposal_id !== (input.proposalId ?? null)
-          || row.expected_target_hash !== input.expectedTargetHash) {
+          || row.expected_target_hash !== input.expectedTargetHash
+          || row.expected_plan_hash !== (input.expectedPlanHash ?? null)
+          || row.executor_version !== (input.executorVersion ?? null)) {
           throw new Error("authorization token does not match this operation");
         }
         db.query("UPDATE authorization_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL")
@@ -913,12 +939,14 @@ export class OperationalStore {
 interface ProposalRow {
   proposal_id: string; run_id: string; action_id: string; workflow: string; mode: string;
   lifecycle_state: string; source_type: string; source_id: string; source_hash: string;
-  target_path: string; target_hash: string; permission_class: string; tool_name: string;
-  arguments_json: string; created_at: string; expires_at: string | null; approved: number;
+  target_path: string; target_hash: string; permission_class: string; effect_type: EffectType;
+  effect_plan_json: string; effect_plan_hash: string; executor_version: string;
+  created_at: string; expires_at: string | null; approved: number;
 }
 
 const proposalSelect = `
-  SELECT p.*, a.action_id, a.permission_class, a.tool_name, a.arguments_json,
+  SELECT p.*, a.action_id, a.permission_class, a.effect_type, a.effect_plan_json,
+    a.effect_plan_hash, a.executor_version,
     EXISTS(SELECT 1 FROM approvals ap WHERE ap.proposal_id = p.proposal_id AND ap.action_id = a.action_id) AS approved
   FROM proposals p JOIN actions a ON a.run_id = p.run_id
 `;
@@ -929,8 +957,9 @@ function toProposalRecord(row: ProposalRow): ProposalRecord {
     workflow: row.workflow, mode: row.mode, lifecycleState: row.lifecycle_state,
     sourceType: row.source_type, sourceId: row.source_id, sourceHash: row.source_hash,
     targetPath: row.target_path, targetHash: row.target_hash,
-    permissionClass: row.permission_class, toolName: row.tool_name,
-    arguments: JSON.parse(row.arguments_json) as Record<string, unknown>,
+    permissionClass: row.permission_class, effectType: row.effect_type,
+    effectPlan: JSON.parse(row.effect_plan_json) as EffectPlan,
+    effectPlanHash: row.effect_plan_hash, executorVersion: row.executor_version,
     createdAt: row.created_at, ...(row.expires_at ? { expiresAt: row.expires_at } : {}),
     approved: Boolean(row.approved),
   };

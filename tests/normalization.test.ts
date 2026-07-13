@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { ObsidianVault } from "../src/adapters/obsidian";
 import { OperationalStore } from "../src/db/store";
 import { applyApprovedProposal } from "../src/tools/apply-frontmatter-patch";
+import { reviewEffectProposal } from "../src/effects/registry";
 import { undoAction } from "../src/tools/undo-action";
 import { proposeMetadataNormalization } from "../src/workflows/normalize-metadata";
 
@@ -42,8 +43,8 @@ test("normalization proposal is stable and requires approval", async () => {
 
   expect(first.created).toHaveLength(1);
   expect(second.existing[0]?.proposalId).toBe(proposal.proposalId);
-  expect(String(proposal.arguments.preview)).toContain("+type: person");
-  expect(String(proposal.arguments.preview)).toContain("+id: person_");
+  expect(reviewEffectProposal(proposal).preview).toContain("+type: person");
+  expect(reviewEffectProposal(proposal).preview).toContain("+id: person_");
   expect(applyApprovedProposal({ proposalId: proposal.proposalId, vault, store, backupRoot })).rejects.toThrow("explicit approval");
 
   store.approveProposalAction(proposal.proposalId, proposal.actionId, new Date().toISOString());

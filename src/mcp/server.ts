@@ -46,6 +46,7 @@ import { triageIMessageServiceConversations } from "../workflows/imessage-determ
 import { createIntegrationRegistry } from "../integrations/providers";
 import { registerIntegrationTools } from "./ingestion-tools";
 import { WorkRepository } from "../work/repository";
+import { reviewEffectProposal } from "../effects/registry";
 
 const extractionOutputInput = z.object({
   classification: z.enum(extractionClassifications),
@@ -431,14 +432,14 @@ An empty recommendation list is correct when compact state contains nothing requ
 }
 
 function sanitizeProposal(proposal: ProposalRecord): Record<string, unknown> {
+  const review = reviewEffectProposal(proposal);
   return {
     proposalId: proposal.proposalId, actionId: proposal.actionId,
     workflow: proposal.workflow, lifecycleState: proposal.lifecycleState,
-    permissionClass: proposal.permissionClass, toolName: proposal.toolName,
-    sourceType: proposal.sourceType, sourceId: proposal.sourceId,
-    sourceHash: proposal.sourceHash, targetPath: proposal.targetPath,
+    permissionClass: proposal.permissionClass, effectType: proposal.effectType,
+    executorVersion: proposal.executorVersion, targetPath: proposal.targetPath,
     expectedTargetHash: proposal.targetHash,
-    preview: String(proposal.arguments.preview ?? "(no preview)"),
+    preview: review.preview,
     createdAt: proposal.createdAt, expiresAt: proposal.expiresAt ?? null,
     approved: proposal.approved,
   };
