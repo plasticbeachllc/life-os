@@ -13,8 +13,8 @@ import { rebuildState } from "../src/workflows/rebuild-state";
 
 test("projection registry exposes the coordinated builders and durable provenance", () => {
   expect(lifeOsProjectionRegistry().list()).toEqual([
-    { name: "chief-of-staff", version: "v4", stateType: "chief_of_staff_state" },
-    { name: "finding-attention", version: "v2", stateType: "finding_attention_state" },
+    { name: "chief-of-staff", version: "v5", stateType: "chief_of_staff_state" },
+    { name: "finding-attention", version: "v3", stateType: "finding_attention_state" },
     { name: "person-state", version: "v2", stateType: "person_state" },
     { name: "project-state", version: "v2", stateType: "project_state" },
     { name: "task-state", version: "v2", stateType: "task_state" },
@@ -108,7 +108,7 @@ test("targeted rebuild converges with a full rebuild without storage churn", asy
     }
   }
   expect(daily.state.builderName).toBe("morning-briefing");
-  expect(daily.state.builderVersion).toBe("v3");
+  expect(daily.state.builderVersion).toBe("v4");
   expect(daily.state.inputProvenance?.length).toBeGreaterThan(0);
   expect(store.countRows("model_calls")).toBe(0);
 });

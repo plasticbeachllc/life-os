@@ -92,6 +92,37 @@ The immediate design problem is therefore not “which new prompt should inspect
 4. Which later findings or canonical state changes resolve or supersede each signal?
 5. Did the intervention help enough to justify its cost and interruption?
 
+## Implemented first slice
+
+`feature/findings` now includes the architecture foundation through commit `a717e1d` and a first
+deterministic attention resolver layered on its registered projections.
+
+The resolver currently derives:
+
+- `untracked_user_commitment` when an active user commitment has no exact normalized open-task match;
+- `waiting_on_other` when an active other-owned commitment has no recorded resolution;
+- `commitment_at_risk` when an active commitment's explicit due date has passed;
+- `deadline_not_tracked` when an exactly matching open task lacks the finding's explicit date;
+- `duplicate_commitment` when identical normalized active findings or open tasks repeat an obligation.
+
+Matching is deliberately conservative: Unicode-normalized, case-insensitive, punctuation-insensitive,
+and otherwise exact. It does not use semantic similarity. Findings below `0.75` confidence are counted
+but suppressed from attention. A task-creation intervention backed by an ambiguous finding is marked
+`needs_clarification`, not ready. Current task projection identities and the calendar date are part of
+the attention projection's invalidation identity. When a matching canonical task appears, the
+untracked signal disappears on rebuild without rewriting the immutable finding.
+
+Signals are ranked deterministically by urgency, impact, type, and stable attention ID. They flow into
+chief-of-staff state and a distinct morning-briefing Attention section. Suggested interventions are
+inert structured options; only the already-supported finding task proposal is marked ready. Draft
+follow-up and task-date update interventions are explicitly `unsupported` until narrow workflows and
+effect plans exist.
+
+The resolver intentionally does **not** derive `response_needed` or `commitment_resolved`. The current
+common finding contract lacks reliable message-direction/response semantics and explicit resolution
+links. Adding those signals now would turn guesses into state; they remain corpus-driven follow-up
+work.
+
 ## Evolution of the common finding vocabulary
 
 Extraction should remain provider-local and factual. The architecture branch's existing common
@@ -466,9 +497,8 @@ This phase changes no schema, prompt contract, MCP/CLI surface, or mutation perm
   contract, preserving its existing builder/invalidation semantics.
 - Resolve active common findings against current tasks, projects, people, Calendar state, finding
   lifecycle events, and later findings.
-- Derive a deliberately small first set of high-confidence signals: `response_needed`,
-  `untracked_user_commitment`, `waiting_on_other`, `commitment_resolved`, `deadline_not_tracked`, and
-  `duplicate_commitment`.
+- Derive a deliberately small first set of high-confidence signals: `untracked_user_commitment`,
+  `waiting_on_other`, `commitment_at_risk`, `deadline_not_tracked`, and `duplicate_commitment`.
 - Give every signal stable identity, sorted typed input provenance, builder version, date dependency
   where required, and a sanitized review representation.
 - Feed only current bounded signal summaries into chief-of-staff and morning briefing; do not copy raw

@@ -1,5 +1,7 @@
 import type { DerivedStateRecord, OperationalStore } from "../db/store";
 import { FindingStore, type ActiveFindingProjectionInput } from "../findings/store";
+import { resolveAttention } from "../attention/resolver";
+import type { AttentionSignal } from "../attention/contract";
 import { sha256Value } from "../util/hashing";
 import { materializeProjection, type ProjectionBuilder } from "./projection-contract";
 
@@ -21,16 +23,27 @@ export interface FindingAttentionState {
   open_loops: FindingAttentionItem[];
   commitments: FindingAttentionItem[];
   overdue_finding_ids: string[];
+  signal_count: number;
+  signals: AttentionSignal[];
+  suppressed: {
+    tracked_commitments: number;
+    low_confidence_findings: number;
+    unsupported_findings: number;
+  };
 }
 
 const openLoopKinds = new Set(["explicit_request", "user_commitment", "other_commitment", "open_loop"]);
 const commitmentKinds = new Set(["user_commitment", "other_commitment"]);
-interface FindingAttentionInput { now: Date; active: ActiveFindingProjectionInput[] }
+interface FindingAttentionInput {
+  now: Date;
+  active: ActiveFindingProjectionInput[];
+  tasks: DerivedStateRecord[];
+}
 
 export const findingAttentionBuilder: ProjectionBuilder<FindingAttentionInput, FindingAttentionState> = {
-  name: "finding-attention", version: "v2", stateType: "finding_attention_state",
+  name: "finding-attention", version: "v3", stateType: "finding_attention_state",
   entityId: () => undefined,
-  inputs: ({ now, active }) => [
+  inputs: ({ now, active, tasks }) => [
     { type: "calendar_date", id: "current", hash: now.toISOString().slice(0, 10) },
     ...active.map((finding) => ({
       type: "active_finding", id: finding.findingId,
@@ -38,18 +51,26 @@ export const findingAttentionBuilder: ProjectionBuilder<FindingAttentionInput, F
         finding.contentHash, finding.statusEventId, finding.statusChangedAt,
       ]),
     })),
+    ...tasks.map((task) => ({
+      type: "task_state", id: task.entityId ?? task.stateId,
+      hash: task.dependencyHash ?? sha256Value([task.stateId, task.stateVersion]),
+    })),
   ],
-  build: ({ now, active }) => {
+  build: ({ now, active, tasks }) => {
     const date = now.toISOString().slice(0, 10);
     const openLoops = active.filter((finding) => openLoopKinds.has(finding.kind)).map(projectItem);
     const commitments = active.filter((finding) => commitmentKinds.has(finding.kind)).map(projectItem);
     const overdueFindingIds = openLoops
       .filter((finding) => finding.due_date !== null && finding.due_date < date)
       .map((finding) => finding.finding_id);
+    const resolution = resolveAttention({ activeFindings: active, tasks, now });
     return {
       as_of: now.toISOString(), open_loop_count: openLoops.length,
       commitment_count: commitments.length, overdue_count: overdueFindingIds.length,
       open_loops: openLoops, commitments, overdue_finding_ids: overdueFindingIds,
+      signal_count: resolution.signals.length,
+      signals: resolution.signals,
+      suppressed: resolution.suppressed,
     };
   },
 };
@@ -59,8 +80,9 @@ export function rebuildFindingAttentionState(input: {
 }): DerivedStateRecord {
   const now = input.now ?? new Date();
   const active = new FindingStore(input.store).activeProjectionInputs();
+  const tasks = input.store.listCurrentDerivedStates("task_state");
   return materializeProjection({
-    store: input.store, builder: findingAttentionBuilder, value: { now, active }, now,
+    store: input.store, builder: findingAttentionBuilder, value: { now, active, tasks }, now,
   }).state;
 }
 
