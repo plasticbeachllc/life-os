@@ -1,4 +1,4 @@
-import type { CalendarApiEvent, CalendarSourceAdapter } from "../adapters/calendar";
+import { googleCalendarMaxResults, type CalendarApiEvent, type CalendarSourceAdapter } from "../adapters/calendar";
 import { CalendarStore, type StoredCalendarEvent } from "../calendar/store";
 import type { OperationalStore } from "../db/store";
 import { sha256Value } from "../util/hashing";
@@ -41,7 +41,9 @@ export async function ingestCalendar(input: {
       do {
         if (pages >= maxPages || Date.now() - startedAtMs >= maxElapsedMs) { partial = true; break; }
         const page = await input.adapter.listEvents({ calendarId: calendar.id, timeMin, timeMax,
-          ...(pageToken ? { pageToken } : {}), maxResults: Math.min(250, maxEvents - events.length) });
+          ...(pageToken ? { pageToken } : {}),
+          // maxEvents is a total-run budget, never a provider page-size request.
+          maxResults: Math.min(googleCalendarMaxResults, maxEvents - events.length) });
         events.push(...page.events); pageToken = page.nextPageToken; pages += 1;
         if (pageToken && (events.length >= maxEvents || Date.now() - startedAtMs >= maxElapsedMs)) partial = true;
       } while (pageToken && !partial);
@@ -71,7 +73,7 @@ export async function ingestCalendar(input: {
       };
       if (!prior?.sourceHashes.includes(sourceHash)) input.store.saveDerivedState(state);
       rebuildChiefOfStaffState({ store: input.store, now });
-      store.markProcessed(input.accountId, upcoming);
+      store.markProcessed(input.accountId, calendar.id, upcoming);
       return { runId, discovered: events.length, changed, unchanged,
         stateId: prior?.sourceHashes.includes(sourceHash) ? prior.stateId : state.stateId,
         partial, resumed: Boolean(cursor) };

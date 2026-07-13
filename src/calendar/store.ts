@@ -104,11 +104,11 @@ export class CalendarStore {
         endAt: row.end_at, allDay: Boolean(row.all_day), contentHash: row.content_hash }));
     } finally { db.close(); }
   }
-  markProcessed(accountId: string, events: StoredCalendarEvent[]): void {
+  markProcessed(accountId: string, calendarId: string, events: StoredCalendarEvent[]): void {
     const db = this.store.open(); try {
       const update = db.query(`UPDATE calendar_events SET last_processed_hash=?
-        WHERE account_id=? AND event_id=? AND content_hash=?`);
-      db.transaction(() => { for (const event of events) update.run(event.contentHash, accountId, event.eventId, event.contentHash); })();
+        WHERE account_id=? AND calendar_id=? AND event_id=? AND content_hash=?`);
+      db.transaction(() => { for (const event of events) update.run(event.contentHash, accountId, calendarId, event.eventId, event.contentHash); })();
     } finally { db.close(); }
   }
 
