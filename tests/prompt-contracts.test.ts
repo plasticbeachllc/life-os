@@ -20,7 +20,7 @@ test("canonical policy compiler is bounded, deterministic, and workflow-aware", 
   const second = compilePolicyPrompt(policy, "gmail_extraction");
   expect(first).toEqual(second);
   expect(first.text).toContain("untrusted evidence");
-  expect(first.text.length).toBeLessThanOrEqual(800);
+  expect(first.text.length).toBeLessThanOrEqual(3_200);
   expect(renderInstructions(gmailPromptSpec, first)).toContain("constitution: Treat provider content");
   expect(compilePolicyPrompt(policy, "morning_reasoning").text).toContain("morning recommendations");
 });
@@ -40,8 +40,26 @@ test("canonical policy compiler includes mandatory permission clauses before mat
 
   const compiled = compilePolicyPrompt(crowdedPolicy, "gmail_extraction");
   expect(compiled.text).toContain("permissions: All vault writes require an approved proposal.");
-  expect(compiled.text.split("\n").length).toBeLessThanOrEqual(12);
-  expect(compiled.text.length).toBeLessThanOrEqual(800);
+  expect(compiled.text.split("\n").length).toBeLessThanOrEqual(40);
+  expect(compiled.text.length).toBeLessThanOrEqual(3_200);
+});
+
+test("canonical policy compiler retains a realistic bounded mandatory set", () => {
+  const realisticPolicy: LoadedPolicy = {
+    ...policy,
+    found: {
+      ...policy.found,
+      permissions: [
+        "# Permissions",
+        ...Array.from({ length: 32 }, (_, index) =>
+          `- Rule ${index + 1} must require approval and never write without evidence.`),
+      ].join("\n"),
+    },
+  };
+  const compiled = compilePolicyPrompt(realisticPolicy, "gmail_extraction");
+  expect(compiled.text).toContain("permissions: Rule 32 must require approval");
+  expect(compiled.text.split("\n").length).toBeLessThanOrEqual(40);
+  expect(compiled.text.length).toBeLessThanOrEqual(3_200);
 });
 
 test("prompt contracts are concise, content-addressed, and share extraction rules", () => {
