@@ -117,6 +117,28 @@ bounded, redacted, untrusted transient context and records a manifest. Submissio
 and rejects stale source, context, and policy state. Review projections omit raw provider text,
 identifiers, headers, addresses, and hashes.
 
+For a deliberate one-item functional evaluation, use the user-triggered subscription runner:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run src/cli.ts extract one --provider gmail
+```
+
+Choose `--provider imessage` for one Messages conversation. The runner prepares one exact context,
+runs the subscription host in a read-only/no-network process with user configuration and MCP tools
+disabled, validates the structured result through the normal submit path, and prints only aggregate
+receipt fields. It cannot create a task, proposal, provider change, or vault write.
+
+Run a bounded sequential evaluation batch with:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run src/cli.ts extract pilot --gmail 5 --imessage 5
+```
+
+The pilot continues after a host or validation failure, safely requeues failed work under its bounded
+attempt limit, and returns classification, item, relation, ambiguity, and failure counts only.
+
 Vault writes are always proposal-based. Review the proposal, obtain exact authorization, apply it, and
 use the action ID for undo if the target has not changed:
 
@@ -162,12 +184,14 @@ to Life OS.
 The current operational SQLite schema is **25**. Prototype schema changes are deliberately
 incompatible. If a command reports an incompatible database schema:
 
-1. Preserve the database if you need it for inspection.
-2. Delete or move only the operational SQLite database yourself; never delete vault Markdown.
-3. Run `state rebuild` and re-ingest configured providers.
+1. During active prototype development, discard the operational database, caches, manifests, and backups
+   when a clean test is more useful than compatibility preservation. Preserve vault Markdown and external
+   credentials/configuration.
+2. Run `state rebuild` and re-ingest configured providers.
 
-Life OS never resets the database automatically. SQLite contents, caches, manifests, and projections
-are regenerable; canonical knowledge remains in the Obsidian vault and configured read-only providers.
+SQLite contents, caches, manifests, and projections are regenerable; canonical knowledge remains in the
+Obsidian vault and configured read-only providers. Do not build compatibility migrations during this
+prototype phase unless a release plan explicitly requires them.
 
 ## Handoff checks
 

@@ -130,6 +130,35 @@ export function failPreparedCallAndMarkWorkStale(input: {
   } finally { db.close(); }
 }
 
+/** Host/validation failure terminates the exact prepared call and releases its lease for bounded retry. */
+export function failPreparedCallAndRetryWork(input: {
+  store: OperationalStore; call: ModelCallRecord; workId: string; leaseOwner: string;
+  category: Extract<ReasoningErrorCategory, "invalid_output" | "internal_failure">;
+  now?: Date; retryDelayMs?: number;
+}): void {
+  const db = input.store.open(); const now = input.now ?? new Date(); const completedAt = now.toISOString();
+  try {
+    db.transaction(() => {
+      failReasoningCallInTransaction(db, { call: input.call, category: input.category, completedAt });
+      const current = db.query<{ attempts: number; max_attempts: number }, [string, string]>(`
+        SELECT attempts, max_attempts FROM work_items
+        WHERE work_id = ? AND state = 'leased' AND lease_owner = ?
+      `).get(input.workId, input.leaseOwner);
+      if (!current) throw new Error("prepared work lease changed before failure recording");
+      const retry = current.attempts < current.max_attempts;
+      const result = db.query(`
+        UPDATE work_items SET state = ?, lease_owner = NULL, lease_expires_at = NULL,
+          available_at = ?, error_category = ?, updated_at = ?
+        WHERE work_id = ? AND state = 'leased' AND lease_owner = ?
+      `).run(retry ? "pending" : "failed",
+        new Date(now.getTime() + (input.retryDelayMs ?? 0)).toISOString(),
+        retry ? (input.category === "invalid_output" ? "validation" : "internal") : "retry_exhausted",
+        completedAt, input.workId, input.leaseOwner);
+      if (result.changes !== 1) throw new Error("prepared work lease changed before retry recording");
+    })();
+  } finally { db.close(); }
+}
+
 export function completeReasoningCall(input: {
   store: OperationalStore;
   call: ModelCallRecord;

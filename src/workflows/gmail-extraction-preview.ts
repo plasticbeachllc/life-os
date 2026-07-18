@@ -7,7 +7,7 @@ import { gmailThreadStateHash } from "../gmail/store";
 import { FindingStore } from "../findings/store";
 import { redactSensitiveTexts } from "../privacy/presidio";
 import { gmailPromptSpec } from "../orchestration/prompt-contracts";
-import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
+import { instructionTokenEstimate, promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
 import type { WorkItem } from "../work/contract";
 import { WorkRepository } from "../work/repository";
 import { compareSourceEventOrder } from "../events/repository";
@@ -156,9 +156,9 @@ export async function previewGmailExtractionContext(input: {
     policyCandidate(input.policyPrompt, input.policyVersion),
   ];
   const manifest = buildContext(candidates, {
-    maxInputTokens: 3900, reservedOutputTokens: 900,
+    maxInputTokens: 4650, reservedOutputTokens: 900,
     sourceTokens: 1750, entityStateTokens: 400, recentChangeTokens: 950,
-    policyTokens: 450, contingencyTokens: 350,
+    policyTokens: 1200, contingencyTokens: 350,
   });
   return {
     workId: work.workId,
@@ -189,7 +189,9 @@ function policyCandidate(policy?: CompiledPolicyPrompt, policyVersion?: string):
     : { prompt_contract: { workflow: gmailPromptSpec.workflow, spec_hash: gmailPromptSpec.specHash, rules: gmailPromptSpec.rules }, policy_version: policyVersion ?? "unvalidated-preview" };
   return {
     id: `policy:${gmailPromptSpec.version}`, category: "policy", retrievalLevel: 0,
-    content, tokenEstimate: Math.ceil(JSON.stringify(content).length / 4),
+    // The manifest records a hash-sized policy projection, but the host also receives the compiled
+    // policy text as trusted instructions. Account for that real input cost before admitting context.
+    content, tokenEstimate: instructionTokenEstimate(gmailPromptSpec, policy),
     relevance: 1, impact: 1, sourceRefs: [gmailPromptSpec.specHash, ...(policyVersion ? [policyVersion] : [])],
   };
 }

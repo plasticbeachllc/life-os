@@ -33,6 +33,7 @@ import { formatProposal, runProposalCommand } from "./cli/proposal-commands";
 import { linkGmailThreadToPerson, linkGmailThreadToProject } from "./workflows/link-gmail-subject";
 import { linkCalendarEventToProject, linkCalendarEventToTask } from "./workflows/link-calendar-subject";
 import { formatTodayRefresh, refreshToday } from "./workflows/refresh-today";
+import { runExtractionPilot, runOneExtraction } from "./workflows/run-one-extraction";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -78,6 +79,31 @@ async function main(argv: string[]): Promise<number> {
       });
       console.log(args.flags.json === "true" ? JSON.stringify(report, null, 2) : formatTodayRefresh(report));
       return report.state.issues.length > 0 ? 1 : 0;
+    }
+  }
+
+  if (command === "extract") {
+    const [subcommand, ...extractRest] = rest;
+    if (subcommand === "one") {
+      const args = parseFlags(extractRest);
+      rejectUnknownCommandFlags(args, ["provider", "model"]);
+      if (args.flags.provider !== "gmail" && args.flags.provider !== "imessage") {
+        throw new Error("extract one requires --provider <gmail|imessage>");
+      }
+      const receipt = await runOneExtraction({ provider: args.flags.provider,
+        ...(args.flags.model ? { model: args.flags.model } : {}) });
+      console.log(JSON.stringify(receipt, null, 2));
+      return 0;
+    }
+    if (subcommand === "pilot") {
+      const args = parseFlags(extractRest); rejectUnknownCommandFlags(args, ["gmail", "imessage", "model"]);
+      const count = (value: string | undefined): number => {
+        const parsed = Number(value ?? 0); if (!Number.isInteger(parsed) || parsed < 0 || parsed > 20) throw new Error("pilot counts must be integers between 0 and 20");
+        return parsed;
+      };
+      const report = await runExtractionPilot({ gmail: count(args.flags.gmail), imessage: count(args.flags.imessage),
+        ...(args.flags.model ? { model: args.flags.model } : {}) });
+      console.log(JSON.stringify(report, null, 2)); return report.failed.gmail + report.failed.imessage > 0 ? 1 : 0;
     }
   }
 
@@ -544,6 +570,8 @@ function printUsage(): void {
   life-os db migrate --vault <path>
   life-os work status --vault <path>
   life-os today refresh --vault <path> [--json]
+  life-os extract one --provider <gmail|imessage> [--model <name>]
+  life-os extract pilot --gmail <0-20> --imessage <0-20> [--model <name>]
   life-os state rebuild --vault <path> [--json]
   life-os state show <projects|people|tasks|chief-of-staff> --vault <path>
   life-os normalize propose --vault <path> [--json]

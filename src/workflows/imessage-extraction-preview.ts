@@ -9,7 +9,7 @@ import { IMessageStore } from "../imessage/store";
 import { FindingStore } from "../findings/store";
 import { redactSensitiveTexts } from "../privacy/presidio";
 import { imessagePromptSpec } from "../orchestration/prompt-contracts";
-import { promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
+import { instructionTokenEstimate, promptContext, type CompiledPolicyPrompt } from "../orchestration/prompt-spec";
 import type { WorkItem } from "../work/contract";
 import { WorkRepository } from "../work/repository";
 import { sourceSubjectContextCandidate } from "../context/source-subjects";
@@ -152,8 +152,8 @@ export async function previewIMessageExtractionContext(input: {
   ];
   const budget = {
     maxInputTokens: 12000, reservedOutputTokens: 1200,
-    sourceTokens: 2200, entityStateTokens: 2200, recentChangeTokens: 6200,
-    policyTokens: 500, contingencyTokens: 900,
+    sourceTokens: 2200, entityStateTokens: 2200, recentChangeTokens: 5700,
+    policyTokens: 1000, contingencyTokens: 900,
   };
   const request: ContextRequest = {
     workflow: "imessage_extraction",
@@ -202,7 +202,9 @@ function policyCandidate(policy?: CompiledPolicyPrompt, policyVersion?: string):
     : { prompt_contract: { workflow: imessagePromptSpec.workflow, spec_hash: imessagePromptSpec.specHash, rules: imessagePromptSpec.rules }, policy_version: policyVersion ?? "unvalidated-preview" };
   return {
     id: `policy:${imessagePromptSpec.version}`, category: "policy", retrievalLevel: 0,
-    content, tokenEstimate: Math.ceil(JSON.stringify(content).length / 4),
+    // The compiled policy travels in the host instructions, not this durable context projection.
+    // Count it here so manifest budgets reflect the model's real trusted prompt overhead.
+    content, tokenEstimate: instructionTokenEstimate(imessagePromptSpec, policy),
     relevance: 1, impact: 1, sourceRefs: [imessagePromptSpec.specHash, ...(policyVersion ? [policyVersion] : [])],
   };
 }

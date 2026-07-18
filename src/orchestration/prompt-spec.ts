@@ -95,6 +95,11 @@ export function renderInstructions(spec: PromptSpec, policy?: CompiledPolicyProm
   return policy ? `${spec.instructions}\nCanonical policy:\n${policy.text}` : spec.instructions;
 }
 
+/** Conservative accounting for trusted instructions sent alongside prepared context. */
+export function instructionTokenEstimate(spec: PromptSpec, policy?: CompiledPolicyPrompt): number {
+  return Math.ceil(renderInstructions(spec, policy).length / 4);
+}
+
 function policyLines(text: string): string[] {
   return text.split(/\r?\n/).map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("```") && line !== "---")

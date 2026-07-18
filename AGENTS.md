@@ -70,10 +70,13 @@ work is ready.
 
 - During the early prototype phase, internal schemas may be replaced rather than migrated compatibly.
 - Coordinate schema ownership and increment `schemaVersion` exactly once per schema revision.
-- Reject an incompatible existing operational database with an explicit reset instruction. Never delete
-  or reset it automatically.
 - Treat SQLite as disposable prototype state; canonical user knowledge remains in Obsidian Markdown and
-  configured providers. When schema changes, rebuild operational state from those canonical sources.
+  configured providers. During active prototype development, agents may reset all Life OS operational
+  state (SQLite, caches, manifests, and backups) without a compatibility migration when needed; preserve
+  the Obsidian vault and external credentials/configuration. Rebuild operational state from canonical
+  sources after a reset.
+- Do not spend prototype effort on backward-compatible schema migrations or operational-state retention
+  unless the user explicitly requests a release/migration plan.
 - Store provider bodies only when the specification explicitly permits it. Gmail bodies are forbidden.
 - Use JSON columns for structured projections, not serialized prompt blobs.
 - Add indexes and uniqueness constraints for idempotency and cache identity.

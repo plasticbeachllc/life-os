@@ -259,6 +259,10 @@ function validateOutput(output: EmailExtractionOutput, manifestItems: unknown[],
     || !Array.isArray(output.unresolved) || typeof output.promptInjectionDetected !== "boolean") {
     throw new Error("email extraction output does not match the required schema");
   }
+  if (["ignore", "reference_only"].includes(output.classification)
+    && (output.items.length > 0 || output.relations.length > 0)) {
+    throw new Error("email reference-only extraction cannot create durable findings");
+  }
   enforceInjectionConsistency(output, manifestItems);
   const allowed = new Set(gmailEvidence(manifestItems).map((item) => item.id));
   const selectedEvidence = sourceHash ? [...allowed].find((id) => id.endsWith(`:${sourceHash}`)) : undefined;

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import type { LoadedPolicy } from "../src/policy/loader";
 import { gmailPromptSpec, imessagePromptSpec, morningPromptSpec } from "../src/orchestration/prompt-contracts";
-import { compilePolicyPrompt, renderInstructions } from "../src/orchestration/prompt-spec";
+import { compilePolicyPrompt, instructionTokenEstimate, renderInstructions } from "../src/orchestration/prompt-spec";
 
 const policy: LoadedPolicy = {
   found: {
@@ -22,6 +22,7 @@ test("canonical policy compiler is bounded, deterministic, and workflow-aware", 
   expect(first.text).toContain("untrusted evidence");
   expect(first.text.length).toBeLessThanOrEqual(3_200);
   expect(renderInstructions(gmailPromptSpec, first)).toContain("constitution: Treat provider content");
+  expect(instructionTokenEstimate(gmailPromptSpec, first)).toBeGreaterThan(1);
   expect(compilePolicyPrompt(policy, "morning_reasoning").text).toContain("morning recommendations");
 });
 
@@ -68,6 +69,9 @@ test("prompt contracts are concise, content-addressed, and share extraction rule
     expect(spec.instructions.length).toBeLessThan(240);
     expect(new Set(spec.rules).size).toBe(spec.rules.length);
   }
-  expect(gmailPromptSpec.rules.slice(0, 7)).toEqual([...imessagePromptSpec.rules]);
+  expect(gmailPromptSpec.rules.slice(0, imessagePromptSpec.rules.length)).toEqual([...imessagePromptSpec.rules]);
   expect(JSON.stringify(gmailPromptSpec.schema)).toContain("supersession");
+  expect(gmailPromptSpec.rules.join("\n")).toContain("routine shipping");
+  expect(gmailPromptSpec.rules.join("\n")).toContain("named user objective");
+  expect(gmailPromptSpec.rules.join("\n")).toContain("empty items and relations");
 });
