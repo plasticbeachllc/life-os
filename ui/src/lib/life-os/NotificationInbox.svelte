@@ -3,7 +3,7 @@
 	import { Button } from "$lib/components/ui/button";
 	import { ScrollArea } from "$lib/components/ui/scroll-area";
 	import { CalendarDays, Check, CircleHelp, ListTodo, Mail, Send, ShieldCheck } from "@lucide/svelte";
-	import type { InboxNotification, NotificationCategory, NotificationKind, NotificationTone } from "./types";
+	import type { AttentionFeedbackOutcome, InboxNotification, NotificationCategory, NotificationKind, NotificationTone } from "./types";
 
 	type Filter = "all" | NotificationCategory;
 
@@ -12,12 +12,26 @@
 		selectedId,
 		onSelect,
 		onAction,
+		onFeedback,
+		feedbackStates,
+		feedbackOutcomes,
 	}: {
 		notifications: InboxNotification[];
 		selectedId: string | null;
 		onSelect: (notification: InboxNotification) => void;
 		onAction: (notification: InboxNotification, action: "primary" | "secondary") => void;
+		onFeedback: (notification: InboxNotification, outcome: AttentionFeedbackOutcome) => void;
+		feedbackStates: Record<string, "saving" | "saved" | "failed">;
+		feedbackOutcomes: Record<string, AttentionFeedbackOutcome>;
 	} = $props();
+
+	const feedbackOptions: Array<{ outcome: AttentionFeedbackOutcome; label: string }> = [
+		{ outcome: "useful", label: "Useful" },
+		{ outcome: "already_handled", label: "Handled" },
+		{ outcome: "incorrect", label: "Wrong" },
+		{ outcome: "duplicate", label: "Duplicate" },
+		{ outcome: "irrelevant", label: "Not relevant" },
+	];
 
 	let filter = $state<Filter>("needs_you");
 	let visibleNotifications = $derived(
@@ -130,6 +144,22 @@
 									{notification.primaryAction.label}
 								</Button>
 							{/if}
+						</div>
+					{/if}
+					{#if notification.status === "open" && notification.feedbackSubjectKind === "attention"}
+						<div class="mt-2 flex flex-wrap items-center justify-end gap-1.5" aria-label="Rate this suggestion">
+							<span class="mr-1 text-[11px] text-muted-foreground">Feedback</span>
+							{#each feedbackOptions as option}
+								<Button
+									variant={feedbackOutcomes[notification.id] === option.outcome ? "secondary" : "ghost"}
+									size="sm"
+									class="h-7 px-2 text-[11px]"
+									disabled={feedbackStates[notification.id] === "saving" || feedbackStates[notification.id] === "saved"}
+									onclick={() => onFeedback(notification, option.outcome)}
+								>{option.label}</Button>
+							{/each}
+							{#if feedbackStates[notification.id] === "saved"}<span class="text-[11px] text-emerald-700">Saved</span>{/if}
+							{#if feedbackStates[notification.id] === "failed"}<span class="text-[11px] text-rose-700">Try again</span>{/if}
 						</div>
 					{/if}
 				</article>

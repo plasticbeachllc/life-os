@@ -59,6 +59,9 @@
 		<p><strong class="text-foreground">{workspace.proposals.length}</strong> proposals</p>
 		<p><strong class="text-foreground">{workspace.work.pending}</strong> queued</p>
 	</div>
+	{#if workspace.feedback.total > 0}
+		<p class="mt-2 text-[11px] text-muted-foreground">{workspace.feedback.total} suggestions reviewed · {workspace.feedback.useful} useful · {workspace.feedback.negative} other outcomes</p>
+	{/if}
 	{#if workspace.proposals[0]}
 		<div class="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs">
 			<div class="flex items-center justify-between gap-2"><strong>Approval {workspace.proposals[0].approval}</strong><span>{workspace.proposals[0].effectType.replaceAll("_", " ")}</span></div>

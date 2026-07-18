@@ -43,6 +43,10 @@ test("attention UI feedback binds an opaque subject to the exact current present
     signalType: "untracked_user_commitment", presentationChannel: "review_queue",
     interventionLevel: 4, total: 1, useful: 0, negative: 1,
   }]);
+  expect(store.attentionFeedbackDisposition({
+    attentionId: "attention_review_me", presentationChannel: "review_queue",
+    presentationReason: "reviewable_intervention", policyVersion: "attention-presentation-v1",
+  })).toBe("already_handled");
   const db = store.open();
   try {
     const serialized = JSON.stringify(db.query("SELECT * FROM attention_feedback").all());

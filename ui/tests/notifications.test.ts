@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { OperationalStore } from "../../src/db/store";
 import { GmailStore } from "../../src/gmail/store";
+import { recordUiFeedback } from "../../src/ui/feedback";
 import {
 	compileUiNotificationBundle,
 	compileUiNotifications,
@@ -182,5 +183,15 @@ describe("LifeOS notification compiler", () => {
 		});
 		expect(notification?.id).toMatch(/^ui_[a-f0-9]{20}$/);
 		expect(serialized).not.toMatch(/attention_private_review|finding_private|state_private_attention|sha256:/);
+
+		recordUiFeedback({ store, value: { subjectKind: "attention", subjectUiId: notification!.id,
+			outcome: "useful" }, now: new Date("2026-07-12T13:01:00.000Z") });
+		expect(compileUiNotifications(new Date("2026-07-12T13:02:00.000Z")).notifications
+			.some((item) => item.feedbackSubjectKind === "attention")).toBe(true);
+		const db = store.open();
+		try { db.query("UPDATE attention_feedback SET disposition = 'irrelevant'").run(); }
+		finally { db.close(); }
+		const afterFeedback = compileUiNotifications(new Date("2026-07-12T13:02:00.000Z"));
+		expect(afterFeedback.notifications.some((item) => item.feedbackSubjectKind === "attention")).toBe(false);
 	});
 });

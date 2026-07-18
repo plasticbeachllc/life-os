@@ -91,7 +91,13 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
     const attentionState = store.getCurrentDerivedState("finding_attention_state");
     if (attentionState) {
       const attentionReview = compileAttentionReview(attentionState);
-      for (const item of attentionReview.items.slice(0, 12)) {
+      let includedAttention = 0;
+      for (const item of attentionReview.items) {
+        const disposition = store.attentionFeedbackDisposition({
+          attentionId: item.attentionId, presentationChannel: item.presentation.channel,
+          presentationReason: item.presentation.reason, policyVersion: item.presentation.policyVersion,
+        });
+        if (disposition && disposition !== "useful") continue;
         notifications.push({
           id: attentionSubjectUiId({
             attentionId: item.attentionId, presentationChannel: item.presentation.channel,
@@ -109,6 +115,8 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           secondaryAction: { kind: "dismiss", label: "Not relevant" },
           feedbackSubjectKind: "attention",
         });
+        includedAttention += 1;
+        if (includedAttention >= 12) break;
       }
     }
 

@@ -374,6 +374,20 @@ export class OperationalStore {
     } finally { db.close(); }
   }
 
+  attentionFeedbackDisposition(input: {
+    attentionId: string; presentationChannel: string; presentationReason: string; policyVersion: string;
+  }): string | undefined {
+    const db = this.open();
+    try {
+      return db.query<{ disposition: string }, [string, string, string, string]>(`
+        SELECT disposition FROM attention_feedback
+        WHERE attention_id = ? AND presentation_channel = ?
+          AND presentation_reason = ? AND policy_version = ?
+      `).get(input.attentionId, input.presentationChannel,
+        input.presentationReason, input.policyVersion)?.disposition;
+    } finally { db.close(); }
+  }
+
   createProposal(input: {
     proposalId: string; runId: string; actionId: string; workflow: string;
     sourceType: string; sourceId: string; sourceHash: string; targetPath: string;

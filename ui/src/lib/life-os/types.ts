@@ -2,6 +2,7 @@ export type NotificationKind = "email" | "calendar" | "proposal" | "system" | "t
 export type NotificationCategory = "needs_you" | "activity" | "approvals";
 export type NotificationTone = "question" | "receipt" | "proposal" | "update";
 export type NotificationActionKind = "undo" | "resolve" | "review" | "discuss" | "dismiss";
+export type AttentionFeedbackOutcome = "useful" | "incorrect" | "duplicate" | "already_handled" | "irrelevant";
 
 export interface NotificationAction {
 	kind: NotificationActionKind;
@@ -50,6 +51,7 @@ export interface WorkspaceSnapshot {
 	proposals: Array<{ id: string; effectType: string; state: string; approval: "required" | "approved"; preview: string; createdAt: string; expiresAt: string | null }>;
 	actions: Array<{ id: string; effectType: string; state: string; result: "succeeded" | "failed" | "unknown"; undo: "available" | "used" | "unavailable"; createdAt: string }>;
 	work: { pending: number; leased: number; failed: number; oldestPendingAgeSeconds: number | null; failureCategories: Record<string, number> };
+	feedback: { total: number; useful: number; negative: number };
 	refresh: { available: boolean; label: string };
 	message?: string;
 }

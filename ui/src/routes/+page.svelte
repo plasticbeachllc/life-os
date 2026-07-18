@@ -4,7 +4,7 @@
 	import ChatPanel from "$lib/life-os/ChatPanel.svelte";
 	import { initialMessages } from "$lib/life-os/initial-messages";
 	import NotificationInbox from "$lib/life-os/NotificationInbox.svelte";
-	import type { InboxNotification } from "$lib/life-os/types";
+	import type { AttentionFeedbackOutcome, InboxNotification } from "$lib/life-os/types";
 	import WorkspaceOverview from "$lib/life-os/WorkspaceOverview.svelte";
 	import { Inbox, MessageCircle, Settings2, Sparkles } from "@lucide/svelte";
 	import { onMount, untrack } from "svelte";
@@ -19,6 +19,8 @@
 	);
 	let refreshState = $state<"idle" | "refreshing" | "failed">("idle");
 	let proposalState = $state<"idle" | "creating" | "failed">("idle");
+	let feedbackStates = $state<Record<string, "saving" | "saved" | "failed">>({});
+	let feedbackOutcomes = $state<Record<string, AttentionFeedbackOutcome>>({});
 
 	onMount(() => {
 		const releaseSession = () => {
@@ -37,13 +39,26 @@
 		activeMobilePanel = "chat";
 	}
 
-	async function submitAttentionFeedback(notification: InboxNotification, outcome: "useful" | "irrelevant") {
-		if (notification.feedbackSubjectKind !== "attention") return;
+	async function submitAttentionFeedback(notification: InboxNotification, outcome: AttentionFeedbackOutcome): Promise<boolean> {
+		if (notification.feedbackSubjectKind !== "attention") return false;
 		try {
-			await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" },
+			const response = await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" },
 				body: JSON.stringify({ subjectKind: "attention", subjectUiId: notification.id,
 					outcome, csrfToken: data.feedbackToken }) });
-		} catch { /* Feedback is best-effort and never blocks the selected user action. */ }
+			return response.ok;
+		} catch { return false; }
+	}
+
+	async function handleAttentionFeedback(notification: InboxNotification, outcome: AttentionFeedbackOutcome) {
+		feedbackStates = { ...feedbackStates, [notification.id]: "saving" };
+		const recorded = await submitAttentionFeedback(notification, outcome);
+		feedbackStates = { ...feedbackStates, [notification.id]: recorded ? "saved" : "failed" };
+		if (!recorded) return;
+		feedbackOutcomes = { ...feedbackOutcomes, [notification.id]: outcome };
+		if (outcome !== "useful") {
+			notifications = notifications.map((item) => item.id === notification.id ? { ...item, status: "resolved" } : item);
+			if (selectedNotification?.id === notification.id) selectedNotification = null;
+		}
 	}
 
 	function handleNotificationAction(notification: InboxNotification, position: "primary" | "secondary") {
@@ -129,6 +144,9 @@
 				selectedId={selectedNotification?.id ?? null}
 				onSelect={selectNotification}
 				onAction={handleNotificationAction}
+				onFeedback={handleAttentionFeedback}
+				{feedbackStates}
+				{feedbackOutcomes}
 			/></div>
 		</div>
 
