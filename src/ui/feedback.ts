@@ -5,12 +5,15 @@ import { ATTENTION_PRESENTATION_POLICY_VERSION } from "../attention/presentation
 import { sha256Text } from "../util/hashing";
 import { newId } from "../util/ids";
 
+const uiAttentionQualityOutcomes = [
+  "useful", "incorrect", "duplicate", "irrelevant", "too_late", "too_intrusive",
+] as const;
+
 export type UiFeedbackInput =
   | { subjectKind: "finding"; subjectUiId: string; outcome: "useful" | "not_useful" }
   | { subjectKind: "proposal"; subjectUiId: string; outcome: "accepted" | "rejected" }
   | { subjectKind: "attention"; subjectUiId: string;
-    outcome: "useful" | "incorrect" | "duplicate" | "already_handled"
-      | "irrelevant" | "too_late" | "too_intrusive" };
+    outcome: typeof uiAttentionQualityOutcomes[number] };
 
 export function parseUiFeedback(value: unknown): UiFeedbackInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid feedback");
@@ -28,7 +31,7 @@ export function parseUiFeedback(value: unknown): UiFeedbackInput {
   if (input.subjectKind === "proposal" && !["accepted", "rejected"].includes(String(input.outcome))) {
     throw new Error("invalid proposal feedback outcome");
   }
-  if (input.subjectKind === "attention" && !attentionFeedbackDispositions.includes(input.outcome as never)) {
+  if (input.subjectKind === "attention" && !uiAttentionQualityOutcomes.includes(input.outcome as never)) {
     throw new Error("invalid attention feedback outcome");
   }
   return {
@@ -41,7 +44,8 @@ export function parseUiFeedback(value: unknown): UiFeedbackInput {
 export function recordUiFeedback(input: { store: OperationalStore; value: unknown; now?: Date }): string {
   const feedback = parseUiFeedback(input.value);
   if (feedback.subjectKind === "attention") {
-    return recordAttentionUiFeedback({ store: input.store, feedback, now: input.now ?? new Date() });
+    return recordAttentionUiDisposition({ store: input.store, subjectUiId: feedback.subjectUiId,
+      outcome: feedback.outcome, now: input.now ?? new Date() });
   }
   const feedbackId = newId("feedback");
   input.store.recordUiFeedback({ feedbackId, ...feedback, createdAt: new Date().toISOString() });
@@ -61,8 +65,9 @@ export function attentionSubjectUiId(input: {
   return `ui_${sha256Text(`attention:${identity}`).slice("sha256:".length, "sha256:".length + 20)}`;
 }
 
-function recordAttentionUiFeedback(input: {
-  store: OperationalStore; feedback: Extract<UiFeedbackInput, { subjectKind: "attention" }>; now: Date;
+export function recordAttentionUiDisposition(input: {
+  store: OperationalStore; subjectUiId: string;
+  outcome: typeof attentionFeedbackDispositions[number]; now: Date;
 }): string {
   const state = input.store.getCurrentDerivedState("finding_attention_state");
   if (!state) throw new Error("current attention state is unavailable");
@@ -70,10 +75,10 @@ function recordAttentionUiFeedback(input: {
     attentionSubjectUiId({
       attentionId: candidate.attentionId, presentationChannel: candidate.presentation.channel,
       presentationReason: candidate.presentation.reason, policyVersion: candidate.presentation.policyVersion,
-    }) === input.feedback.subjectUiId);
+    }) === input.subjectUiId);
   if (!item) throw new Error("attention feedback subject is not currently reviewable");
   const record = compileAttentionFeedback({
-    attentionId: item.attentionId, disposition: input.feedback.outcome,
+    attentionId: item.attentionId, disposition: input.outcome,
     recordedAt: input.now.toISOString(),
   }, {
     attention_id: item.attentionId, channel: item.presentation.channel,

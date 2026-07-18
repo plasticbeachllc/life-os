@@ -141,10 +141,11 @@ provider so one rejected item cannot consume the remaining sample or exhaust its
 work is safely requeued under its bounded attempt limit. Output contains classification, item, relation,
 ambiguity, and failure counts only.
 
-The browser Inbox exposes bounded feedback on each reviewable attention card: **Useful**, **Handled**,
-**Wrong**, **Duplicate**, and **Not relevant**. Feedback is bound to the exact opaque presentation
-identity and stores no free text or provider payload. Terminal judgments remove that presentation from
-the Inbox on reload; aggregate reviewed/useful/other counts appear in the operational overview.
+The browser Inbox exposes **Handled** as a core attention lifecycle action. Separate bounded quality
+feedback offers **Useful**, **Wrong**, **Duplicate**, and **Not relevant**. Both are bound to the exact
+opaque presentation identity and store no free text or provider payload. Handled items and terminal
+quality judgments leave the Inbox on reload; handled actions are reported separately from quality
+metrics in the operational overview.
 
 Vault writes are always proposal-based. Review the proposal, obtain exact authorization, apply it, and
 use the action ID for undo if the target has not changed:

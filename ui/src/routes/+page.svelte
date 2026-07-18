@@ -21,6 +21,7 @@
 	let proposalState = $state<"idle" | "creating" | "failed">("idle");
 	let feedbackStates = $state<Record<string, "saving" | "saved" | "failed">>({});
 	let feedbackOutcomes = $state<Record<string, AttentionFeedbackOutcome>>({});
+	let handledStates = $state<Record<string, "saving" | "failed">>({});
 
 	onMount(() => {
 		const releaseSession = () => {
@@ -59,6 +60,20 @@
 			notifications = notifications.map((item) => item.id === notification.id ? { ...item, status: "resolved" } : item);
 			if (selectedNotification?.id === notification.id) selectedNotification = null;
 		}
+	}
+
+	async function handleAttentionHandled(notification: InboxNotification) {
+		if (notification.feedbackSubjectKind !== "attention") return;
+		handledStates = { ...handledStates, [notification.id]: "saving" };
+		try {
+			const response = await fetch("/api/attention/handled", { method: "POST",
+				headers: { "content-type": "application/json" }, body: JSON.stringify({
+					subjectUiId: notification.id, csrfToken: data.feedbackToken,
+				}) });
+			if (!response.ok) throw new Error("handled action failed");
+			notifications = notifications.map((item) => item.id === notification.id ? { ...item, status: "resolved" } : item);
+			if (selectedNotification?.id === notification.id) selectedNotification = null;
+		} catch { handledStates = { ...handledStates, [notification.id]: "failed" }; }
 	}
 
 	function handleNotificationAction(notification: InboxNotification, position: "primary" | "secondary") {
@@ -145,8 +160,10 @@
 				onSelect={selectNotification}
 				onAction={handleNotificationAction}
 				onFeedback={handleAttentionFeedback}
+				onHandled={handleAttentionHandled}
 				{feedbackStates}
 				{feedbackOutcomes}
+				{handledStates}
 			/></div>
 		</div>
 

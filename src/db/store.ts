@@ -353,23 +353,26 @@ export class OperationalStore {
 
   attentionFeedbackMetrics(): Array<{
     signalType: string; presentationChannel: string; interventionLevel: number;
-    total: number; useful: number; negative: number;
+    total: number; useful: number; negative: number; handled: number;
   }> {
     const db = this.open();
     try {
       return db.query<{
         signal_type: string; presentation_channel: string; intervention_level: number;
-        total: number; useful: number; negative: number;
+        total: number; useful: number; negative: number; handled: number;
       }, []>(`SELECT signal_type, presentation_channel, intervention_level,
-        COUNT(*) AS total,
+        SUM(CASE WHEN disposition <> 'already_handled' THEN 1 ELSE 0 END) AS total,
         SUM(CASE WHEN disposition = 'useful' THEN 1 ELSE 0 END) AS useful,
-        SUM(CASE WHEN disposition = 'useful' THEN 0 ELSE 1 END) AS negative
+        SUM(CASE WHEN disposition IN (
+          'incorrect', 'duplicate', 'irrelevant', 'too_late', 'too_intrusive'
+        ) THEN 1 ELSE 0 END) AS negative,
+        SUM(CASE WHEN disposition = 'already_handled' THEN 1 ELSE 0 END) AS handled
         FROM attention_feedback
         GROUP BY signal_type, presentation_channel, intervention_level
         ORDER BY signal_type, presentation_channel, intervention_level`).all().map((row) => ({
           signalType: row.signal_type, presentationChannel: row.presentation_channel,
           interventionLevel: row.intervention_level, total: row.total,
-          useful: row.useful, negative: row.negative,
+          useful: row.useful, negative: row.negative, handled: row.handled,
         }));
     } finally { db.close(); }
   }

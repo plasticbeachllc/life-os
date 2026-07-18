@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { OperationalStore } from "../src/db/store";
 import { attentionSubjectUiId, parseUiFeedback, recordUiFeedback } from "../src/ui/feedback";
+import { markAttentionHandledFromUi } from "../src/ui/attention-lifecycle";
 
 test("UI feedback accepts only opaque subjects and domain-specific outcomes", () => {
   expect(parseUiFeedback({
@@ -17,8 +18,11 @@ test("UI feedback accepts only opaque subjects and domain-specific outcomes", ()
     subjectKind: "proposal", subjectUiId: "ui_0123456789abcdefabcd", outcome: "useful",
   })).toThrow("proposal feedback outcome");
   expect(parseUiFeedback({
+    subjectKind: "attention", subjectUiId: "ui_0123456789abcdefabcd", outcome: "incorrect",
+  })).toEqual({ subjectKind: "attention", subjectUiId: "ui_0123456789abcdefabcd", outcome: "incorrect" });
+  expect(() => parseUiFeedback({
     subjectKind: "attention", subjectUiId: "ui_0123456789abcdefabcd", outcome: "already_handled",
-  })).toEqual({ subjectKind: "attention", subjectUiId: "ui_0123456789abcdefabcd", outcome: "already_handled" });
+  })).toThrow("attention feedback outcome");
   expect(() => parseUiFeedback({
     subjectKind: "attention", subjectUiId: "ui_0123456789abcdefabcd", outcome: "not_useful",
   })).toThrow("attention feedback outcome");
@@ -32,7 +36,7 @@ test("attention UI feedback binds an opaque subject to the exact current present
     attentionId: "attention_review_me", presentationChannel: "review_queue",
     presentationReason: "reviewable_intervention", policyVersion: "attention-presentation-v1",
   });
-  const value = { subjectKind: "attention", subjectUiId, outcome: "already_handled" };
+  const value = { subjectKind: "attention", subjectUiId, outcome: "incorrect" };
 
   const first = recordUiFeedback({ store, value, now: new Date("2026-07-12T10:00:00.000Z") });
   const replay = recordUiFeedback({ store, value, now: new Date("2026-07-12T10:01:00.000Z") });
@@ -41,17 +45,17 @@ test("attention UI feedback binds an opaque subject to the exact current present
   expect(store.countRows("attention_feedback")).toBe(1);
   expect(store.attentionFeedbackMetrics()).toEqual([{
     signalType: "untracked_user_commitment", presentationChannel: "review_queue",
-    interventionLevel: 4, total: 1, useful: 0, negative: 1,
+    interventionLevel: 4, total: 1, useful: 0, negative: 1, handled: 0,
   }]);
   expect(store.attentionFeedbackDisposition({
     attentionId: "attention_review_me", presentationChannel: "review_queue",
     presentationReason: "reviewable_intervention", policyVersion: "attention-presentation-v1",
-  })).toBe("already_handled");
+  })).toBe("incorrect");
   const db = store.open();
   try {
     const serialized = JSON.stringify(db.query("SELECT * FROM attention_feedback").all());
     expect(serialized).toContain("attention_review_me");
-    expect(serialized).toContain("already_handled");
+    expect(serialized).toContain("incorrect");
     expect(serialized).toContain("review_queue");
     expect(serialized).not.toMatch(/finding_private|sha256:|provider|source excerpt/);
   } finally { db.close(); }
@@ -63,6 +67,19 @@ test("attention UI feedback binds an opaque subject to the exact current present
   expect(() => recordUiFeedback({ store, value: {
     ...value, subjectUiId: "ui_ffffffffffffffffffff",
   } })).toThrow("not currently reviewable");
+});
+
+test("handled is a lifecycle action and is excluded from quality feedback totals", () => {
+  const store = new OperationalStore(join(mkdtempSync(join(tmpdir(), "life-os-attention-handled-")), "store.db"));
+  store.migrate(); store.saveDerivedState(attentionState());
+  const subjectUiId = attentionSubjectUiId({ attentionId: "attention_review_me",
+    presentationChannel: "review_queue", presentationReason: "reviewable_intervention",
+    policyVersion: "attention-presentation-v1" });
+  markAttentionHandledFromUi({ store, subjectUiId, now: new Date("2026-07-12T10:00:00.000Z") });
+  expect(store.attentionFeedbackMetrics()).toEqual([{
+    signalType: "untracked_user_commitment", presentationChannel: "review_queue",
+    interventionLevel: 4, total: 0, useful: 0, negative: 0, handled: 1,
+  }]);
 });
 
 function attentionState(

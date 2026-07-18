@@ -13,7 +13,9 @@
 		onSelect,
 		onAction,
 		onFeedback,
+		onHandled,
 		feedbackStates,
+		handledStates,
 		feedbackOutcomes,
 	}: {
 		notifications: InboxNotification[];
@@ -21,13 +23,14 @@
 		onSelect: (notification: InboxNotification) => void;
 		onAction: (notification: InboxNotification, action: "primary" | "secondary") => void;
 		onFeedback: (notification: InboxNotification, outcome: AttentionFeedbackOutcome) => void;
+		onHandled: (notification: InboxNotification) => void;
 		feedbackStates: Record<string, "saving" | "saved" | "failed">;
+		handledStates: Record<string, "saving" | "failed">;
 		feedbackOutcomes: Record<string, AttentionFeedbackOutcome>;
 	} = $props();
 
 	const feedbackOptions: Array<{ outcome: AttentionFeedbackOutcome; label: string }> = [
 		{ outcome: "useful", label: "Useful" },
-		{ outcome: "already_handled", label: "Handled" },
 		{ outcome: "incorrect", label: "Wrong" },
 		{ outcome: "duplicate", label: "Duplicate" },
 		{ outcome: "irrelevant", label: "Not relevant" },
@@ -130,6 +133,10 @@
 					</button>
 					{#if notification.status === "open" && (notification.primaryAction || notification.secondaryAction)}
 						<div class="mt-3 flex justify-end gap-2 border-t pt-3">
+							{#if notification.feedbackSubjectKind === "attention"}
+								<Button variant="ghost" size="sm" disabled={handledStates[notification.id] === "saving"}
+									onclick={() => onHandled(notification)}>{handledStates[notification.id] === "saving" ? "Saving…" : "Handled"}</Button>
+							{/if}
 							{#if notification.secondaryAction}
 								<Button variant="ghost" size="sm" onclick={() => onAction(notification, "secondary")}>
 									{notification.secondaryAction.label}
@@ -145,6 +152,7 @@
 								</Button>
 							{/if}
 						</div>
+						{#if handledStates[notification.id] === "failed"}<p class="mt-1 text-right text-[11px] text-rose-700">Could not mark handled. Try again.</p>{/if}
 					{/if}
 					{#if notification.status === "open" && notification.feedbackSubjectKind === "attention"}
 						<div class="mt-2 flex flex-wrap items-center justify-end gap-1.5" aria-label="Rate this suggestion">

@@ -37,7 +37,7 @@ export interface UiWorkspaceSnapshot {
     pending: number; leased: number; failed: number; oldestPendingAgeSeconds: number | null;
     failureCategories: Record<string, number>;
   };
-  feedback: { total: number; useful: number; negative: number };
+  feedback: { total: number; useful: number; negative: number; handled: number };
   refresh: { available: boolean; label: string };
   message?: string;
 }
@@ -79,8 +79,8 @@ export async function compileUiWorkspace(now = new Date()): Promise<UiWorkspaceS
     const work = new WorkRepository(store).status(now);
     const feedback = store.attentionFeedbackMetrics().reduce((total, metric) => ({
       total: total.total + metric.total, useful: total.useful + metric.useful,
-      negative: total.negative + metric.negative,
-    }), { total: 0, useful: 0, negative: 0 });
+      negative: total.negative + metric.negative, handled: total.handled + metric.handled,
+    }), { total: 0, useful: 0, negative: 0, handled: 0 });
     const proposals = store.listPendingProposals().slice(0, 20).map(browserProposalReview);
     const actions = store.listRecentActionReviews(20).map((action) => ({
       id: uiId("action", action.actionId), effectType: action.effectType,
@@ -130,7 +130,7 @@ function baseSnapshot(now: Date): UiWorkspaceSnapshot {
     state: { projectionCount: 0, freshness: "No compact state", provenance: "Canonical sources" },
     proposals: [], actions: [], work: { pending: 0, leased: 0, failed: 0,
       oldestPendingAgeSeconds: null, failureCategories: {} },
-    feedback: { total: 0, useful: 0, negative: 0 },
+    feedback: { total: 0, useful: 0, negative: 0, handled: 0 },
     refresh: { available: false, label: "Refresh unavailable" } };
 }
 
