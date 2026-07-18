@@ -210,7 +210,10 @@
 	}
 
 	function contextPayload(notification: InboxNotification) {
-		return { kind: notification.kind, title: notification.title, summary: notification.summary,
+		return { kind: notification.kind, category: notification.category,
+			title: notification.title, summary: notification.summary,
+			...(notification.detail ? { detail: notification.detail } : {}),
+			...(notification.primaryAction ? { suggestedAction: notification.primaryAction.label } : {}),
 			...(notification.agentSummary ? { agentSummary: notification.agentSummary.sentences } : {}) };
 	}
 

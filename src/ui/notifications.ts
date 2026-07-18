@@ -15,8 +15,8 @@ import { routeModel } from "../orchestration/model-router";
 import { sha256Text, sha256Value } from "../util/hashing";
 
 export const UI_NOTIFICATION_SUMMARY_MODEL = "gpt-5.6-luna";
-export const UI_NOTIFICATION_SUMMARY_PROMPT_VERSION = "ui-notification-summary-v3-strict";
-export const UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION = "ui-notification-summary-schema-v3";
+export const UI_NOTIFICATION_SUMMARY_PROMPT_VERSION = "ui-notification-opening-v6-nonredundant";
+export const UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION = "ui-notification-opening-schema-v4";
 export const UI_NOTIFICATION_SUMMARY_POLICY_VERSION = "ui-read-only-v1";
 
 export type UiNotificationCategory = "needs_you" | "activity" | "approvals";
@@ -85,6 +85,7 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
     }
 
     const notifications: UiNotification[] = [];
+    const discussionGrounding = new Map<string, Record<string, unknown>>();
     const gmail = new GmailStore(store);
     const calendar = new CalendarStore(store);
 
@@ -98,11 +99,12 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           presentationReason: item.presentation.reason, policyVersion: item.presentation.policyVersion,
         });
         if (disposition && disposition !== "useful") continue;
-        notifications.push({
-          id: attentionSubjectUiId({
+        const notificationId = attentionSubjectUiId({
             attentionId: item.attentionId, presentationChannel: item.presentation.channel,
             presentationReason: item.presentation.reason, policyVersion: item.presentation.policyVersion,
-          }),
+          });
+        notifications.push({
+          id: notificationId,
           kind: attentionKind(item.type),
           category: "needs_you",
           tone: "question",
@@ -112,6 +114,20 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           relativeTime: relativeTime(attentionReview.asOf, now),
           primaryAction: { kind: "discuss", label: attentionActionLabel(item.interventions) },
           feedbackSubjectKind: "attention",
+        });
+        discussionGrounding.set(notificationId, {
+          attention: {
+            type: item.type, owner: item.owner, confidence: item.confidence,
+            impact: item.impact, urgency: item.urgency, dueDate: item.dueDate,
+            rationale: item.explanation, ambiguities: item.ambiguities,
+            interventions: item.interventions.map((intervention) => ({
+              kind: intervention.kind, rationale: intervention.rationale,
+              expectedBenefit: intervention.expectedBenefit,
+              consequenceOfDelay: intervention.consequenceOfDelay,
+              readiness: intervention.readiness, permissionClass: intervention.permissionClass,
+              reversible: intervention.reversible,
+            })),
+          },
         });
         includedAttention += 1;
         if (includedAttention >= 12) break;
@@ -235,7 +251,7 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
       ? store.getCurrentDerivedState("calendar_state", config.gmailAccountId)?.content
       : undefined;
     const summaryCandidates = buildSummaryCandidates({
-      notifications, store, ...(calendarState ? { calendarState } : {}),
+      notifications, store, discussionGrounding, ...(calendarState ? { calendarState } : {}),
     });
     const cachedById = new Map(summaryCandidates
       .filter((candidate) => candidate.cachedSummary)
@@ -278,6 +294,7 @@ function buildSummaryCandidates(input: {
   notifications: UiNotification[];
   store: OperationalStore;
   calendarState?: Record<string, unknown>;
+  discussionGrounding?: Map<string, Record<string, unknown>>;
 }): UiNotificationSummaryCandidate[] {
   return input.notifications.map((notification) => {
     const content = {
@@ -292,6 +309,7 @@ function buildSummaryCandidates(input: {
       ...(notification.kind === "calendar" && input.calendarState
         ? { compact_calendar_state: input.calendarState }
         : {}),
+      ...(input.discussionGrounding?.get(notification.id) ?? {}),
     };
     const sourceHash = sha256Value(content);
     const manifest = buildContext([{
@@ -331,7 +349,7 @@ function buildSummaryCandidates(input: {
       schemaVersion: UI_NOTIFICATION_SUMMARY_SCHEMA_VERSION,
       policyVersion: UI_NOTIFICATION_SUMMARY_POLICY_VERSION,
       redactionVersion: "stock-presidio-v1",
-      builderVersion: "ui-notification-summary-v1",
+      builderVersion: "ui-notification-opening-v2",
     });
     const actionRequired = notification.category !== "activity";
     const cachedSummary = parseCachedSummary(input.store.getModelCache(cacheKey)?.output, actionRequired);

@@ -184,7 +184,7 @@ describe("LifeOS notification compiler", () => {
 					title: "Commitment is not tracked", summary: "Prepare the planning notes",
 					finding_ids: ["finding_private"], subject_refs: [], owner: "user",
 					confidence: 0.95, impact: "medium", urgency: "soon", due_date: null,
-					explanation: "No matching canonical task exists.", ambiguities: [],
+					explanation: "No matching canonical task exists.", ambiguities: ["The due date is unknown."],
 					suggested_interventions: [{ kind: "create_task", rationale: "Track it.",
 						expected_benefit: "Include it in planning.", consequence_of_delay: null,
 						permission_class: "yellow", readiness: "ready", reversible: true }],
@@ -212,6 +212,13 @@ describe("LifeOS notification compiler", () => {
 		expect(notification?.secondaryAction).toBeUndefined();
 		expect(notification?.id).toMatch(/^ui_[a-f0-9]{20}$/);
 		expect(serialized).not.toMatch(/attention_private_review|finding_private|state_private_attention|sha256:/);
+		const discussionCandidate = compileUiNotificationBundle(new Date("2026-07-12T13:00:00.000Z"))
+			.summaryCandidates.find((candidate) => candidate.notificationId === notification?.id);
+		const groundedDiscussion = JSON.stringify(discussionCandidate?.manifest.includedItems);
+		expect(groundedDiscussion).toContain("The due date is unknown.");
+		expect(groundedDiscussion).toContain("No matching canonical task exists.");
+		expect(groundedDiscussion).toContain("Track it.");
+		expect(groundedDiscussion).not.toMatch(/attention_private_review|finding_private|state_private_attention/);
 
 		recordUiFeedback({ store, value: { subjectKind: "attention", subjectUiId: notification!.id,
 			outcome: "useful" }, now: new Date("2026-07-12T13:01:00.000Z") });

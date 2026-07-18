@@ -177,7 +177,9 @@ async function generate(candidate: UiNotificationSummaryCandidate): Promise<Noti
 					effort: "low",
 					outputSchema: summaryOutputSchema,
 					maxOutputCharacters: 1_000,
-					message: `${attempt === 0 ? "Create" : "Repair and create"} a concise user-facing reaction to this LifeOS notification using only the grounded context below. Do not call tools. Return exactly 2 or 3 short sentences and set actionRequired to ${candidate.actionRequired}. Do not include identifiers, hashes, addresses, URLs, HTML, file paths, or source excerpts. Return only the requested structured output.\n\nGrounded context:\n${JSON.stringify(groundedContext)}`,
+					message: buildNotificationOpeningPrompt({
+						groundedContext, actionRequired: candidate.actionRequired, repair: attempt > 0,
+					}),
 					onDelta: () => undefined,
 				});
 				summary = normalizeSummary(text, candidate.actionRequired);
@@ -225,12 +227,11 @@ async function generate(candidate: UiNotificationSummaryCandidate): Promise<Noti
 const summaryOutputSchema = {
 	type: "object",
 	additionalProperties: false,
-	required: ["sentences", "actionRequired"],
+	required: ["assessment", "recommendedNextStep", "question", "actionRequired"],
 	properties: {
-		sentences: {
-			type: "array", minItems: 2, maxItems: 3,
-			items: { type: "string", minLength: 1, maxLength: 180 },
-		},
+		assessment: { type: "string", minLength: 1, maxLength: 180 },
+		recommendedNextStep: { type: "string", minLength: 1, maxLength: 180 },
+		question: { anyOf: [{ type: "string", minLength: 1, maxLength: 180 }, { type: "null" }] },
 		actionRequired: { type: "boolean" },
 	},
 } as const;
@@ -245,7 +246,42 @@ export function normalizeSummary(text: string, expectedActionRequired: boolean):
 	} catch (error) {
 		throw new Error(`Notification summary is not valid JSON: ${error instanceof Error ? error.message : "parse failed"}`);
 	}
-	return validateSummary(value, expectedActionRequired);
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Notification opening must be an object");
+	const record = value as Record<string, unknown>;
+	if (Object.keys(record).some((key) => !["assessment", "recommendedNextStep", "question", "actionRequired"].includes(key))) {
+		throw new Error("Notification opening contains unexpected fields");
+	}
+	if (record.actionRequired !== expectedActionRequired) throw new Error("Notification opening action state is inconsistent");
+	if (typeof record.assessment !== "string" || typeof record.recommendedNextStep !== "string"
+		|| (record.question !== null && typeof record.question !== "string")) {
+		throw new Error("Notification opening fields are invalid");
+	}
+	return validateSummary({
+		sentences: [record.assessment, record.recommendedNextStep,
+			...(typeof record.question === "string" ? [record.question] : [])],
+		actionRequired: record.actionRequired,
+	}, expectedActionRequired);
+}
+
+export function buildNotificationOpeningPrompt(input: {
+	groundedContext: unknown[];
+	actionRequired: boolean;
+	repair?: boolean;
+}): string {
+	return `${input.repair ? "Repair the prior attempt and produce" : "Produce"} the opening response for a focused discussion about this LifeOS Inbox item.
+
+Use only the grounded context below. Do not call tools or invent missing facts.
+- assessment: State the bottom line and why it matters to the user. Add judgment; do not merely repeat the title or summary. Do not speculate about consequences: use a consequence only when the grounded context states it; otherwise explain the practical uncertainty.
+- recommendedNextStep: Recommend one concrete, proportionate next move using a specific verb. ${input.actionRequired
+		? "The user needs to act, so do not say only to review, consider, monitor, or follow up without saying exactly what to check, decide, or communicate."
+		: "No action is required; say that plainly and identify the condition that would change that."}
+- question: Ask one short, answerable question only if the user may already know the answer and it would materially change the recommended next step. Do not ask a question that is answered by carrying out the recommended next step. If question is not null, recommendedNextStep must explain what to do after the answer or why the answer matters; it must not repeat the question as an imperative. Otherwise return null.
+- actionRequired: Return exactly ${input.actionRequired}.
+
+Write directly to the user in calm, natural language. Distinguish inference with words such as “likely.” Never mention LifeOS, notifications, findings, context, or implementation state. Do not include identifiers, hashes, addresses, URLs, HTML, file paths, or source excerpts. Return only the requested structured output.
+
+Grounded context:
+${JSON.stringify(input.groundedContext)}`;
 }
 
 function parseSummary(value: unknown, expectedActionRequired: boolean): NotificationAgentSummary | undefined {

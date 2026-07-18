@@ -51,7 +51,7 @@ export function parseChatInput(value: unknown): ParsedChatInput | { error: strin
 function parseContext(value: unknown): ChatContext | { error: string } {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return { error: "Invalid Inbox context" };
 	const context = value as Record<string, unknown>;
-	if (Object.keys(context).some((key) => !["kind", "title", "summary", "agentSummary"].includes(key))) {
+	if (Object.keys(context).some((key) => !["kind", "category", "title", "summary", "detail", "suggestedAction", "agentSummary"].includes(key))) {
 		return { error: "Invalid Inbox context" };
 	}
 	if (typeof context.kind !== "string" || !contextKinds.has(context.kind)
@@ -61,6 +61,14 @@ function parseContext(value: unknown): ChatContext | { error: string } {
 	if (context.title.length > maxContextCharacters || context.summary.length > maxContextCharacters) {
 		return { error: "Inbox context is too long" };
 	}
+	if (context.category !== undefined && !["needs_you", "activity", "approvals"].includes(String(context.category))) {
+		return { error: "Invalid Inbox context" };
+	}
+	if ((context.detail !== undefined && (typeof context.detail !== "string" || context.detail.length > maxContextCharacters))
+		|| (context.suggestedAction !== undefined
+			&& (typeof context.suggestedAction !== "string" || context.suggestedAction.length > 120))) {
+		return { error: "Invalid Inbox context" };
+	}
 	let agentSummary: string[] | undefined;
 	if (context.agentSummary !== undefined) {
 		if (!Array.isArray(context.agentSummary) || context.agentSummary.length > 4
@@ -69,7 +77,11 @@ function parseContext(value: unknown): ChatContext | { error: string } {
 		}
 		agentSummary = context.agentSummary as string[];
 	}
-	return { kind: context.kind as ChatContext["kind"], title: context.title, summary: context.summary,
+	return { kind: context.kind as ChatContext["kind"],
+		...(context.category ? { category: context.category as ChatContext["category"] } : {}),
+		title: context.title, summary: context.summary,
+		...(context.detail ? { detail: context.detail as string } : {}),
+		...(context.suggestedAction ? { suggestedAction: context.suggestedAction as string } : {}),
 		...(agentSummary ? { agentSummary } : {}) };
 }
 
