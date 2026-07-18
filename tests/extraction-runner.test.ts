@@ -38,3 +38,17 @@ test("pilot continues after failures and returns aggregate receipts only", async
     classifications: { actionable: 1, ignore: 1 }, itemCount: 2, unresolvedCount: 1 });
   expect(JSON.stringify(report)).not.toContain("private host failure");
 });
+
+test("pilot stops one provider after failure instead of retrying the same poison item", async () => {
+  const providers: string[] = [];
+  const report = await runExtractionPilot({ gmail: 3, imessage: 1, model: "test",
+    runner: async ({ provider }) => {
+      providers.push(provider);
+      if (provider === "gmail") throw new Error("invalid private output");
+      return { provider, status: "completed", model: "test", classification: "reference_only",
+        itemCount: 0, relationCount: 0, unresolvedCount: 0, promptInjectionDetected: false };
+    } });
+  expect(providers).toEqual(["gmail", "imessage"]);
+  expect(report).toMatchObject({ completed: { gmail: 0, imessage: 1 },
+    failed: { gmail: 1, imessage: 0 }, classifications: { reference_only: 1 } });
+});

@@ -136,8 +136,10 @@ op run --env-file ~/.config/life-os/.env -- \
   bun run src/cli.ts extract pilot --gmail 5 --imessage 5
 ```
 
-The pilot continues after a host or validation failure, safely requeues failed work under its bounded
-attempt limit, and returns classification, item, relation, ambiguity, and failure counts only.
+The pilot continues with the other provider after a host or validation failure, but stops the failing
+provider so one rejected item cannot consume the remaining sample or exhaust its retry budget. Failed
+work is safely requeued under its bounded attempt limit. Output contains classification, item, relation,
+ambiguity, and failure counts only.
 
 Vault writes are always proposal-based. Review the proposal, obtain exact authorization, apply it, and
 use the action ID for undo if the target has not changed:

@@ -74,4 +74,6 @@ test("prompt contracts are concise, content-addressed, and share extraction rule
   expect(gmailPromptSpec.rules.join("\n")).toContain("routine shipping");
   expect(gmailPromptSpec.rules.join("\n")).toContain("named user objective");
   expect(gmailPromptSpec.rules.join("\n")).toContain("empty items and relations");
+  expect(gmailPromptSpec.rules.join("\n")).toContain("Relation compatibility is exact");
+  expect(JSON.stringify(gmailPromptSpec.schema)).toContain("exact relation compatibility rule");
 });

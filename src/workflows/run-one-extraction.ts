@@ -46,7 +46,12 @@ export async function runExtractionPilot(input: {
         report.itemCount += receipt.itemCount ?? 0; report.relationCount += receipt.relationCount ?? 0;
         report.unresolvedCount += receipt.unresolvedCount ?? 0;
         if (receipt.promptInjectionDetected) report.promptInjectionCount += 1;
-      } catch { report.failed[provider] += 1; }
+      } catch {
+        report.failed[provider] += 1;
+        // Preparation selects the highest-priority ready item. Stop this provider so the same
+        // rejected item cannot consume the rest of a bounded pilot or exhaust its retry budget.
+        break;
+      }
     }
   }
   return report;
