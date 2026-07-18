@@ -125,7 +125,7 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
         category: "approvals",
         tone: "proposal",
         status: "open",
-        title: "Change ready for review",
+        title: proposalNotificationTitle(proposal.effectPlan.type),
         summary: compactText(browserProposalReview(proposal).preview, 180),
         detail: "Nothing will change without your approval.",
         relativeTime: relativeTime(proposal.createdAt, now),
@@ -261,6 +261,16 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
       },
       summaryCandidates: [],
     };
+  }
+}
+
+function proposalNotificationTitle(effectType: string): string {
+  switch (effectType) {
+    case "finding_task_append": return "Add this task to your Inbox?";
+    case "frontmatter_patch": return "Update this note?";
+    case "task_id_patch": return "Organize these tasks?";
+    case "policy_bootstrap": return "Finish setting up LifeOS?";
+    default: return "Review this change";
   }
 }
 

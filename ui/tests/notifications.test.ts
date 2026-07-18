@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { OperationalStore } from "../../src/db/store";
+import { createEffectProposal } from "../../src/effects/proposals";
 import { GmailStore } from "../../src/gmail/store";
 import { recordUiFeedback } from "../../src/ui/feedback";
 import {
@@ -139,6 +140,34 @@ describe("LifeOS notification compiler", () => {
 			notification.title.includes("important email")
 			|| notification.summary.includes("structured extraction"),
 		)).toBe(false);
+	});
+
+	test("describes task proposals in user language", () => {
+		temporaryDirectory = mkdtempSync(join(tmpdir(), "life-os-ui-proposal-"));
+		const databasePath = join(temporaryDirectory, "life-os.db");
+		const store = new OperationalStore(databasePath);
+		store.migrate();
+		createEffectProposal({
+			store, proposalId: "proposal-private", runId: "run-private", actionId: "action-private",
+			workflow: "finding_task", sourceType: "finding", sourceId: "finding_abcdef",
+			sourceHash: "sha256:source", targetPath: "00 Inbox/Inbox.md", targetHash: "sha256:target",
+			plan: { type: "finding_task_append", findingId: "finding_abcdef", taskId: "task_abcdef",
+				taskLine: "- [ ] Private task text" },
+			createdAt: "2026-07-12T12:00:00.000Z",
+		});
+		Bun.env.LIFE_OS_VAULT_PATH = temporaryDirectory;
+		Bun.env.LIFE_OS_DATABASE_PATH = databasePath;
+		Bun.env.LIFE_OS_GMAIL_ENABLED = "false";
+		Bun.env.LIFE_OS_CALENDAR_ENABLED = "false";
+
+		const proposal = compileUiNotifications(new Date("2026-07-12T13:00:00.000Z"))
+			.notifications.find((notification) => notification.category === "approvals");
+		expect(proposal).toMatchObject({
+			title: "Add this task to your Inbox?",
+			summary: "Add one task to your Inbox",
+			primaryAction: { label: "Review" },
+		});
+		expect(JSON.stringify(proposal)).not.toContain("finding_task_append");
 	});
 
 	test("surfaces only routed review-queue attention through opaque UI identities", () => {

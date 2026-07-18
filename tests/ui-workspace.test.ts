@@ -34,7 +34,7 @@ test("browser workspace represents operational states without private identities
   expect(snapshot.mode).toBe("live");
   expect(snapshot.attention.find((queue) => queue.category === "reply")?.count).toBe(1);
   expect(snapshot.proposals[0]).toMatchObject({ approval: "required",
-    preview: "Append one reviewed task to the fixed Inbox" });
+    preview: "Add one task to your Inbox" });
   for (const forbidden of ["provider-message-private", "private-source-hash", "PRIVATE SOURCE EXCERPT",
     "private@example.com", "prop_private_internal", "act_private_internal", "sha256:"]) {
     expect(serialized).not.toContain(forbidden);

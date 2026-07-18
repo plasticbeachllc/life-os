@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { Badge } from "$lib/components/ui/badge";
 	import { Button } from "$lib/components/ui/button";
 	import ChatPanel from "$lib/life-os/ChatPanel.svelte";
 	import { initialMessages } from "$lib/life-os/initial-messages";
 	import NotificationInbox from "$lib/life-os/NotificationInbox.svelte";
 	import type { AttentionFeedbackOutcome, InboxNotification } from "$lib/life-os/types";
-	import WorkspaceOverview from "$lib/life-os/WorkspaceOverview.svelte";
-	import { Inbox, MessageCircle, Settings2, Sparkles } from "@lucide/svelte";
+	import { Inbox, MessageCircle, RefreshCw, Sparkles } from "@lucide/svelte";
 	import { onMount, untrack } from "svelte";
 	import type { PageData } from "./$types";
 
@@ -18,7 +16,6 @@
 		untrack(() => data.notifications.map((notification: InboxNotification) => ({ ...notification }))),
 	);
 	let refreshState = $state<"idle" | "refreshing" | "failed">("idle");
-	let proposalState = $state<"idle" | "creating" | "failed">("idle");
 	let feedbackStates = $state<Record<string, "saving" | "saved" | "failed">>({});
 	let feedbackOutcomes = $state<Record<string, AttentionFeedbackOutcome>>({});
 	let handledStates = $state<Record<string, "saving" | "failed">>({});
@@ -113,15 +110,6 @@
 		} catch { refreshState = "failed"; }
 	}
 
-	async function proposeFindingTask(findingUiId: string) {
-		proposalState = "creating";
-		try {
-			const response = await fetch("/api/findings/propose-task", { method: "POST", headers: { "content-type": "application/json" },
-				body: JSON.stringify({ findingUiId, csrfToken: data.feedbackToken }) });
-			if (!response.ok) throw new Error("proposal failed");
-			window.location.reload();
-		} catch { proposalState = "failed"; }
-	}
 </script>
 
 <svelte:head>
@@ -135,26 +123,17 @@
 			<div class="flex size-8 items-center justify-center rounded-lg bg-foreground text-background">
 				<Sparkles class="size-4" aria-hidden="true" />
 			</div>
-			<div class="flex items-baseline gap-2">
-				<span class="font-semibold tracking-tight">LifeOS</span>
-				<Badge variant="outline" class="hidden sm:inline-flex">Private beta</Badge>
-			</div>
+			<span class="font-semibold tracking-tight">LifeOS</span>
 		</div>
-		<div class="flex items-center gap-2">
-			<div class="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
-				<span class="size-2 rounded-full bg-emerald-500"></span>
-				Read-only mode
-			</div>
-			<Button variant="ghost" size="icon" aria-label="Open settings">
-				<Settings2 aria-hidden="true" />
-			</Button>
-		</div>
+		<Button variant="ghost" size="sm" disabled={refreshState === "refreshing"} onclick={refreshToday}>
+			<RefreshCw class={refreshState === "refreshing" ? "animate-spin" : ""} aria-hidden="true" />
+			{refreshState === "refreshing" ? "Refreshing…" : refreshState === "failed" ? "Try refresh again" : "Refresh"}
+		</Button>
 	</header>
 
 	<main class="grid min-h-0 flex-1 md:grid-cols-[minmax(320px,42%)_minmax(0,58%)]">
 		<div class:hidden={activeMobilePanel !== "inbox"} class="min-h-0 flex-col md:flex md:border-r">
-			<WorkspaceOverview workspace={data.workspace} feedbackToken={data.feedbackToken} {refreshState} {proposalState} onRefresh={refreshToday} onProposeFinding={proposeFindingTask} />
-			<div class="min-h-0 flex-1"><NotificationInbox
+			<NotificationInbox
 				{notifications}
 				selectedId={selectedNotification?.id ?? null}
 				onSelect={selectNotification}
@@ -164,7 +143,7 @@
 				{feedbackStates}
 				{feedbackOutcomes}
 				{handledStates}
-			/></div>
+			/>
 		</div>
 
 		<div class:hidden={activeMobilePanel !== "chat"} class="min-h-0 md:flex">

@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { UiNotificationBundle } from "../../../src/ui/notifications";
-import type { UiWorkspaceSnapshot } from "../../../src/ui/workspace";
 import { ensureChatSession, issueFeedbackCapability, issueWorkspaceRefreshCapability } from "$lib/server/chat-session";
 import { prewarmNotificationSummaries } from "$lib/server/notification-summaries";
 import type { PageServerLoad } from "./$types";
@@ -12,8 +11,6 @@ interface NotificationModule {
 	compileUiNotificationBundle: () => UiNotificationBundle;
 }
 
-interface WorkspaceModule { compileUiWorkspace: () => Promise<UiWorkspaceSnapshot> }
-
 export const load: PageServerLoad = async ({ cookies }) => {
 	const sessionId = ensureChatSession(cookies);
 	const root = repositoryRoot();
@@ -21,18 +18,13 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	const notificationModule = await import(/* @vite-ignore */ moduleUrl) as NotificationModule;
 	const bundle = notificationModule.compileUiNotificationBundle();
 	prewarmNotificationSummaries(bundle.summaryCandidates);
-	const workspaceUrl = pathToFileURL(resolve(root, "src/ui/workspace.ts")).href;
-	const workspaceModule = await import(/* @vite-ignore */ workspaceUrl) as WorkspaceModule;
-	const workspace = await workspaceModule.compileUiWorkspace();
-	const feedbackToken = issueFeedbackCapability({ sessionId, subjects: [
-		...workspace.proposals.map((proposal) => ({ id: proposal.id, kind: "proposal" as const })),
-		...workspace.findings.items.map((finding) => ({ id: finding.id, kind: "finding" as const })),
-		...bundle.snapshot.notifications
+	const feedbackToken = issueFeedbackCapability({ sessionId, subjects:
+		bundle.snapshot.notifications
 			.filter((notification) => notification.feedbackSubjectKind === "attention")
 			.map((notification) => ({ id: notification.id, kind: "attention" as const })),
-	] });
+	});
 	const refreshToken = issueWorkspaceRefreshCapability({ sessionId });
-	return { ...bundle.snapshot, workspace, feedbackToken, refreshToken };
+	return { ...bundle.snapshot, feedbackToken, refreshToken };
 };
 
 function repositoryRoot(): string {

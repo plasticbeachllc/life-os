@@ -42,7 +42,7 @@ export function browserProposalReview(proposal: ProposalRecord): {
       ? `Add stable IDs to ${proposal.effectPlan.patches.length} task(s)`
       : proposal.effectPlan.type === "policy_bootstrap"
         ? `Create one required policy file (${proposal.effectPlan.content.split(/\r?\n/).length} lines)`
-        : "Append one reviewed task to the fixed Inbox";
+        : "Add one task to your Inbox";
   return {
     id: `ui_${sha256Text(`proposal:${review.proposalId}`).slice(7, 27)}`,
     effectType: review.effectType, state: review.lifecycleState,
