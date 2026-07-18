@@ -10,6 +10,7 @@ const maxFeedbackSessions = 1_000;
 const feedbackCapabilities = new Map<string, {
 	token: string; subjects: Map<string, "finding" | "proposal" | "attention">; expiresAt: number;
 }>();
+const workspaceRefreshCapabilities = new Map<string, { token: string; expiresAt: number }>();
 
 export function ensureChatSession(cookies: Cookies): string {
 	const existing = cookies.get(cookieName);
@@ -30,9 +31,31 @@ export function currentChatSession(cookies: Cookies): string | undefined {
 }
 
 export function clearChatSession(cookies: Cookies): void {
-	const sessionId = currentChatSession(cookies);
-	if (sessionId) feedbackCapabilities.delete(sessionId);
+  const sessionId = currentChatSession(cookies);
+  if (sessionId) {
+    feedbackCapabilities.delete(sessionId);
+    workspaceRefreshCapabilities.delete(sessionId);
+  }
 	cookies.delete(cookieName, { path: "/" });
+}
+
+export function issueWorkspaceRefreshCapability(input: { sessionId: string; now?: Date }): string {
+  if (!sessionPattern.test(input.sessionId)) throw new Error("invalid refresh session");
+  const now = (input.now ?? new Date()).getTime();
+  pruneWorkspaceRefreshCapabilities(now);
+  const token = randomBytes(32).toString("hex");
+  workspaceRefreshCapabilities.set(input.sessionId, { token, expiresAt: now + feedbackCapabilityTtlMs });
+  return token;
+}
+
+export function validateWorkspaceRefreshCapability(input: {
+  sessionId: string | undefined; token: string; now?: Date;
+}): boolean {
+  const now = (input.now ?? new Date()).getTime();
+  pruneWorkspaceRefreshCapabilities(now);
+  if (!input.sessionId || !sessionPattern.test(input.sessionId) || !feedbackTokenPattern.test(input.token)) return false;
+  const capability = workspaceRefreshCapabilities.get(input.sessionId);
+  return Boolean(capability && capability.expiresAt > now && capability.token === input.token);
 }
 
 export function issueFeedbackCapability(input: {
@@ -71,4 +94,15 @@ function pruneFeedbackCapabilities(now: number): void {
 		if (!oldest) break;
 		feedbackCapabilities.delete(oldest);
 	}
+}
+
+function pruneWorkspaceRefreshCapabilities(now: number): void {
+  for (const [sessionId, capability] of workspaceRefreshCapabilities) {
+    if (capability.expiresAt <= now) workspaceRefreshCapabilities.delete(sessionId);
+  }
+  while (workspaceRefreshCapabilities.size >= maxFeedbackSessions) {
+    const oldest = workspaceRefreshCapabilities.keys().next().value as string | undefined;
+    if (!oldest) break;
+    workspaceRefreshCapabilities.delete(oldest);
+  }
 }

@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import type { UiNotificationBundle } from "../../../src/ui/notifications";
 import type { UiWorkspaceSnapshot } from "../../../src/ui/workspace";
-import { ensureChatSession, issueFeedbackCapability } from "$lib/server/chat-session";
+import { ensureChatSession, issueFeedbackCapability, issueWorkspaceRefreshCapability } from "$lib/server/chat-session";
 import { prewarmNotificationSummaries } from "$lib/server/notification-summaries";
 import type { PageServerLoad } from "./$types";
 
@@ -31,7 +31,8 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			.filter((notification) => notification.feedbackSubjectKind === "attention")
 			.map((notification) => ({ id: notification.id, kind: "attention" as const })),
 	] });
-	return { ...bundle.snapshot, workspace, feedbackToken };
+	const refreshToken = issueWorkspaceRefreshCapability({ sessionId });
+	return { ...bundle.snapshot, workspace, feedbackToken, refreshToken };
 };
 
 function repositoryRoot(): string {

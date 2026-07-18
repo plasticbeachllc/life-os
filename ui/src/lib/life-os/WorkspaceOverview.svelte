@@ -2,7 +2,11 @@
 	import { Badge } from "$lib/components/ui/badge";
 	import type { WorkspaceSnapshot } from "./types";
 
-	let { workspace, feedbackToken }: { workspace: WorkspaceSnapshot; feedbackToken: string } = $props();
+	let { workspace, feedbackToken, refreshState, onRefresh }: {
+		workspace: WorkspaceSnapshot; feedbackToken: string;
+		refreshState: "idle" | "refreshing" | "failed";
+		onRefresh: () => void;
+	} = $props();
 	const labels = { reply: "Replies", open_loop: "Open loops", date: "Dates", relationship: "People", project: "Projects" };
 	let feedbackState = $state<"idle" | "saving" | "saved" | "failed">("idle");
 
@@ -22,7 +26,12 @@
 			<p class="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">Sources · Findings · State · Proposals</p>
 			<h2 id="workspace-heading" class="mt-1 text-sm font-semibold">Operational overview</h2>
 		</div>
-		<Badge variant={workspace.mode === "live" || workspace.mode === "empty" ? "secondary" : "outline"}>{workspace.mode.replace("_", " ")}</Badge>
+		<div class="flex items-center gap-2">
+			{#if workspace.refresh.available}
+				<button class="text-xs underline disabled:opacity-60" disabled={refreshState === "refreshing"} onclick={onRefresh}>{refreshState === "refreshing" ? "Refreshing…" : workspace.refresh.label}</button>
+			{/if}
+			<Badge variant={workspace.mode === "live" || workspace.mode === "empty" ? "secondary" : "outline"}>{workspace.mode.replace("_", " ")}</Badge>
+		</div>
 	</div>
 
 	<div class="mt-3 grid grid-cols-5 gap-1.5" aria-label="Attention queues">
@@ -64,4 +73,5 @@
 	{/if}
 	<p class="mt-2 truncate text-[11px] text-muted-foreground" title={workspace.state.provenance}>{workspace.state.freshness} · {workspace.state.provenance}</p>
 	{#if workspace.message}<p class="mt-2 text-xs text-amber-700">{workspace.message}</p>{/if}
+	{#if refreshState === "failed"}<p class="mt-2 text-xs text-rose-700">Refresh could not complete. Your existing workspace was left unchanged.</p>{/if}
 </section>

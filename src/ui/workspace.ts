@@ -35,6 +35,7 @@ export interface UiWorkspaceSnapshot {
     pending: number; leased: number; failed: number; oldestPendingAgeSeconds: number | null;
     failureCategories: Record<string, number>;
   };
+  refresh: { available: boolean; label: string };
   message?: string;
 }
 
@@ -107,6 +108,7 @@ export async function compileUiWorkspace(now = new Date()): Promise<UiWorkspaceS
       work: { pending: work.byState.pending, leased: work.byState.leased,
         failed: work.byState.failed, oldestPendingAgeSeconds: work.oldestPendingAgeSeconds,
         failureCategories: work.failureCategories },
+      refresh: { available: true, label: "Refresh Today" },
     };
   } catch {
     return { ...empty, mode: "failed", message: "The sanitized workspace projection is unavailable." };
@@ -118,7 +120,8 @@ function baseSnapshot(now: Date): UiWorkspaceSnapshot {
     findings: { total: 0, active: 0, byKind: {}, items: [] },
     state: { projectionCount: 0, freshness: "No compact state", provenance: "Canonical sources" },
     proposals: [], actions: [], work: { pending: 0, leased: 0, failed: 0,
-      oldestPendingAgeSeconds: null, failureCategories: {} } };
+      oldestPendingAgeSeconds: null, failureCategories: {} },
+    refresh: { available: false, label: "Refresh unavailable" } };
 }
 
 function sourceHealth(details: unknown): "healthy" | "partial" | "failed" {

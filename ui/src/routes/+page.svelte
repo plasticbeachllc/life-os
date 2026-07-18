@@ -17,6 +17,7 @@
 	let notifications = $state<InboxNotification[]>(
 		untrack(() => data.notifications.map((notification: InboxNotification) => ({ ...notification }))),
 	);
+	let refreshState = $state<"idle" | "refreshing" | "failed">("idle");
 
 	onMount(() => {
 		const releaseSession = () => {
@@ -70,6 +71,16 @@
 		});
 		if (selectedNotification?.id === notification.id) selectedNotification = null;
 	}
+
+	async function refreshToday() {
+		refreshState = "refreshing";
+		try {
+			const response = await fetch("/api/today/refresh", { method: "POST", headers: { "content-type": "application/json" },
+				body: JSON.stringify({ csrfToken: data.refreshToken }) });
+			if (!response.ok) throw new Error("refresh failed");
+			window.location.reload();
+		} catch { refreshState = "failed"; }
+	}
 </script>
 
 <svelte:head>
@@ -101,7 +112,7 @@
 
 	<main class="grid min-h-0 flex-1 md:grid-cols-[minmax(320px,42%)_minmax(0,58%)]">
 		<div class:hidden={activeMobilePanel !== "inbox"} class="min-h-0 flex-col md:flex md:border-r">
-			<WorkspaceOverview workspace={data.workspace} feedbackToken={data.feedbackToken} />
+			<WorkspaceOverview workspace={data.workspace} feedbackToken={data.feedbackToken} {refreshState} onRefresh={refreshToday} />
 			<div class="min-h-0 flex-1"><NotificationInbox
 				{notifications}
 				selectedId={selectedNotification?.id ?? null}

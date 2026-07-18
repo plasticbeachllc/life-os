@@ -3,7 +3,7 @@ import type { Cookies } from "@sveltejs/kit";
 
 import {
 	clearChatSession, currentChatSession, ensureChatSession, issueFeedbackCapability,
-	validateFeedbackCapability,
+	issueWorkspaceRefreshCapability, validateFeedbackCapability, validateWorkspaceRefreshCapability,
 } from "../src/lib/server/chat-session";
 
 function cookieJar(): { cookies: Cookies; options: Array<Record<string, unknown>> } {
@@ -58,6 +58,18 @@ describe("LifeOS chat sessions", () => {
 			subjectUiId: "ui_0123456789abcdefabcd", subjectKind: "finding", now })).toBe(false);
 		expect(validateFeedbackCapability({ sessionId: firstId, token,
 			subjectUiId: "ui_0123456789abcdefabcd", subjectKind: "finding",
+			now: new Date("2026-07-12T21:00:00.000Z") })).toBe(false);
+	});
+
+	test("binds the Today refresh capability to one expiring browser session", () => {
+		const first = cookieJar(); const second = cookieJar();
+		const firstId = ensureChatSession(first.cookies); const secondId = ensureChatSession(second.cookies);
+		const now = new Date("2026-07-12T12:00:00.000Z");
+		const token = issueWorkspaceRefreshCapability({ sessionId: firstId, now });
+		expect(validateWorkspaceRefreshCapability({ sessionId: firstId, token, now })).toBe(true);
+		expect(validateWorkspaceRefreshCapability({ sessionId: secondId, token, now })).toBe(false);
+		expect(validateWorkspaceRefreshCapability({ sessionId: firstId, token: "0".repeat(64), now })).toBe(false);
+		expect(validateWorkspaceRefreshCapability({ sessionId: firstId, token,
 			now: new Date("2026-07-12T21:00:00.000Z") })).toBe(false);
 	});
 });

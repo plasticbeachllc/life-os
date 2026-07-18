@@ -50,5 +50,6 @@ export interface WorkspaceSnapshot {
 	proposals: Array<{ id: string; effectType: string; state: string; approval: "required" | "approved"; preview: string; createdAt: string; expiresAt: string | null }>;
 	actions: Array<{ id: string; effectType: string; state: string; result: "succeeded" | "failed" | "unknown"; undo: "available" | "used" | "unavailable"; createdAt: string }>;
 	work: { pending: number; leased: number; failed: number; oldestPendingAgeSeconds: number | null; failureCategories: Record<string, number> };
+	refresh: { available: boolean; label: string };
 	message?: string;
 }

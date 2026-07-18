@@ -36,6 +36,17 @@ Markdown and existing validated extractions. It does not invoke a model and does
 prose. `briefing morning` produces the deterministic briefing; optional host reasoning is a separate
 MCP prepare/submit workflow.
 
+For the daily loop, run the bounded refresh command:
+
+```bash
+bun run src/cli.ts today refresh --vault /path/to/vault
+```
+
+It attempts ingestion only for enabled read-only providers, isolates a failed provider from the rest of
+the refresh, then rebuilds compact state and the attention queue. It never invokes a model, sends a
+message, changes a provider, or writes the vault. The local UI exposes the same server-owned action as
+**Refresh Today** and reloads its sanitized review queue after completion.
+
 ## Local configuration
 
 Life OS reads machine-specific settings from `~/.config/life-os/.env` by default. The file must be a

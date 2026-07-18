@@ -151,6 +151,7 @@ bun run src/cli.ts doctor --vault ~/worktable/vault
 bun run src/cli.ts state rebuild --vault ~/worktable/vault
 bun run src/cli.ts state show chief-of-staff --vault ~/worktable/vault
 bun run src/cli.ts briefing morning --vault ~/worktable/vault
+bun run src/cli.ts today refresh --vault ~/worktable/vault
 bun run src/cli.ts findings review --vault ~/worktable/vault
 bun run src/cli.ts findings dismiss <finding-id> --reason 'not actionable' --vault ~/worktable/vault
 bun run src/cli.ts findings supersede <finding-id> --replacement <finding-id> \

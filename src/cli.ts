@@ -32,6 +32,7 @@ import { runRegisteredIntegrationCommand } from "./cli/integration-commands";
 import { formatProposal, runProposalCommand } from "./cli/proposal-commands";
 import { linkGmailThreadToPerson, linkGmailThreadToProject } from "./workflows/link-gmail-subject";
 import { linkCalendarEventToProject, linkCalendarEventToTask } from "./workflows/link-calendar-subject";
+import { formatTodayRefresh, refreshToday } from "./workflows/refresh-today";
 
 const symbols: Record<Severity, string> = {
   ok: "OK",
@@ -63,6 +64,21 @@ async function main(argv: string[]): Promise<number> {
       console.log(formatReport(report, config.vaultPath));
     }
     return report.errorCount > 0 ? 1 : 0;
+  }
+
+  if (command === "today") {
+    const [subcommand, ...todayRest] = rest;
+    if (subcommand === "refresh") {
+      const args = parseFlags(todayRest);
+      rejectUnknownCommandFlags(args, ["vault", "json"]);
+      const config = loadConfig(args.flags.vault ? { vaultPath: args.flags.vault } : {});
+      const report = await refreshToday({
+        vault: new ObsidianVault(config.vaultPath), store: new OperationalStore(config.databasePath),
+        vaultPath: config.vaultPath,
+      });
+      console.log(args.flags.json === "true" ? JSON.stringify(report, null, 2) : formatTodayRefresh(report));
+      return report.state.issues.length > 0 ? 1 : 0;
+    }
   }
 
   if (command === "db") {
@@ -527,6 +543,7 @@ function printUsage(): void {
   life-os doctor --vault <path> [--json]
   life-os db migrate --vault <path>
   life-os work status --vault <path>
+  life-os today refresh --vault <path> [--json]
   life-os state rebuild --vault <path> [--json]
   life-os state show <projects|people|tasks|chief-of-staff> --vault <path>
   life-os normalize propose --vault <path> [--json]
