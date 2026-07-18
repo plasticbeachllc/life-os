@@ -45,7 +45,7 @@ export interface WorkspaceSnapshot {
 	generatedAt: string;
 	sources: Array<{ provider: string; enabled: boolean; health: "healthy" | "disabled" | "partial" | "failed"; summary: string }>;
 	attention: Array<{ category: "reply" | "open_loop" | "date" | "relationship" | "project"; count: number; freshness: string }>;
-	findings: { total: number; active: number; byKind: Record<string, number>; items: Array<{ id: string; kind: string; status: string; dueDate: string | null }> };
+	findings: { total: number; active: number; byKind: Record<string, number>; items: Array<{ id: string; kind: string; status: string; dueDate: string | null; canProposeTask: boolean }> };
 	state: { projectionCount: number; freshness: string; provenance: string };
 	proposals: Array<{ id: string; effectType: string; state: string; approval: "required" | "approved"; preview: string; createdAt: string; expiresAt: string | null }>;
 	actions: Array<{ id: string; effectType: string; state: string; result: "succeeded" | "failed" | "unknown"; undo: "available" | "used" | "unavailable"; createdAt: string }>;

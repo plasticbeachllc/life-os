@@ -423,7 +423,9 @@ the operational database, and its server-side chat bridge streams subscription-a
 Server turns through a fixed allowlist of read-only LifeOS MCP tools. The browser receives no provider
 credentials, filesystem tools, source hashes, or raw provider content.
 
-This first live slice cannot mutate providers, proposals, operational state, or the vault.
+This live slice can refresh configured read-only sources and create a reviewed fixed-inbox task
+proposal from an eligible displayed finding. It cannot apply proposals or mutate providers or the vault;
+approval and application remain separate explicit workflows.
 
 ```bash
 cd ui

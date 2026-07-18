@@ -2,10 +2,12 @@
 	import { Badge } from "$lib/components/ui/badge";
 	import type { WorkspaceSnapshot } from "./types";
 
-	let { workspace, feedbackToken, refreshState, onRefresh }: {
+	let { workspace, feedbackToken, refreshState, proposalState, onRefresh, onProposeFinding }: {
 		workspace: WorkspaceSnapshot; feedbackToken: string;
 		refreshState: "idle" | "refreshing" | "failed";
+		proposalState: "idle" | "creating" | "failed";
 		onRefresh: () => void;
+		onProposeFinding: (findingUiId: string) => void;
 	} = $props();
 	const labels = { reply: "Replies", open_loop: "Open loops", date: "Dates", relationship: "People", project: "Projects" };
 	let feedbackState = $state<"idle" | "saving" | "saved" | "failed">("idle");
@@ -65,7 +67,9 @@
 		</div>
 	{/if}
 	{#if workspace.findings.items[0]}
-		<p class="mt-2 text-xs text-muted-foreground">Latest finding: {workspace.findings.items[0].kind.replaceAll("_", " ")} · <button class="underline" onclick={() => feedback("finding", workspace.findings.items[0].id, "useful")}>Useful</button> / <button class="underline" onclick={() => feedback("finding", workspace.findings.items[0].id, "not_useful")}>Not useful</button></p>
+		<div class="mt-2 text-xs text-muted-foreground">Latest finding: {workspace.findings.items[0].kind.replaceAll("_", " ")} · <button class="underline" onclick={() => feedback("finding", workspace.findings.items[0].id, "useful")}>Useful</button> / <button class="underline" onclick={() => feedback("finding", workspace.findings.items[0].id, "not_useful")}>Not useful</button>
+			{#if workspace.findings.items[0].canProposeTask}<button class="ml-2 underline disabled:opacity-60" disabled={proposalState === "creating"} onclick={() => onProposeFinding(workspace.findings.items[0].id)}>{proposalState === "creating" ? "Creating proposal…" : "Create inbox proposal"}</button>{/if}
+		</div>
 	{/if}
 	{#if feedbackState !== "idle"}<p class="mt-1 text-[11px] text-muted-foreground">Feedback {feedbackState}.</p>{/if}
 	{#if workspace.actions[0]}
@@ -74,4 +78,5 @@
 	<p class="mt-2 truncate text-[11px] text-muted-foreground" title={workspace.state.provenance}>{workspace.state.freshness} · {workspace.state.provenance}</p>
 	{#if workspace.message}<p class="mt-2 text-xs text-amber-700">{workspace.message}</p>{/if}
 	{#if refreshState === "failed"}<p class="mt-2 text-xs text-rose-700">Refresh could not complete. Your existing workspace was left unchanged.</p>{/if}
+	{#if proposalState === "failed"}<p class="mt-2 text-xs text-rose-700">The proposal could not be created. Nothing was written to the vault.</p>{/if}
 </section>

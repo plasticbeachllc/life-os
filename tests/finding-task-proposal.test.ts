@@ -13,6 +13,21 @@ import { prepareProposalAuthorization } from "../src/policy/authorization";
 import { applyProposalWithAuthorization } from "../src/tools/apply-proposal";
 import { undoAction } from "../src/tools/undo-action";
 import { requireEffectPlan } from "../src/effects/contract";
+import { findingUiId, proposeFindingTaskFromUi } from "../src/ui/finding-task";
+
+test("an opaque browser finding identity can create only its fixed-inbox proposal", async () => {
+  const { store, vault } = fixture();
+  const finding = new FindingStore(store).review().findings
+    .find((candidate) => candidate.statement === "First task")!;
+  const review = await proposeFindingTaskFromUi({
+    findingUiId: findingUiId(finding.findingId), store, vault,
+  });
+  expect(review).toMatchObject({ effectType: "finding_task_append", approval: "required",
+    preview: "Append one reviewed task to the fixed Inbox" });
+  await expect(proposeFindingTaskFromUi({ findingUiId: "ui_0123456789abcdefabcd", store, vault }))
+    .rejects.toThrow("not currently reviewable");
+  expect(JSON.stringify(review)).not.toContain(finding.findingId);
+});
 
 test("multiple active findings create distinct fixed-inbox proposals idempotently", async () => {
   const { store, vault, root } = fixture();

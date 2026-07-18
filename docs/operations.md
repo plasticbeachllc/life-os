@@ -128,7 +128,9 @@ bun run src/cli.ts undo <action-id> --vault /path/to/vault
 ```
 
 Available proposal sources include metadata normalization, task-ID normalization, policy bootstrap, and
-an eligible active finding converted into the fixed inbox. There is no generic filesystem-write command.
+an eligible active finding converted into the fixed inbox. In the local UI, **Create inbox proposal**
+can create only that fixed proposal from a currently displayed eligible finding; it cannot supply task
+text, IDs, or paths, and it cannot apply the proposal. There is no generic filesystem-write command.
 
 ## MCP and local interfaces
 

@@ -18,6 +18,7 @@
 		untrack(() => data.notifications.map((notification: InboxNotification) => ({ ...notification }))),
 	);
 	let refreshState = $state<"idle" | "refreshing" | "failed">("idle");
+	let proposalState = $state<"idle" | "creating" | "failed">("idle");
 
 	onMount(() => {
 		const releaseSession = () => {
@@ -81,6 +82,16 @@
 			window.location.reload();
 		} catch { refreshState = "failed"; }
 	}
+
+	async function proposeFindingTask(findingUiId: string) {
+		proposalState = "creating";
+		try {
+			const response = await fetch("/api/findings/propose-task", { method: "POST", headers: { "content-type": "application/json" },
+				body: JSON.stringify({ findingUiId, csrfToken: data.feedbackToken }) });
+			if (!response.ok) throw new Error("proposal failed");
+			window.location.reload();
+		} catch { proposalState = "failed"; }
+	}
 </script>
 
 <svelte:head>
@@ -112,7 +123,7 @@
 
 	<main class="grid min-h-0 flex-1 md:grid-cols-[minmax(320px,42%)_minmax(0,58%)]">
 		<div class:hidden={activeMobilePanel !== "inbox"} class="min-h-0 flex-col md:flex md:border-r">
-			<WorkspaceOverview workspace={data.workspace} feedbackToken={data.feedbackToken} {refreshState} onRefresh={refreshToday} />
+			<WorkspaceOverview workspace={data.workspace} feedbackToken={data.feedbackToken} {refreshState} {proposalState} onRefresh={refreshToday} onProposeFinding={proposeFindingTask} />
 			<div class="min-h-0 flex-1"><NotificationInbox
 				{notifications}
 				selectedId={selectedNotification?.id ?? null}

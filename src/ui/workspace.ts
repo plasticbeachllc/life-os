@@ -8,6 +8,8 @@ import { FindingStore } from "../findings/store";
 import { createIntegrationRegistry } from "../integrations/providers";
 import { sha256Text } from "../util/hashing";
 import { WorkRepository } from "../work/repository";
+import { findingUiId } from "./finding-task";
+import { canProposeFindingTask } from "../workflows/finding-task-proposal";
 
 export type UiDataState = "loading" | "live" | "empty" | "stale" | "partial" | "failed" | "setup_required";
 
@@ -23,7 +25,7 @@ export interface UiWorkspaceSnapshot {
     count: number; freshness: string;
   }>;
   findings: { total: number; active: number; byKind: Record<string, number>; items: Array<{
-    id: string; kind: string; status: string; dueDate: string | null;
+    id: string; kind: string; status: string; dueDate: string | null; canProposeTask: boolean;
   }> };
   state: { projectionCount: number; freshness: string; provenance: string };
   proposals: ReturnType<typeof browserProposalReview>[];
@@ -99,8 +101,9 @@ export async function compileUiWorkspace(now = new Date()): Promise<UiWorkspaceS
       ],
       findings: { total: findingReview.total, active, byKind: findingReview.byKind,
         items: findingReview.findings.slice(0, 10).map((finding) => ({
-          id: uiId("finding", finding.findingId), kind: finding.kind,
+          id: findingUiId(finding.findingId), kind: finding.kind,
           status: finding.status, dueDate: finding.dueDate,
+          canProposeTask: canProposeFindingTask(finding),
         })) },
       state: { projectionCount: currentStates.length, freshness,
         provenance: "Canonical Markdown and metadata-only provider projections" },

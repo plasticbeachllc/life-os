@@ -8,14 +8,17 @@ import { createEffectProposal } from "../effects/proposals";
 const taskInbox = "00 Inbox/Inbox.md";
 const eligibleKinds = new Set(["explicit_request", "open_loop", "user_commitment"]);
 
+export function canProposeFindingTask(input: { status: string; owner: string; kind: string }): boolean {
+  return input.status === "active" && input.owner === "user" && eligibleKinds.has(input.kind);
+}
+
 export async function proposeFindingTask(input: {
   findingId: string; vault: ObsidianVault; store: OperationalStore;
 }): Promise<ProposalRecord> {
   input.store.migrate();
   const finding = new FindingStore(input.store).get(input.findingId);
   if (!finding) throw new Error("finding not found");
-  if (finding.status !== "active") throw new Error(`finding is not active: ${finding.status}`);
-  if (finding.owner !== "user" || !eligibleKinds.has(finding.kind)) {
+  if (!canProposeFindingTask(finding)) {
     throw new Error("only active user-owned actionable findings can become task proposals");
   }
   const target = await Bun.file(input.vault.path(taskInbox)).text();
