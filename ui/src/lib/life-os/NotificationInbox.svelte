@@ -2,7 +2,7 @@
 	import { Badge } from "$lib/components/ui/badge";
 	import { Button } from "$lib/components/ui/button";
 	import { ScrollArea } from "$lib/components/ui/scroll-area";
-	import { CalendarDays, Check, CircleHelp, ListTodo, Mail, Send, ShieldCheck } from "@lucide/svelte";
+	import { CalendarDays, Check, ListTodo, Mail, Send, ShieldCheck } from "@lucide/svelte";
 	import type { AttentionFeedbackOutcome, InboxNotification, NotificationCategory, NotificationKind, NotificationTone } from "./types";
 
 	type Filter = "all" | NotificationCategory;
@@ -30,13 +30,13 @@
 	} = $props();
 
 	const feedbackOptions: Array<{ outcome: AttentionFeedbackOutcome; label: string }> = [
-		{ outcome: "useful", label: "Useful" },
 		{ outcome: "incorrect", label: "Wrong" },
 		{ outcome: "duplicate", label: "Duplicate" },
 		{ outcome: "irrelevant", label: "Not relevant" },
 	];
 
 	let filter = $state<Filter>("needs_you");
+	let expandedFeedback = $state<Record<string, boolean>>({});
 	let visibleNotifications = $derived(
 		filter === "all" ? notifications : notifications.filter((item) => item.category === filter),
 	);
@@ -72,13 +72,10 @@
 </script>
 
 <section class="flex min-h-0 flex-1 flex-col bg-background" aria-labelledby="inbox-heading">
-	<div class="space-y-4 border-b px-5 py-5 sm:px-6">
-		<div class="flex items-start justify-between gap-4">
-			<div>
-				<p class="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">Only what needs your attention</p>
-				<h1 id="inbox-heading" class="mt-1 text-2xl font-semibold tracking-tight">Inbox</h1>
-			</div>
-			<Badge variant="secondary" class="mt-1">
+		<div class="space-y-3 border-b px-4 py-3 sm:px-5">
+			<div class="flex items-start justify-between gap-4">
+				<h1 id="inbox-heading" class="text-xl font-semibold tracking-tight">Inbox</h1>
+				<Badge variant="secondary">
 				{notifications.filter((item) => item.status === "open" && item.category !== "activity").length} need you
 			</Badge>
 		</div>
@@ -107,11 +104,11 @@
 			{#each visibleNotifications as notification (notification.id)}
 				{@const Icon = iconFor(notification.kind)}
 				<article
-					class={`group rounded-xl border bg-card p-4 text-card-foreground transition hover:border-foreground/20 hover:shadow-sm ${selectedId === notification.id ? "border-foreground/30 bg-accent/40" : ""} ${notification.status === "resolved" ? "opacity-70" : ""}`}
+					class={`group rounded-xl border bg-card p-3 text-card-foreground transition hover:border-foreground/20 hover:shadow-sm ${selectedId === notification.id ? "border-foreground/30 bg-accent/40" : ""} ${notification.status === "resolved" ? "opacity-70" : ""}`}
 				>
 					<button class="w-full text-left" onclick={() => onSelect(notification)}>
 						<div class="flex gap-3">
-							<div class={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg ${iconClasses(notification.tone)}`}>
+							<div class={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg ${iconClasses(notification.tone)}`}>
 								<Icon class="size-4" aria-hidden="true" />
 							</div>
 							<div class="min-w-0 flex-1">
@@ -119,8 +116,6 @@
 									<h2 class="text-sm font-semibold leading-5">{notification.title}</h2>
 									{#if notification.status === "resolved"}
 										<Check class="mt-0.5 size-4 shrink-0 text-emerald-600" aria-label="Resolved" />
-									{:else if notification.tone === "question"}
-										<CircleHelp class="mt-0.5 size-4 shrink-0 text-sky-600" aria-label="Needs clarification" />
 									{:else if notification.tone === "proposal"}
 										<span class="mt-1 size-2 shrink-0 rounded-full bg-amber-500" aria-label="Approval required"></span>
 									{/if}
@@ -131,8 +126,22 @@
 							</div>
 						</div>
 					</button>
-					{#if notification.status === "open" && (notification.primaryAction || notification.secondaryAction)}
-						<div class="mt-3 flex justify-end gap-2 border-t pt-3">
+					{#if notification.status === "open" && (notification.primaryAction || notification.secondaryAction || notification.feedbackSubjectKind === "attention")}
+						<div class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+							<div class="flex items-center gap-1 text-[11px] text-muted-foreground">
+								{#if notification.feedbackSubjectKind === "attention"}
+									<span>Helpful?</span>
+									<Button variant="ghost" size="sm" class="h-7 px-2 text-[11px]"
+										disabled={feedbackStates[notification.id] === "saving" || feedbackStates[notification.id] === "saved"}
+										onclick={() => onFeedback(notification, "useful")}>Yes</Button>
+									<Button variant="ghost" size="sm" class="h-7 px-2 text-[11px]"
+										disabled={feedbackStates[notification.id] === "saving" || feedbackStates[notification.id] === "saved"}
+										onclick={() => (expandedFeedback = { ...expandedFeedback, [notification.id]: !expandedFeedback[notification.id] })}>No</Button>
+									{#if feedbackStates[notification.id] === "saved"}<span class="text-emerald-700">Saved</span>{/if}
+									{#if feedbackStates[notification.id] === "failed"}<span class="text-rose-700">Try again</span>{/if}
+								{/if}
+							</div>
+							<div class="flex items-center gap-2">
 							{#if notification.feedbackSubjectKind === "attention"}
 								<Button variant="ghost" size="sm" disabled={handledStates[notification.id] === "saving"}
 									onclick={() => onHandled(notification)}>{handledStates[notification.id] === "saving" ? "Saving…" : "Handled"}</Button>
@@ -151,12 +160,13 @@
 									{notification.primaryAction.label}
 								</Button>
 							{/if}
+							</div>
 						</div>
 						{#if handledStates[notification.id] === "failed"}<p class="mt-1 text-right text-[11px] text-rose-700">Could not mark handled. Try again.</p>{/if}
 					{/if}
-					{#if notification.status === "open" && notification.feedbackSubjectKind === "attention"}
-						<div class="mt-2 flex flex-wrap items-center justify-end gap-1.5" aria-label="Rate this suggestion">
-							<span class="mr-1 text-[11px] text-muted-foreground">Feedback</span>
+					{#if notification.status === "open" && notification.feedbackSubjectKind === "attention" && expandedFeedback[notification.id]}
+						<div class="mt-1 flex flex-wrap items-center gap-1 pl-12 text-[11px] text-muted-foreground" aria-label="What needs improvement?">
+							<span>What was off?</span>
 							{#each feedbackOptions as option}
 								<Button
 									variant={feedbackOutcomes[notification.id] === option.outcome ? "secondary" : "ghost"}
@@ -166,8 +176,6 @@
 									onclick={() => onFeedback(notification, option.outcome)}
 								>{option.label}</Button>
 							{/each}
-							{#if feedbackStates[notification.id] === "saved"}<span class="text-[11px] text-emerald-700">Saved</span>{/if}
-							{#if feedbackStates[notification.id] === "failed"}<span class="text-[11px] text-rose-700">Try again</span>{/if}
 						</div>
 					{/if}
 				</article>

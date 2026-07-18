@@ -109,10 +109,8 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           status: "open",
           title: compactText(item.title, 120),
           summary: compactText(item.summary, 180),
-          detail: compactText(item.presentation.explanation, 180),
           relativeTime: relativeTime(attentionReview.asOf, now),
           primaryAction: { kind: "discuss", label: attentionActionLabel(item.interventions) },
-          secondaryAction: { kind: "dismiss", label: "Not relevant" },
           feedbackSubjectKind: "attention",
         });
         includedAttention += 1;

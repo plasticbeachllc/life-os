@@ -22,11 +22,11 @@
 	}
 </script>
 
-<section class="border-b bg-muted/15 px-5 py-4 sm:px-6" aria-labelledby="workspace-heading">
+<section class="border-b bg-muted/10 px-5 py-3 sm:px-6" aria-labelledby="workspace-heading">
 	<div class="flex items-center justify-between gap-3">
 		<div>
-			<p class="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">Sources · Findings · State · Proposals</p>
-			<h2 id="workspace-heading" class="mt-1 text-sm font-semibold">Operational overview</h2>
+			<h2 id="workspace-heading" class="text-sm font-semibold">Workspace</h2>
+			<p class="mt-0.5 text-[11px] text-muted-foreground">{workspace.state.freshness}</p>
 		</div>
 		<div class="flex items-center gap-2">
 			{#if workspace.refresh.available}
@@ -36,49 +36,39 @@
 		</div>
 	</div>
 
-	<div class="mt-3 grid grid-cols-5 gap-1.5" aria-label="Attention queues">
+	<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs" aria-label="Attention queues">
 		{#each workspace.attention as queue}
-			<div class="rounded-lg border bg-background px-2 py-2 text-center" title={queue.freshness}>
-				<p class="text-lg font-semibold leading-none">{queue.count}</p>
-				<p class="mt-1 truncate text-[10px] text-muted-foreground">{labels[queue.category]}</p>
-			</div>
+			<span title={queue.freshness}><strong>{queue.count}</strong> <span class="text-muted-foreground">{labels[queue.category]}</span></span>
 		{/each}
 	</div>
 
-	<div class="mt-3 flex flex-wrap gap-1.5" aria-label="Provider health">
-		{#each workspace.sources as source}
-			<Badge variant="outline" class={source.health === "failed" ? "border-rose-300 text-rose-700" : source.health === "partial" ? "border-amber-300 text-amber-700" : ""}>
-				<span class={`mr-1 size-1.5 rounded-full ${source.health === "healthy" ? "bg-emerald-500" : source.health === "disabled" ? "bg-muted-foreground" : source.health === "partial" ? "bg-amber-500" : "bg-rose-500"}`}></span>
-				{source.provider}
-			</Badge>
-		{/each}
+	<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+		<div class="flex flex-wrap items-center gap-2" aria-label="Provider health">
+			{#each workspace.sources as source}
+				<span class={source.health === "failed" ? "text-rose-700" : source.health === "partial" ? "text-amber-700" : ""}>
+					<span class={`mr-1 inline-block size-1.5 rounded-full ${source.health === "healthy" ? "bg-emerald-500" : source.health === "disabled" ? "bg-muted-foreground" : source.health === "partial" ? "bg-amber-500" : "bg-rose-500"}`}></span>{source.provider}
+				</span>
+			{/each}
+		</div>
+		<span aria-hidden="true">·</span>
+		<span>{workspace.findings.active} findings</span>
+		<span>{workspace.work.pending} queued</span>
+		{#if workspace.feedback.total + workspace.feedback.handled > 0}<span>{workspace.feedback.useful}/{workspace.feedback.total} useful · {workspace.feedback.handled} handled</span>{/if}
 	</div>
-
-	<div class="mt-3 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-		<p><strong class="text-foreground">{workspace.findings.active}</strong> active findings</p>
-		<p><strong class="text-foreground">{workspace.proposals.length}</strong> proposals</p>
-		<p><strong class="text-foreground">{workspace.work.pending}</strong> queued</p>
-	</div>
-	{#if workspace.feedback.total + workspace.feedback.handled > 0}
-		<p class="mt-2 text-[11px] text-muted-foreground">{workspace.feedback.total} suggestions rated · {workspace.feedback.useful} useful · {workspace.feedback.negative} corrections · {workspace.feedback.handled} handled</p>
-	{/if}
 	{#if workspace.proposals[0]}
-		<div class="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs">
+		<div class="mt-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs">
 			<div class="flex items-center justify-between gap-2"><strong>Approval {workspace.proposals[0].approval}</strong><span>{workspace.proposals[0].effectType.replaceAll("_", " ")}</span></div>
 			<p class="mt-1 line-clamp-2 whitespace-pre-line text-muted-foreground">{workspace.proposals[0].preview}</p>
 			<div class="mt-2 flex gap-2"><button class="underline" onclick={() => feedback("proposal", workspace.proposals[0].id, "accepted")}>Useful proposal</button><button class="underline" onclick={() => feedback("proposal", workspace.proposals[0].id, "rejected")}>Not useful</button></div>
 		</div>
 	{/if}
-	{#if workspace.findings.items[0]}
-		<div class="mt-2 text-xs text-muted-foreground">Latest finding: {workspace.findings.items[0].kind.replaceAll("_", " ")} · <button class="underline" onclick={() => feedback("finding", workspace.findings.items[0].id, "useful")}>Useful</button> / <button class="underline" onclick={() => feedback("finding", workspace.findings.items[0].id, "not_useful")}>Not useful</button>
-			{#if workspace.findings.items[0].canProposeTask}<button class="ml-2 underline disabled:opacity-60" disabled={proposalState === "creating"} onclick={() => onProposeFinding(workspace.findings.items[0].id)}>{proposalState === "creating" ? "Creating proposal…" : "Create inbox proposal"}</button>{/if}
-		</div>
+	{#if workspace.findings.items[0]?.canProposeTask}
+		<button class="mt-2 text-[11px] text-muted-foreground underline disabled:opacity-60" disabled={proposalState === "creating"} onclick={() => onProposeFinding(workspace.findings.items[0].id)}>{proposalState === "creating" ? "Creating proposal…" : "Draft task from latest finding"}</button>
 	{/if}
 	{#if feedbackState !== "idle"}<p class="mt-1 text-[11px] text-muted-foreground">Feedback {feedbackState}.</p>{/if}
 	{#if workspace.actions[0]}
 		<p class="mt-2 text-xs text-muted-foreground">Latest action: {workspace.actions[0].result} · Undo {workspace.actions[0].undo}</p>
 	{/if}
-	<p class="mt-2 truncate text-[11px] text-muted-foreground" title={workspace.state.provenance}>{workspace.state.freshness} · {workspace.state.provenance}</p>
 	{#if workspace.message}<p class="mt-2 text-xs text-amber-700">{workspace.message}</p>{/if}
 	{#if refreshState === "failed"}<p class="mt-2 text-xs text-rose-700">Refresh could not complete. Your existing workspace was left unchanged.</p>{/if}
 	{#if proposalState === "failed"}<p class="mt-2 text-xs text-rose-700">The proposal could not be created. Nothing was written to the vault.</p>{/if}

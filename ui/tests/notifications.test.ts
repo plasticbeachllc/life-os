@@ -179,8 +179,8 @@ describe("LifeOS notification compiler", () => {
 		expect(notification).toMatchObject({
 			kind: "task", category: "needs_you", title: "Commitment is not tracked",
 			feedbackSubjectKind: "attention", primaryAction: { label: "Review next step" },
-			secondaryAction: { label: "Not relevant" },
 		});
+		expect(notification?.secondaryAction).toBeUndefined();
 		expect(notification?.id).toMatch(/^ui_[a-f0-9]{20}$/);
 		expect(serialized).not.toMatch(/attention_private_review|finding_private|state_private_attention|sha256:/);
 
