@@ -82,6 +82,9 @@ different purposes:
   model.
 - [`docs/conformance-matrix.md`](docs/conformance-matrix.md) maps the implemented contracts to tests.
 - [`docs/prototype-changelog.md`](docs/prototype-changelog.md) records intentional breaking changes.
+- [`docs/release-0.1.0.md`](docs/release-0.1.0.md) is the blocking product and release checklist for
+  the first local alpha.
+- [`CHANGELOG.md`](CHANGELOG.md) contains user-visible release notes.
 - [`docs/roadmap-completion.md`](docs/roadmap-completion.md) is a historical architecture-roadmap
   attestation, not a current operational-status report.
 
@@ -418,22 +421,22 @@ printf '%s' '{"texts":["Card: 4111 1111 1111 1111"]}' | \
 The expected redaction contains `<CREDIT_CARD>`. Tests exercise source drift, evidence validation,
 context non-retention, proposal authorization, rollback, compact-state caching, and MCP allowlisting.
 
-## UI prototype
+## Local UI
 
 The responsive Inbox and Chat application lives in `ui/`. Its Inbox reads sanitized projections from
 the operational database, and its server-side chat bridge streams subscription-authenticated Codex App
 Server turns through a fixed allowlist of read-only LifeOS MCP tools. The browser receives no provider
 credentials, filesystem tools, source hashes, or raw provider content.
 
-This live slice can refresh configured read-only sources and create a reviewed fixed-inbox task
-proposal from an eligible displayed finding. It cannot apply proposals or mutate providers or the vault;
-approval and application remain separate explicit workflows.
+This live slice can ingest configured read-only sources, review attention, discuss items with bounded
+grounded context, record handled state, and collect structured quality feedback. Model-backed extraction
+still requires the explicit CLI runner. Pending proposals are visible under **Approvals**, but browser
+confirm, apply, receipt, and undo are not implemented yet; those are blocking 0.1.0 product gates.
 
 ```bash
-cd ui
-bun install
+bun install --cwd "$PWD/ui" --frozen-lockfile
 bun run dev
 ```
 
-See [`docs/ui-implementation-plan.md`](docs/ui-implementation-plan.md) for the staged integration and
-safety plan.
+Run the complete local release gate with `bun run release:check`. See
+[`docs/release-0.1.0.md`](docs/release-0.1.0.md) for the end-to-end acceptance path.

@@ -6,12 +6,14 @@ The Inbox reads sanitized projections from the existing LifeOS SQLite database. 
 server-owned Codex App Server process using the current ChatGPT login and a fixed allowlist of read-only
 LifeOS MCP tools. The browser receives no credentials, database access, MCP access, or filesystem tools.
 
-The current live slice cannot mutate providers, the vault, proposals, or operational state.
-Chat is session-scoped and is not added to LifeOS SQLite or restored after the local server restarts.
+The UI can trigger read-only provider ingestion, record attention lifecycle and quality feedback in
+operational state, and stream bounded contextual discussion. It cannot mutate providers or the vault.
+Pending proposals are visible, but confirm, apply, receipt, and undo still require the CLI. Chat is
+session-scoped and is not added to LifeOS SQLite or restored after the local server restarts.
 
 ```bash
-bun install
-bun run dev
+bun install --frozen-lockfile
+bun run dev -- --host 127.0.0.1
 ```
 
 The development server binds where Vite reports; use `--host 127.0.0.1` to make the local-only intent
@@ -35,5 +37,4 @@ bun run codex:schema
 Generated bindings are inspection artifacts and are intentionally ignored; the server adapter exposes
 only the small protocol subset LifeOS uses.
 
-See [`../docs/ui-implementation-plan.md`](../docs/ui-implementation-plan.md) for the integration plan
-and the subscription-host constraint for live chat.
+See [`../docs/release-0.1.0.md`](../docs/release-0.1.0.md) for the blocking end-to-end product gates.

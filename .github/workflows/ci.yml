@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-check:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+      - name: Install TypeScript dependencies
+        run: |
+          bun install --frozen-lockfile
+          bun install --cwd "$GITHUB_WORKSPACE/ui" --frozen-lockfile
+      - name: Install privacy-harness dependencies
+        run: uv sync --frozen
+      - name: Run release checks
+        run: bun run release:check

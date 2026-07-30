@@ -174,31 +174,30 @@ the installed CLI changes.
   keep normal conversation on the configured thread model.
 - Start a distinct ephemeral App Server thread for each selected card and retain session-local conversation
   history in a picker; do not persist chat content in SQLite or the browser.
-- Deterministically derive a versioned summary candidate for every notification, pre-generate its 2-3 sentence
-  Luna reaction after projection, and cache the structured sentences by workflow, prompt, model, source, context, schema, and
-  policy identity. Card selection reads this cache and uses on-demand generation only to recover from a failed
+- Deterministically derive a versioned discussion candidate for every notification, pre-generate its
+  structured assessment, concrete next step, and optional decision-changing question after projection,
+  and cache the validated opening by workflow, prompt, model, source, context, schema, and policy
+  identity. Card selection reads this cache and uses on-demand generation only to recover from a failed
   or incomplete prewarm.
 - Namespace every App Server conversation by an opaque HttpOnly server session, delete session threads on page
   teardown, and enforce TTL/LRU bounds as a fallback. Summary prewarming uses a bounded priority queue with
   selected-item promotion, deduplication, retry backoff, and immediate thread cleanup.
-- Constrain Luna reactions with a JSON schema and strict post-validation: exactly 2-3 sentences, bounded sentence
-  and total lengths, deterministic action state, and rejection of addresses, URLs, hashes, identifiers, paths,
-  HTML, unexpected fields, or malformed cached output.
+- Constrain discussion openings with a JSON schema and strict post-validation: assessment, recommended
+  next step, optional nonredundant question, deterministic action state, bounded lengths, and rejection
+  of addresses, URLs, hashes, identifiers, paths, HTML, unexpected fields, or malformed cached output.
 - Stream bounded agent text through a narrow NDJSON endpoint.
 - Add loading, empty, degraded, and provider-disabled states.
 - Verify raw provider data and hashes never reach browser payloads.
 
-### Phase 2 — Autonomy policy and notification lifecycle
+### Phase 2 — Notification lifecycle (partially implemented)
 
-- Deliberately revise the vault-mutation invariant and repository guidance if automatic canonical task
-  writes remain the chosen policy.
-- Define confidence, ownership, eligible-kind, fixed-target, and reversibility requirements.
-- Coordinate one additive schema migration for read, resolved, and snoozed state.
-- Implement narrow ID-only lifecycle functions.
-- Add optimistic UI with server reconciliation.
-- Test unchanged replay and stable notification identity.
+- Implemented exact-presentation **Handled** lifecycle state and separate structured quality feedback.
+- Implemented optimistic removal with server persistence and stable opaque identities.
+- Snooze, read/unread state, and broader notification lifecycle remain deferred.
+- Automatic canonical task writes are not part of the 0.1.0 policy; task creation remains
+  proposal-based.
 
-### Phase 3 — Automatic internal task receipts
+### Phase 3 — Automatic internal task receipts (deferred)
 
 - Add a deterministic, idempotent automatic email-to-task workflow behind the revised policy.
 - Reuse atomic write, backup, audit, source/target hash, and undo protections.
@@ -206,21 +205,22 @@ the installed CLI changes.
 - Route only material ambiguities that block valuable work to Needs you without mutation.
 - Test changed-thread invalidation, duplicate suppression, failure receipts, and undo drift rejection.
 
-### Phase 4 — External proposal review
+### Phase 4 — External proposal review (partially implemented)
 
-- Connect pending proposal and exact review projections.
+- Pending proposal and exact review projections are connected under **Approvals**.
 - Implement prepare/confirm/apply as separate user gestures.
 - Reject expired tokens and stale source or target state visibly.
 - Add success receipts and separately prepared undo.
 
-### Phase 5 — Live chat transport
+### Phase 5 — Live chat transport (implemented)
 
-- Complete the subscription-host relay spike.
-- Define bounded conversation and context manifests.
-- Connect streaming only if the supported host transport preserves auditing and cancellation.
-- Render structured proposal references without accepting model-supplied mutation arguments.
+- Subscription-authenticated Codex App Server streaming is connected through a fixed read-only tool
+  allowlist.
+- Selected-item context is bounded, sanitized, and treated as untrusted evidence.
+- Conversations are ephemeral, session-isolated, and cancellable at the process boundary.
+- Mutation tools remain disabled in chat.
 
-### Phase 6 — Hardening
+### Phase 6 — Hardening (partially implemented)
 
 - Add keyboard and screen-reader navigation checks.
 - Add mobile browser coverage and viewport regression tests.

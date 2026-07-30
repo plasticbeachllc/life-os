@@ -142,10 +142,11 @@ work is safely requeued under its bounded attempt limit. Output contains classif
 ambiguity, and failure counts only.
 
 The browser Inbox exposes **Handled** as a core attention lifecycle action. Separate bounded quality
-feedback offers **Useful**, **Wrong**, **Duplicate**, and **Not relevant**. Both are bound to the exact
+feedback starts with **Helpful? Yes / No**; choosing **No** reveals **Wrong**, **Duplicate**, and
+**Not relevant**. Both are bound to the exact
 opaque presentation identity and store no free text or provider payload. Handled items and terminal
 quality judgments leave the Inbox on reload; handled actions are reported separately from quality
-metrics in the operational overview.
+metrics.
 
 Vault writes are always proposal-based. Review the proposal, obtain exact authorization, apply it, and
 use the action ID for undo if the target has not changed:
@@ -158,9 +159,10 @@ bun run src/cli.ts undo <action-id> --vault /path/to/vault
 ```
 
 Available proposal sources include metadata normalization, task-ID normalization, policy bootstrap, and
-an eligible active finding converted into the fixed inbox. In the local UI, **Create inbox proposal**
-can create only that fixed proposal from a currently displayed eligible finding; it cannot supply task
-text, IDs, or paths, and it cannot apply the proposal. There is no generic filesystem-write command.
+an eligible active finding converted into the fixed inbox. The local UI currently displays pending
+proposals under **Approvals**, but proposal creation, confirm, apply, receipt, and undo still cross a CLI
+boundary. Completing that narrow browser workflow is a blocking 0.1.0 gate. There is no generic
+filesystem-write command.
 
 ## MCP and local interfaces
 
@@ -175,15 +177,15 @@ status, ingestion, compact-state, review, prepare/submit, and exact proposal too
 allowlist is asserted in `tests/mcp-server.test.ts`; it has no arbitrary path, shell, SQL, patch, or
 generic write tool.
 
-The SvelteKit UI is a separate local development server:
+The SvelteKit UI is currently a separate local development server:
 
 ```bash
-cd ui
-bun install
+bun install --cwd "$PWD/ui" --frozen-lockfile
 bun run dev
 ```
 
 It receives sanitized workspace data only. Its chat bridge is limited to read-only Life OS MCP tools.
+After `bun run ui:build`, `bun run start` serves the production build on `127.0.0.1`.
 The SwiftUI prototype in `iphone/` is fabricated, read-only preview data and has no runtime connection
 to Life OS.
 
@@ -213,3 +215,9 @@ git diff --check
 
 For changes to the privacy harness, also run a focused `uv run` check. For UI changes, run `bun run
 check` and `bun run build` from `ui/`.
+
+Before a release candidate, run the combined gate:
+
+```bash
+bun run release:check
+```
