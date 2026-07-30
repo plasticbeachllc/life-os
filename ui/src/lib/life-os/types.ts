@@ -1,7 +1,14 @@
 export type NotificationKind = "email" | "calendar" | "proposal" | "system" | "task";
 export type NotificationCategory = "needs_you" | "activity" | "approvals";
 export type NotificationTone = "question" | "receipt" | "proposal" | "update";
-export type NotificationActionKind = "undo" | "resolve" | "review" | "discuss" | "dismiss";
+export type NotificationActionKind =
+	| "undo"
+	| "resolve"
+	| "review"
+	| "discuss"
+	| "dismiss"
+	| "propose_task"
+	| "approve";
 export type AttentionFeedbackOutcome = "useful" | "incorrect" | "duplicate" | "irrelevant";
 
 export interface NotificationAction {
@@ -23,6 +30,7 @@ export interface InboxNotification {
 	primaryAction?: NotificationAction;
 	secondaryAction?: NotificationAction;
 	feedbackSubjectKind?: "attention";
+	actionSubjectKind?: "attention" | "proposal" | "action";
 }
 
 export interface ChatArtifact {

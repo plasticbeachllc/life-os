@@ -164,10 +164,52 @@ describe("LifeOS notification compiler", () => {
 			.notifications.find((notification) => notification.category === "approvals");
 		expect(proposal).toMatchObject({
 			title: "Add this task to your Inbox?",
-			summary: "Add one task to your Inbox",
-			primaryAction: { label: "Review" },
+			summary: "Private task text",
+			primaryAction: { kind: "approve", label: "Review" },
+			actionSubjectKind: "proposal",
 		});
 		expect(JSON.stringify(proposal)).not.toContain("finding_task_append");
+	});
+
+	test("shows an opaque undoable receipt after a task proposal is applied", () => {
+		temporaryDirectory = mkdtempSync(join(tmpdir(), "life-os-ui-action-receipt-"));
+		const databasePath = join(temporaryDirectory, "life-os.db");
+		const store = new OperationalStore(databasePath);
+		store.migrate();
+		const proposal = createEffectProposal({
+			store, proposalId: "proposal-private", runId: "run-private", actionId: "action-private",
+			workflow: "finding_task", sourceType: "finding", sourceId: "finding_abcdef",
+			sourceHash: "sha256:source", targetPath: "00 Inbox/Inbox.md", targetHash: "sha256:target",
+			plan: { type: "finding_task_append", findingId: "finding_abcdef", taskId: "task_abcdef",
+				taskLine: "- [ ] Review the planning notes" },
+			createdAt: "2026-07-12T12:00:00.000Z",
+		});
+		store.approveProposalAction(proposal.proposalId, proposal.actionId, "2026-07-12T12:01:00.000Z");
+		store.markProposalApplied({
+			proposalId: proposal.proposalId, actionId: proposal.actionId,
+			appliedAt: "2026-07-12T12:02:00.000Z", targetHash: "sha256:after",
+			backupPath: join(temporaryDirectory, "backup"), beforeHash: "sha256:before",
+			afterHash: "sha256:after",
+		});
+		store.recordActionResult({
+			actionId: proposal.actionId, runId: proposal.runId, ok: true,
+			message: "finding task appended", filesModified: ["00 Inbox/Inbox.md"],
+		});
+		Bun.env.LIFE_OS_VAULT_PATH = temporaryDirectory;
+		Bun.env.LIFE_OS_DATABASE_PATH = databasePath;
+		Bun.env.LIFE_OS_GMAIL_ENABLED = "false";
+		Bun.env.LIFE_OS_CALENDAR_ENABLED = "false";
+
+		const receipt = compileUiNotifications(new Date("2026-07-12T13:00:00.000Z"))
+			.notifications.find((notification) => notification.tone === "receipt");
+		expect(receipt).toMatchObject({
+			title: "Task added to Inbox",
+			summary: "Review the planning notes",
+			primaryAction: { kind: "undo", label: "Undo" },
+			actionSubjectKind: "action",
+		});
+		expect(receipt?.id).toMatch(/^ui_[a-f0-9]{20}$/);
+		expect(JSON.stringify(receipt)).not.toMatch(/proposal-private|action-private|finding_abcdef|sha256:/);
 	});
 
 	test("surfaces only routed review-queue attention through opaque UI identities", () => {
@@ -207,7 +249,8 @@ describe("LifeOS notification compiler", () => {
 		const serialized = JSON.stringify(snapshot);
 		expect(notification).toMatchObject({
 			kind: "task", category: "needs_you", title: "Commitment is not tracked",
-			feedbackSubjectKind: "attention", primaryAction: { label: "Review next step" },
+			feedbackSubjectKind: "attention", actionSubjectKind: "attention",
+			primaryAction: { kind: "propose_task", label: "Create task" },
 		});
 		expect(notification?.secondaryAction).toBeUndefined();
 		expect(notification?.id).toMatch(/^ui_[a-f0-9]{20}$/);

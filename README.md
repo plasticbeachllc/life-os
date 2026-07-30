@@ -433,7 +433,9 @@ extracts up to five ready Gmail items and five ready Messages items, and refresh
 attention projections. The UI polls only aggregate progress, prevents concurrent product runs, and
 offers cooperative cancellation between extraction items. The CLI runner remains available for focused
 evaluation. Pending proposals are visible under **Approvals**, but browser confirm, apply, receipt, and
-undo are not implemented yet; those are blocking 0.1.0 product gates.
+undo are now available for safe, user-owned finding tasks. Each step uses an opaque, session-bound
+identity and a separately prepared one-use confirmation; the browser never submits task text, paths,
+patches, hashes, or internal action IDs. Unsafe previews remain CLI-only.
 
 ```bash
 bun install --cwd "$PWD/ui" --frozen-lockfile

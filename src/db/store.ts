@@ -455,6 +455,10 @@ export class OperationalStore {
     return this.queryProposal("WHERE p.proposal_id = ?", [proposalId]);
   }
 
+  getProposalByActionId(actionId: string): ProposalRecord | undefined {
+    return this.queryProposal("WHERE a.action_id = ?", [actionId]);
+  }
+
   listPendingProposals(): ProposalRecord[] {
     const db = this.open();
     try {

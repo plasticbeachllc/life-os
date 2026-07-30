@@ -13,6 +13,8 @@ releases; operational database schemas remain explicit prototype reset boundarie
 - Provider-independent findings, attention routing, and bounded contextual discussion.
 - A responsive local Inbox and Chat UI with durable bounded sync-and-process runs, handled state, and
   structured quality feedback.
+- An end-to-end browser task workflow with exact safe previews, one-use confirmation, Activity receipts,
+  and separately authorized undo.
 - Approval-gated typed vault effects with exact authorization, atomic writes, backups, and undo.
 - Release checks covering TypeScript, UI, production build, and the Presidio privacy harness.
 
@@ -26,8 +28,6 @@ releases; operational database schemas remain explicit prototype reset boundarie
 
 ### Blocking before release
 
-- Complete the browser action loop from attention item through proposal review, confirm, apply, receipt,
-  and undo.
 - Finish the onboarding, local-runtime hardening, and clean-machine acceptance gates in
   [`docs/release-0.1.0.md`](docs/release-0.1.0.md).
 - Choose and add a license or an explicit proprietary-use notice before publishing the first release

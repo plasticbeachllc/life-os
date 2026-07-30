@@ -19,9 +19,16 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	const bundle = notificationModule.compileUiNotificationBundle();
 	prewarmNotificationSummaries(bundle.summaryCandidates);
 	const feedbackToken = issueFeedbackCapability({ sessionId, subjects:
-		bundle.snapshot.notifications
-			.filter((notification) => notification.feedbackSubjectKind === "attention")
-			.map((notification) => ({ id: notification.id, kind: "attention" as const })),
+		bundle.snapshot.notifications.flatMap((notification) => {
+			const subjects: Array<{ id: string; kind: "attention" | "proposal" | "action" }> = [];
+			if (notification.feedbackSubjectKind === "attention") {
+				subjects.push({ id: notification.id, kind: "attention" });
+			}
+			if (notification.actionSubjectKind) {
+				subjects.push({ id: notification.id, kind: notification.actionSubjectKind });
+			}
+			return subjects;
+		}),
 	});
 	const refreshToken = issueWorkspaceRefreshCapability({ sessionId });
 	return { ...bundle.snapshot, feedbackToken, refreshToken };

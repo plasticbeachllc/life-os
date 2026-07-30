@@ -28,8 +28,8 @@ Implemented and automated:
 - sanitized browser projections and a read-only chat tool boundary;
 - full TypeScript tests, UI checks, production build, and Presidio smoke verification.
 
-The architecture is substantially complete, but two user journeys still cross a CLI boundary. Those are
-product blockers, not documentation issues.
+The core daily loop now runs end to end in the product. Setup, runtime hardening, clean-machine
+acceptance, privacy coverage, and release policy remain product blockers.
 
 ## Blocking product gates
 
@@ -53,18 +53,23 @@ becomes explicitly `interrupted` before a later replacement run.
 
 ### 2. Complete an action in the product
 
-- [ ] Make eligible attention items offer one narrow **Create task proposal** action.
-- [ ] Show the exact sanitized task preview under **Approvals**.
-- [ ] Implement separate prepare and confirm gestures using a short-lived capability bound to the exact
+- [x] Make eligible attention items offer one narrow **Create task** proposal action.
+- [x] Show the exact sanitized task preview under **Approvals**.
+- [x] Implement separate prepare and confirm gestures using a short-lived capability bound to the exact
   proposal, action, plan, and target hash.
-- [ ] Apply only through the existing typed effect executor; accept no browser-supplied path, patch, task
+- [x] Apply only through the existing typed effect executor; accept no browser-supplied path, patch, task
   text, or arbitrary arguments.
-- [ ] Emit a sanitized Activity receipt after application.
-- [ ] Offer separately prepared undo and reject undo after target drift.
-- [ ] Surface stale, expired, denied, and already-consumed states in plain language.
+- [x] Emit a sanitized Activity receipt after application.
+- [x] Offer separately prepared undo and reject undo after target drift.
+- [x] Surface stale, expired, denied, and already-consumed states in plain language.
 
 Chat remains read-only. It may explain or recommend an action, but it must never become a mutation
 backdoor.
+
+Browser mutations accept only opaque presentation identities, one-use confirmation identities, and a
+session-bound CSRF capability. Internal proposal/action IDs, authorization tokens, task text, target
+paths, plans, and hashes remain server-side. If a task preview contains private identifiers or
+source-like material, it is not eligible for browser application and remains a private CLI review.
 
 ### 3. Make setup and operation product-grade
 

@@ -4,7 +4,7 @@ import { loadConfig } from "../config";
 import { CalendarStore } from "../calendar/store";
 import { OperationalStore } from "../db/store";
 import { schemaVersion } from "../db/schema";
-import { browserProposalReview } from "../effects/review-projection";
+import { browserProposalReview, browserTaskProposalCanApply } from "../effects/review-projection";
 import { compileAttentionReview } from "../attention/review";
 import { attentionSubjectUiId } from "./feedback";
 import { GmailStore } from "../gmail/store";
@@ -13,6 +13,7 @@ import { buildContext, type ContextManifest } from "../context/builder";
 import { modelCacheKey } from "../orchestration/cache";
 import { routeModel } from "../orchestration/model-router";
 import { sha256Text, sha256Value } from "../util/hashing";
+import { actionUiId } from "./browser-actions";
 
 export const UI_NOTIFICATION_SUMMARY_MODEL = "gpt-5.6-luna";
 export const UI_NOTIFICATION_SUMMARY_PROMPT_VERSION = "ui-notification-opening-v6-nonredundant";
@@ -33,9 +34,10 @@ export interface UiNotification {
   detail?: string;
   agentSummary?: { sentences: string[]; actionRequired: boolean };
   relativeTime: string;
-  primaryAction?: { kind: "resolve" | "review" | "discuss"; label: string };
+  primaryAction?: { kind: "resolve" | "review" | "discuss" | "propose_task" | "approve" | "undo"; label: string };
   secondaryAction?: { kind: "dismiss"; label: string };
   feedbackSubjectKind?: "attention";
+  actionSubjectKind?: "attention" | "proposal" | "action";
 }
 
 export interface UiNotificationSnapshot {
@@ -103,6 +105,8 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
             attentionId: item.attentionId, presentationChannel: item.presentation.channel,
             presentationReason: item.presentation.reason, policyVersion: item.presentation.policyVersion,
           });
+        const taskReady = item.interventions.some((intervention) =>
+          intervention.kind === "create_task" && intervention.readiness === "ready");
         notifications.push({
           id: notificationId,
           kind: attentionKind(item.type),
@@ -112,8 +116,11 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           title: compactText(item.title, 120),
           summary: compactText(item.summary, 180),
           relativeTime: relativeTime(attentionReview.asOf, now),
-          primaryAction: { kind: "discuss", label: attentionActionLabel(item.interventions) },
+          primaryAction: taskReady
+            ? { kind: "propose_task", label: "Create task" }
+            : { kind: "discuss", label: attentionActionLabel(item.interventions) },
           feedbackSubjectKind: "attention",
+          actionSubjectKind: "attention",
         });
         discussionGrounding.set(notificationId, {
           attention: {
@@ -135,6 +142,8 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
     }
 
     for (const proposal of store.listPendingProposals().slice(0, 10)) {
+      const browserApplicable = proposal.effectType === "finding_task_append"
+        && browserTaskProposalCanApply(proposal);
       notifications.push({
         id: uiId("proposal", proposal.proposalId),
         kind: "proposal",
@@ -145,8 +154,34 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
         summary: compactText(browserProposalReview(proposal).preview, 180),
         detail: "Nothing will change without your approval.",
         relativeTime: relativeTime(proposal.createdAt, now),
-        primaryAction: { kind: "review", label: "Review" },
-        secondaryAction: { kind: "dismiss", label: "Dismiss" },
+        primaryAction: browserApplicable
+          ? { kind: "approve", label: "Review" }
+          : { kind: "review", label: "Review" },
+        ...(browserApplicable ? { actionSubjectKind: "proposal" as const } : {}),
+      });
+    }
+
+    for (const action of store.listRecentActionReviews(10)) {
+      if (action.effectType !== "finding_task_append") continue;
+      const proposal = store.getProposalByActionId(action.actionId);
+      if (!proposal) continue;
+      const review = browserProposalReview(proposal);
+      notifications.push({
+        id: actionUiId(action.actionId),
+        kind: "task",
+        category: "activity",
+        tone: "receipt",
+        status: action.undoAvailable ? "open" : "resolved",
+        title: action.undone ? "Task creation undone" : "Task added to Inbox",
+        summary: action.undone ? `Removed “${compactText(review.preview, 140)}”` : compactText(review.preview, 180),
+        ...(action.undoAvailable
+          ? { detail: "This can be undone while the Inbox entry is unchanged." }
+          : {}),
+        relativeTime: relativeTime(action.createdAt, now),
+        ...(action.undoAvailable ? {
+          primaryAction: { kind: "undo" as const, label: "Undo" },
+          actionSubjectKind: "action" as const,
+        } : {}),
       });
     }
 

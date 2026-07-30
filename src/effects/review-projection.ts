@@ -42,11 +42,26 @@ export function browserProposalReview(proposal: ProposalRecord): {
       ? `Add stable IDs to ${proposal.effectPlan.patches.length} task(s)`
       : proposal.effectPlan.type === "policy_bootstrap"
         ? `Create one required policy file (${proposal.effectPlan.content.split(/\r?\n/).length} lines)`
-        : "Add one task to your Inbox";
+        : browserFindingTaskPreview(proposal);
   return {
     id: `ui_${sha256Text(`proposal:${review.proposalId}`).slice(7, 27)}`,
     effectType: review.effectType, state: review.lifecycleState,
     approval: review.approved ? "approved" : "required", preview,
     createdAt: review.createdAt, expiresAt: review.expiresAt,
   };
+}
+
+export function browserFindingTaskPreview(proposal: ProposalRecord): string {
+  if (proposal.effectPlan.type !== "finding_task_append") {
+    throw new Error("browser task preview requires a finding task proposal");
+  }
+  const task = proposal.effectPlan.taskLine.replace(/^- \[ \]\s*/, "").replace(/\s+/g, " ").trim();
+  return browserTaskProposalCanApply(proposal) ? task : "Task details require private review";
+}
+
+export function browserTaskProposalCanApply(proposal: ProposalRecord): boolean {
+  if (proposal.effectPlan.type !== "finding_task_append") return false;
+  const task = proposal.effectPlan.taskLine.replace(/^- \[ \]\s*/, "").replace(/\s+/g, " ").trim();
+  const forbidden = /(?:sha256:|https?:\/\/|(?:^|\s)(?:~\/|\/Users\/|[A-Za-z]:\\)|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\b(?:message|thread|event|proposal|state|call|manifest|cache|run|action|finding|task)_[A-Za-z0-9_-]+\b|\b[a-f0-9]{40,}\b|<[^>]+>|[\u0000-\u001f])/i;
+  return task.length > 0 && task.length <= 240 && !forbidden.test(task);
 }

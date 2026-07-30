@@ -5,12 +5,24 @@ import type { Cookies } from "@sveltejs/kit";
 const cookieName = "life_os_chat_session";
 const sessionPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const feedbackTokenPattern = /^[0-9a-f]{64}$/;
+const browserConfirmationPattern = /^confirm_ui_[0-9a-f]{48}$/;
+const subjectUiIdPattern = /^ui_[0-9a-f]{20}$/;
 const feedbackCapabilityTtlMs = 8 * 60 * 60 * 1000;
 const maxFeedbackSessions = 1_000;
 const feedbackCapabilities = new Map<string, {
-	token: string; subjects: Map<string, "finding" | "proposal" | "attention">; expiresAt: number;
+	token: string; subjects: Map<string, "finding" | "proposal" | "attention" | "action">; expiresAt: number;
 }>();
 const workspaceRefreshCapabilities = new Map<string, { token: string; expiresAt: number }>();
+const browserConfirmations = new Map<string, Map<string, BrowserConfirmation>>();
+
+export interface BrowserConfirmation {
+	purpose: "apply_task_proposal" | "undo_task_action";
+	subjectUiId: string;
+	authorizationToken: string;
+	actionId: string;
+	proposalId?: string;
+	expiresAt: number;
+}
 
 export function ensureChatSession(cookies: Cookies): string {
 	const existing = cookies.get(cookieName);
@@ -35,6 +47,7 @@ export function clearChatSession(cookies: Cookies): void {
   if (sessionId) {
     feedbackCapabilities.delete(sessionId);
     workspaceRefreshCapabilities.delete(sessionId);
+    browserConfirmations.delete(sessionId);
   }
 	cookies.delete(cookieName, { path: "/" });
 }
@@ -59,7 +72,7 @@ export function validateWorkspaceRefreshCapability(input: {
 }
 
 export function issueFeedbackCapability(input: {
-	sessionId: string; subjects: Array<{ id: string; kind: "finding" | "proposal" | "attention" }>; now?: Date;
+	sessionId: string; subjects: Array<{ id: string; kind: "finding" | "proposal" | "attention" | "action" }>; now?: Date;
 }): string {
 	if (!sessionPattern.test(input.sessionId)) throw new Error("invalid feedback session");
 	pruneFeedbackCapabilities((input.now ?? new Date()).getTime());
@@ -73,7 +86,7 @@ export function issueFeedbackCapability(input: {
 
 export function validateFeedbackCapability(input: {
 	sessionId: string | undefined; token: string; subjectUiId: string;
-	subjectKind: "finding" | "proposal" | "attention"; now?: Date;
+	subjectKind: "finding" | "proposal" | "attention" | "action"; now?: Date;
 }): boolean {
 	const now = (input.now ?? new Date()).getTime();
 	pruneFeedbackCapabilities(now);
@@ -83,6 +96,48 @@ export function validateFeedbackCapability(input: {
 	return Boolean(capability && capability.expiresAt > now
 		&& capability.token === input.token
 		&& capability.subjects.get(input.subjectUiId) === input.subjectKind);
+}
+
+export function issueBrowserConfirmation(input: {
+	sessionId: string;
+	confirmation: BrowserConfirmation;
+	now?: Date;
+}): { confirmationId: string; expiresAt: string } {
+	const now = (input.now ?? new Date()).getTime();
+	if (!sessionPattern.test(input.sessionId) || !subjectUiIdPattern.test(input.confirmation.subjectUiId)
+		|| !input.confirmation.authorizationToken.startsWith("confirm_")
+		|| !input.confirmation.actionId || input.confirmation.expiresAt <= now) {
+		throw new Error("invalid browser confirmation");
+	}
+	pruneBrowserConfirmations(now);
+	const confirmationId = `confirm_ui_${randomBytes(24).toString("hex")}`;
+	const confirmations = browserConfirmations.get(input.sessionId) ?? new Map<string, BrowserConfirmation>();
+	while (confirmations.size >= 20) {
+		const oldest = confirmations.keys().next().value as string | undefined;
+		if (!oldest) break;
+		confirmations.delete(oldest);
+	}
+	confirmations.set(confirmationId, input.confirmation);
+	browserConfirmations.set(input.sessionId, confirmations);
+	return { confirmationId, expiresAt: new Date(input.confirmation.expiresAt).toISOString() };
+}
+
+export function consumeBrowserConfirmation(input: {
+	sessionId: string | undefined;
+	confirmationId: string;
+	purpose: BrowserConfirmation["purpose"];
+	now?: Date;
+}): BrowserConfirmation | undefined {
+	const now = (input.now ?? new Date()).getTime();
+	pruneBrowserConfirmations(now);
+	if (!input.sessionId || !sessionPattern.test(input.sessionId)
+		|| !browserConfirmationPattern.test(input.confirmationId)) return undefined;
+	const confirmations = browserConfirmations.get(input.sessionId);
+	const confirmation = confirmations?.get(input.confirmationId);
+	if (!confirmation || confirmation.purpose !== input.purpose || confirmation.expiresAt <= now) return undefined;
+	confirmations!.delete(input.confirmationId);
+	if (confirmations!.size === 0) browserConfirmations.delete(input.sessionId);
+	return confirmation;
 }
 
 function pruneFeedbackCapabilities(now: number): void {
@@ -105,4 +160,13 @@ function pruneWorkspaceRefreshCapabilities(now: number): void {
     if (!oldest) break;
     workspaceRefreshCapabilities.delete(oldest);
   }
+}
+
+function pruneBrowserConfirmations(now: number): void {
+	for (const [sessionId, confirmations] of browserConfirmations) {
+		for (const [confirmationId, confirmation] of confirmations) {
+			if (confirmation.expiresAt <= now) confirmations.delete(confirmationId);
+		}
+		if (confirmations.size === 0) browserConfirmations.delete(sessionId);
+	}
 }

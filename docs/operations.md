@@ -165,10 +165,15 @@ bun run src/cli.ts undo <action-id> --vault /path/to/vault
 ```
 
 Available proposal sources include metadata normalization, task-ID normalization, policy bootstrap, and
-an eligible active finding converted into the fixed inbox. The local UI currently displays pending
-proposals under **Approvals**, but proposal creation, confirm, apply, receipt, and undo still cross a CLI
-boundary. Completing that narrow browser workflow is a blocking 0.1.0 gate. There is no generic
-filesystem-write command.
+an eligible active finding converted into the fixed inbox. In the local UI, a ready user-owned attention
+item offers **Create task**. Review the exact sanitized task under **Approvals**, confirm **Add task**,
+and use **Undo** on the resulting Activity receipt if needed. Apply and undo each receive a separate
+five-minute, one-use authorization bound to current source, target, plan, and executor hashes.
+
+The browser sends only opaque presentation and confirmation identities plus its session-bound CSRF
+capability. It cannot supply a path, patch, task body, proposal/action ID, or authorization token.
+Proposals whose task previews contain private identifiers or source-like material remain CLI-only.
+There is no generic filesystem-write command.
 
 ## MCP and local interfaces
 

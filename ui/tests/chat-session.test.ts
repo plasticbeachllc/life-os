@@ -3,7 +3,8 @@ import type { Cookies } from "@sveltejs/kit";
 
 import {
 	clearChatSession, currentChatSession, ensureChatSession, issueFeedbackCapability,
-	issueWorkspaceRefreshCapability, validateFeedbackCapability, validateWorkspaceRefreshCapability,
+	issueBrowserConfirmation, issueWorkspaceRefreshCapability, consumeBrowserConfirmation,
+	validateFeedbackCapability, validateWorkspaceRefreshCapability,
 } from "../src/lib/server/chat-session";
 
 function cookieJar(): { cookies: Cookies; options: Array<Record<string, unknown>> } {
@@ -71,5 +72,53 @@ describe("LifeOS chat sessions", () => {
 		expect(validateWorkspaceRefreshCapability({ sessionId: firstId, token: "0".repeat(64), now })).toBe(false);
 		expect(validateWorkspaceRefreshCapability({ sessionId: firstId, token,
 			now: new Date("2026-07-12T21:00:00.000Z") })).toBe(false);
+	});
+
+	test("binds one-use mutation confirmations to the exact browser session and purpose", () => {
+		const first = cookieJar(); const second = cookieJar();
+		const firstId = ensureChatSession(first.cookies); const secondId = ensureChatSession(second.cookies);
+		const now = new Date("2026-07-12T12:00:00.000Z");
+		const confirmation = issueBrowserConfirmation({
+			sessionId: firstId,
+			now,
+			confirmation: {
+				purpose: "apply_task_proposal",
+				subjectUiId: "ui_0123456789abcdefabcd",
+				authorizationToken: "confirm_internal-private-token",
+				proposalId: "prop_private",
+				actionId: "act_private",
+				expiresAt: new Date("2026-07-12T12:05:00.000Z").getTime(),
+			},
+		});
+		expect(confirmation.confirmationId).toMatch(/^confirm_ui_[a-f0-9]{48}$/);
+		expect(confirmation).not.toHaveProperty("authorizationToken");
+		expect(consumeBrowserConfirmation({
+			sessionId: secondId,
+			confirmationId: confirmation.confirmationId,
+			purpose: "apply_task_proposal",
+			now,
+		})).toBeUndefined();
+		expect(consumeBrowserConfirmation({
+			sessionId: firstId,
+			confirmationId: confirmation.confirmationId,
+			purpose: "undo_task_action",
+			now,
+		})).toBeUndefined();
+		expect(consumeBrowserConfirmation({
+			sessionId: firstId,
+			confirmationId: confirmation.confirmationId,
+			purpose: "apply_task_proposal",
+			now,
+		})).toMatchObject({
+			subjectUiId: "ui_0123456789abcdefabcd",
+			proposalId: "prop_private",
+			actionId: "act_private",
+		});
+		expect(consumeBrowserConfirmation({
+			sessionId: firstId,
+			confirmationId: confirmation.confirmationId,
+			purpose: "apply_task_proposal",
+			now,
+		})).toBeUndefined();
 	});
 });

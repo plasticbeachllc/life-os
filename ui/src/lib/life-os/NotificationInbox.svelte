@@ -16,6 +16,7 @@
 		onHandled,
 		feedbackStates,
 		handledStates,
+		actionStates,
 		feedbackOutcomes,
 	}: {
 		notifications: InboxNotification[];
@@ -26,6 +27,7 @@
 		onHandled: (notification: InboxNotification) => void;
 		feedbackStates: Record<string, "saving" | "saved" | "failed">;
 		handledStates: Record<string, "saving" | "failed">;
+		actionStates: Record<string, "saving" | "failed">;
 		feedbackOutcomes: Record<string, AttentionFeedbackOutcome>;
 	} = $props();
 
@@ -155,14 +157,16 @@
 								<Button
 									variant={notification.tone === "proposal" ? "default" : "outline"}
 									size="sm"
+									disabled={actionStates[notification.id] === "saving"}
 									onclick={() => onAction(notification, "primary")}
 								>
-									{notification.primaryAction.label}
+									{actionStates[notification.id] === "saving" ? "Working…" : notification.primaryAction.label}
 								</Button>
 							{/if}
 							</div>
 						</div>
 						{#if handledStates[notification.id] === "failed"}<p class="mt-1 text-right text-[11px] text-rose-700">Could not mark handled. Try again.</p>{/if}
+						{#if actionStates[notification.id] === "failed"}<p class="mt-1 text-right text-[11px] text-rose-700">Could not complete that step. Review it and try again.</p>{/if}
 					{/if}
 					{#if notification.status === "open" && notification.feedbackSubjectKind === "attention" && expandedFeedback[notification.id]}
 						<div class="mt-1 flex flex-wrap items-center gap-1 pl-12 text-[11px] text-muted-foreground" aria-label="What needs improvement?">
