@@ -28,6 +28,8 @@ export interface ExtractionPilotReport {
 export async function runExtractionPilot(input: {
   gmail: number; imessage: number; model?: string;
   runner?: typeof runOneExtraction;
+  onProgress?: (report: ExtractionPilotReport) => void | Promise<void>;
+  shouldStop?: () => boolean | Promise<boolean>;
 }): Promise<ExtractionPilotReport> {
   for (const count of [input.gmail, input.imessage]) {
     if (!Number.isInteger(count) || count < 0 || count > 20) throw new Error("pilot counts must be integers between 0 and 20");
@@ -38,9 +40,14 @@ export async function runExtractionPilot(input: {
     classifications: {}, itemCount: 0, relationCount: 0, unresolvedCount: 0, promptInjectionCount: 0, model };
   for (const provider of ["gmail", "imessage"] as const) {
     for (let index = 0; index < input[provider]; index += 1) {
+      if (await input.shouldStop?.()) return report;
       try {
         const receipt = await runner({ provider, model });
-        if (receipt.status === "empty") { report.empty[provider] += 1; break; }
+        if (receipt.status === "empty") {
+          report.empty[provider] += 1;
+          await input.onProgress?.(structuredClone(report));
+          break;
+        }
         report.completed[provider] += 1;
         report.classifications[receipt.classification ?? "unknown"] = (report.classifications[receipt.classification ?? "unknown"] ?? 0) + 1;
         report.itemCount += receipt.itemCount ?? 0; report.relationCount += receipt.relationCount ?? 0;
@@ -48,10 +55,12 @@ export async function runExtractionPilot(input: {
         if (receipt.promptInjectionDetected) report.promptInjectionCount += 1;
       } catch {
         report.failed[provider] += 1;
+        await input.onProgress?.(structuredClone(report));
         // Preparation selects the highest-priority ready item. Stop this provider so the same
         // rejected item cannot consume the rest of a bounded pilot or exhaust its retry budget.
         break;
       }
+      await input.onProgress?.(structuredClone(report));
     }
   }
   return report;

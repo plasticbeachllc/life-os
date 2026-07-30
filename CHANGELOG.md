@@ -11,7 +11,8 @@ releases; operational database schemas remain explicit prototype reset boundarie
 - Read-only Gmail, Google Calendar, macOS Messages, and Telegram ingestion.
 - Subscription-authenticated, evidence-validated Gmail and Messages extraction.
 - Provider-independent findings, attention routing, and bounded contextual discussion.
-- A responsive local Inbox and Chat UI with refresh, handled state, and structured quality feedback.
+- A responsive local Inbox and Chat UI with durable bounded sync-and-process runs, handled state, and
+  structured quality feedback.
 - Approval-gated typed vault effects with exact authorization, atomic writes, backups, and undo.
 - Release checks covering TypeScript, UI, production build, and the Presidio privacy harness.
 
@@ -25,7 +26,6 @@ releases; operational database schemas remain explicit prototype reset boundarie
 
 ### Blocking before release
 
-- Complete the browser input-processing loop from refresh through bounded extraction and projection.
 - Complete the browser action loop from attention item through proposal review, confirm, apply, receipt,
   and undo.
 - Finish the onboarding, local-runtime hardening, and clean-machine acceptance gates in

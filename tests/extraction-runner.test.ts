@@ -52,3 +52,21 @@ test("pilot stops one provider after failure instead of retrying the same poison
   expect(report).toMatchObject({ completed: { gmail: 0, imessage: 1 },
     failed: { gmail: 1, imessage: 0 }, classifications: { reference_only: 1 } });
 });
+
+test("pilot reports aggregate progress and stops cooperatively between items", async () => {
+  let calls = 0;
+  const progress: number[] = [];
+  const report = await runExtractionPilot({
+    gmail: 3, imessage: 2, model: "test",
+    shouldStop: () => calls >= 1,
+    onProgress: (current) => { progress.push(current.completed.gmail + current.completed.imessage); },
+    runner: async ({ provider }) => {
+      calls += 1;
+      return { provider, status: "completed", model: "test", classification: "actionable",
+        itemCount: 1, relationCount: 0, unresolvedCount: 0, promptInjectionDetected: false };
+    },
+  });
+  expect(calls).toBe(1);
+  expect(progress).toEqual([1]);
+  expect(report).toMatchObject({ completed: { gmail: 1, imessage: 0 }, itemCount: 1 });
+});

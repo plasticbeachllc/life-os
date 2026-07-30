@@ -35,17 +35,21 @@ product blockers, not documentation issues.
 
 ### 1. Process new input from the product
 
-- [ ] Replace the ingestion-only Refresh action with a durable user-triggered run.
-- [ ] Run provider ingestion, bounded extraction, and deterministic post-extraction projection as
+- [x] Replace the ingestion-only Refresh action with a durable user-triggered run.
+- [x] Run provider ingestion, bounded extraction, and deterministic post-extraction projection as
   separate observable stages.
-- [ ] Show queued, running, completed, partial, and failed status without exposing provider identifiers
+- [x] Show queued, running, completed, partial, and failed status without exposing provider identifiers
   or source text.
-- [ ] Support bounded retry and cancellation without retrying a poison item in a loop.
-- [ ] Make unchanged refreshes perform zero duplicate model work.
-- [ ] Prevent concurrent browser runs from leasing the same work.
+- [x] Support bounded work retries and cooperative cancellation without retrying a poison item in a loop.
+- [x] Make unchanged refreshes perform zero duplicate model work.
+- [x] Prevent concurrent browser runs from leasing the same work.
 
 The HTTP request must not stay open for an entire extraction batch. Start a bounded operational job,
 poll its sanitized status, and allow the existing work leases to enforce concurrency.
+
+Implemented with the existing metadata-only `workflow_state` and `runs` tables, so this gate does not
+require a schema reset. A browser reload reconnects to the active server job; an abandoned active record
+becomes explicitly `interrupted` before a later replacement run.
 
 ### 2. Complete an action in the product
 

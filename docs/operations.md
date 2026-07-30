@@ -42,10 +42,16 @@ For the daily loop, run the bounded refresh command:
 bun run src/cli.ts today refresh --vault /path/to/vault
 ```
 
-It attempts ingestion only for enabled read-only providers, isolates a failed provider from the rest of
-the refresh, then rebuilds compact state and the attention queue. It never invokes a model, sends a
-message, changes a provider, or writes the vault. The local UI exposes the same server-owned action as
-**Refresh Today** and reloads its sanitized review queue after completion.
+The CLI command attempts ingestion only for enabled read-only providers, isolates a failed provider from
+the rest of the refresh, then rebuilds compact state and the attention queue. It never invokes a model,
+sends a message, changes a provider, or writes the vault.
+
+The local UI's **Sync & process** action goes one bounded step further. It starts a durable background
+run, performs that same ingestion, processes up to five ready Gmail and five ready Messages extraction
+items through the subscription host, and refreshes attention projections. The browser polls aggregate
+stage and count data; it receives no source text, provider record identifiers, hashes, or raw errors.
+Only one product run is admitted at a time. **Stop** takes effect between extraction items, after any
+currently active model call returns.
 
 ## Local configuration
 

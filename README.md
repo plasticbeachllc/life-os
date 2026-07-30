@@ -428,10 +428,12 @@ the operational database, and its server-side chat bridge streams subscription-a
 Server turns through a fixed allowlist of read-only LifeOS MCP tools. The browser receives no provider
 credentials, filesystem tools, source hashes, or raw provider content.
 
-This live slice can ingest configured read-only sources, review attention, discuss items with bounded
-grounded context, record handled state, and collect structured quality feedback. Model-backed extraction
-still requires the explicit CLI runner. Pending proposals are visible under **Approvals**, but browser
-confirm, apply, receipt, and undo are not implemented yet; those are blocking 0.1.0 product gates.
+**Sync & process** starts one durable, bounded background run: it ingests configured read-only sources,
+extracts up to five ready Gmail items and five ready Messages items, and refreshes the deterministic
+attention projections. The UI polls only aggregate progress, prevents concurrent product runs, and
+offers cooperative cancellation between extraction items. The CLI runner remains available for focused
+evaluation. Pending proposals are visible under **Approvals**, but browser confirm, apply, receipt, and
+undo are not implemented yet; those are blocking 0.1.0 product gates.
 
 ```bash
 bun install --cwd "$PWD/ui" --frozen-lockfile

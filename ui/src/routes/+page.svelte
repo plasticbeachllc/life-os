@@ -8,6 +8,15 @@
 	import { onMount, untrack } from "svelte";
 	import type { PageData } from "./$types";
 
+	type ProcessingRun = {
+		status: "queued" | "running" | "cancellation_requested" | "completed" | "partial" | "cancelled" | "failed" | "interrupted";
+		stage: "queued" | "ingesting" | "extracting" | "projecting" | "complete";
+		requested: { gmail: number; imessage: number };
+		processed: { gmail: number; imessage: number };
+		failed: { gmail: number; imessage: number };
+		canCancel: boolean;
+	};
+
 	let { data }: { data: PageData } = $props();
 
 	let activeMobilePanel = $state<"inbox" | "chat">("inbox");
@@ -15,17 +24,24 @@
 	let notifications = $state<InboxNotification[]>(
 		untrack(() => data.notifications.map((notification: InboxNotification) => ({ ...notification }))),
 	);
-	let refreshState = $state<"idle" | "refreshing" | "failed">("idle");
+	let refreshState = $state<"idle" | "starting" | "failed">("idle");
+	let processingRun = $state<ProcessingRun | undefined>();
+	let sawActiveProcessingRun = false;
 	let feedbackStates = $state<Record<string, "saving" | "saved" | "failed">>({});
 	let feedbackOutcomes = $state<Record<string, AttentionFeedbackOutcome>>({});
 	let handledStates = $state<Record<string, "saving" | "failed">>({});
 
 	onMount(() => {
+		void pollProcessingStatus();
+		const poller = window.setInterval(() => void pollProcessingStatus(), 1_500);
 		const releaseSession = () => {
 			void fetch("/api/chat/session", { method: "DELETE", keepalive: true });
 		};
 		window.addEventListener("pagehide", releaseSession);
-		return () => window.removeEventListener("pagehide", releaseSession);
+		return () => {
+			window.clearInterval(poller);
+			window.removeEventListener("pagehide", releaseSession);
+		};
 	});
 
 	function selectNotification(notification: InboxNotification) {
@@ -101,13 +117,53 @@
 	}
 
 	async function refreshToday() {
-		refreshState = "refreshing";
+		refreshState = "starting";
 		try {
 			const response = await fetch("/api/today/refresh", { method: "POST", headers: { "content-type": "application/json" },
 				body: JSON.stringify({ csrfToken: data.refreshToken }) });
 			if (!response.ok) throw new Error("refresh failed");
-			window.location.reload();
+			const payload = await response.json() as { run?: ProcessingRun };
+			processingRun = payload.run;
+			sawActiveProcessingRun = Boolean(payload.run?.canCancel);
+			refreshState = "idle";
 		} catch { refreshState = "failed"; }
+	}
+
+	async function cancelProcessing() {
+		try {
+			const response = await fetch("/api/today/refresh", { method: "DELETE", headers: { "content-type": "application/json" },
+				body: JSON.stringify({ csrfToken: data.refreshToken }) });
+			if (!response.ok) throw new Error("cancel failed");
+			const payload = await response.json() as { run?: ProcessingRun };
+			processingRun = payload.run;
+		} catch { refreshState = "failed"; }
+	}
+
+	async function pollProcessingStatus() {
+		try {
+			const response = await fetch("/api/today/refresh");
+			if (!response.ok) return;
+			const payload = await response.json() as { run?: ProcessingRun };
+			const wasActive = sawActiveProcessingRun;
+			processingRun = payload.run;
+			if (payload.run?.canCancel) sawActiveProcessingRun = true;
+			if (wasActive && payload.run && !payload.run.canCancel) window.location.reload();
+		} catch {
+			// A transient status failure should not replace the current workspace with an error.
+		}
+	}
+
+	function processingLabel(): string {
+		if (refreshState === "starting" || processingRun?.status === "queued") return "Starting…";
+		if (processingRun?.status === "cancellation_requested") return "Stopping…";
+		if (processingRun?.status === "running") {
+			if (processingRun.stage === "ingesting") return "Syncing…";
+			if (processingRun.stage === "projecting") return "Updating…";
+			const processed = processingRun.processed.gmail + processingRun.processed.imessage;
+			const requested = processingRun.requested.gmail + processingRun.requested.imessage;
+			return `Processing ${processed}/${requested}`;
+		}
+		return refreshState === "failed" ? "Try again" : "Sync & process";
 	}
 
 </script>
@@ -125,10 +181,15 @@
 			</div>
 			<span class="font-semibold tracking-tight">LifeOS</span>
 		</div>
-		<Button variant="ghost" size="sm" disabled={refreshState === "refreshing"} onclick={refreshToday}>
-			<RefreshCw class={refreshState === "refreshing" ? "animate-spin" : ""} aria-hidden="true" />
-			{refreshState === "refreshing" ? "Refreshing…" : refreshState === "failed" ? "Try refresh again" : "Refresh"}
-		</Button>
+		<div class="flex items-center gap-1">
+			{#if processingRun?.canCancel}
+				<Button variant="ghost" size="sm" onclick={cancelProcessing}>Stop</Button>
+			{/if}
+			<Button variant="ghost" size="sm" disabled={refreshState === "starting" || processingRun?.canCancel} onclick={refreshToday}>
+				<RefreshCw class={refreshState === "starting" || processingRun?.canCancel ? "animate-spin" : ""} aria-hidden="true" />
+				{processingLabel()}
+			</Button>
+		</div>
 	</header>
 
 	<main class="grid min-h-0 flex-1 md:grid-cols-[minmax(320px,42%)_minmax(0,58%)]">
