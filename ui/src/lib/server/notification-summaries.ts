@@ -38,6 +38,14 @@ export function prewarmNotificationSummaries(candidates: UiNotificationSummaryCa
 	}
 }
 
+export async function getNotificationDiscussionGrounding(notificationId: string): Promise<unknown[]> {
+	const { notificationModule } = await rootModules();
+	const candidate = notificationModule.compileUiNotificationBundle().summaryCandidates
+		.find((item) => item.notificationId === notificationId);
+	if (!candidate) throw new Error("Inbox item is no longer available");
+	return candidate.manifest.includedItems.map((item) => item.content);
+}
+
 export async function getNotificationSummary(notificationId: string): Promise<NotificationAgentSummary> {
 	const { notificationModule } = await rootModules();
 	const candidate = notificationModule.compileUiNotificationBundle().summaryCandidates

@@ -1,7 +1,7 @@
 import { parseChatInput } from "$lib/server/chat-input";
 import { getCodexAppServerClient } from "$lib/server/codex/app-server";
 import { ensureChatSession } from "$lib/server/chat-session";
-import { getNotificationSummary } from "$lib/server/notification-summaries";
+import { getNotificationDiscussionGrounding, getNotificationSummary } from "$lib/server/notification-summaries";
 import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 
@@ -30,13 +30,20 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 						emit({ type: "message", text: sentence, index });
 					}
 				})
-				: getCodexAppServerClient().streamTurn({
-				message: input.message,
-				sessionId,
-				conversationId: input.conversationId,
-				...(input.context ? { context: input.context } : {}),
-				onDelta: (delta) => emit({ type: "delta", delta }),
-			});
+				: (async () => {
+					const grounding = input.notificationId
+						? await getNotificationDiscussionGrounding(input.notificationId)
+						: undefined;
+					await getCodexAppServerClient().streamTurn({
+						message: input.message,
+						sessionId,
+						conversationId: input.conversationId,
+						...(input.context ? {
+							context: { ...input.context, ...(grounding ? { groundedContext: grounding } : {}) },
+						} : {}),
+						onDelta: (delta) => emit({ type: "delta", delta }),
+					});
+				})();
 			void operation.then(() => {
 				emit({ type: "done" });
 				controller.close();

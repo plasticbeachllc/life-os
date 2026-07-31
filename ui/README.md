@@ -7,9 +7,15 @@ server-owned Codex App Server process using the current ChatGPT login and a fixe
 LifeOS MCP tools. The browser receives no credentials, database access, MCP access, or filesystem tools.
 
 The UI can trigger read-only provider ingestion, record attention lifecycle and quality feedback in
-operational state, and stream bounded contextual discussion. It cannot mutate providers or the vault.
-Pending proposals are visible, but confirm, apply, receipt, and undo still require the CLI. Chat is
-session-scoped and is not added to LifeOS SQLite or restored after the local server restarts.
+operational state, and stream bounded contextual discussion. Fixed finding-to-Inbox task proposals can
+be reviewed, confirmed, applied, and undone through the same narrow policy boundary as the CLI; the UI
+cannot mutate providers or perform arbitrary vault writes. Chat is session-scoped and is not added to
+LifeOS SQLite or restored after the local server restarts.
+
+Email-backed attention items keep safe display names in server-resolved discussion grounding and expose
+an opaque **Open email** link. The Gmail destination is resolved only after an explicit click; the
+normal browser projection contains no address, Gmail message/thread ID, raw header, or source text.
+Opening Gmail is navigation only—LifeOS cannot send, archive, label, or delete mail.
 
 ```bash
 bun install --frozen-lockfile

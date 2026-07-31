@@ -92,7 +92,10 @@
 		draft = "";
 		await beginAgentTurn({
 			message: body,
-			...(activeContext ? { context: contextPayload(activeContext) } : {}),
+			...(activeContext ? {
+				notificationId: activeContext.id,
+				context: contextPayload(activeContext),
+			} : {}),
 		}, body);
 	}
 

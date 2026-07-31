@@ -154,6 +154,13 @@ opaque presentation identity and store no free text or provider payload. Handled
 quality judgments leave the Inbox on reload; handled actions are reported separately from quality
 metrics.
 
+For Gmail-backed attention, **Open email** navigates to the source thread through a narrow local route.
+The Inbox payload contains only its opaque UI identity; the route resolves a current reviewed attention
+item to a fixed `mail.google.com` destination after the user clicks. No arbitrary URL is accepted, and
+the action does not grant Gmail mutation permissions. Display names from transient Gmail context and
+canonical person matches may ground extraction and discussion, while addresses and raw headers remain
+excluded from findings, summaries, and normal browser projections.
+
 Vault writes are always proposal-based. Review the proposal, obtain exact authorization, apply it, and
 use the action ID for undo if the target has not changed:
 

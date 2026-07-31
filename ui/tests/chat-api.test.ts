@@ -9,12 +9,14 @@ describe("LifeOS chat API input", () => {
 		expect(parseChatInput({
 			conversationId: "conversation_email_1",
 			message: "  What needs my attention?  ",
+			notificationId: "ui_0123456789abcdef0123",
 			context: { kind: "email", category: "needs_you", title: "Email needs clarification",
 				summary: "Ownership is unclear.", suggestedAction: "Clarify" },
 		})).toEqual({
 			intent: "chat",
 			conversationId: "conversation_email_1",
 			message: "What needs my attention?",
+			notificationId: "ui_0123456789abcdef0123",
 			context: { kind: "email", category: "needs_you", title: "Email needs clarification",
 				summary: "Ownership is unclear.", suggestedAction: "Clarify" },
 		});

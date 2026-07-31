@@ -31,6 +31,7 @@ export interface InboxNotification {
 	secondaryAction?: NotificationAction;
 	feedbackSubjectKind?: "attention";
 	actionSubjectKind?: "attention" | "proposal" | "action";
+	sourceAction?: { kind: "open_email"; label: "Open email"; href: string };
 }
 
 export interface ChatArtifact {

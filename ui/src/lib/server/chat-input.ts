@@ -31,7 +31,7 @@ export function parseChatInput(value: unknown): ParsedChatInput | { error: strin
 			conversationId: record.conversationId, notificationId: record.notificationId };
 	}
 	if (record.intent !== undefined
-		|| Object.keys(record).some((key) => !["message", "context", "conversationId"].includes(key))) {
+		|| Object.keys(record).some((key) => !["message", "context", "conversationId", "notificationId"].includes(key))) {
 		return { error: "Invalid request body" };
 	}
 	if (typeof record.message !== "string") return { error: "Message is required" };
@@ -41,11 +41,17 @@ export function parseChatInput(value: unknown): ParsedChatInput | { error: strin
 	}
 
 	if (record.context === undefined || record.context === null) {
+		if (record.notificationId !== undefined) return { error: "Inbox context is required for a notification ID" };
 		return { intent: "chat", message, conversationId: record.conversationId };
 	}
 	const context = parseContext(record.context);
 	if ("error" in context) return context;
-	return { intent: "chat", message, context, conversationId: record.conversationId };
+	if (record.notificationId !== undefined
+		&& (typeof record.notificationId !== "string" || !/^ui_[a-f0-9]{20}$/.test(record.notificationId))) {
+		return { error: "Invalid notification ID" };
+	}
+	return { intent: "chat", message, context, conversationId: record.conversationId,
+		...(typeof record.notificationId === "string" ? { notificationId: record.notificationId } : {}) };
 }
 
 function parseContext(value: unknown): ChatContext | { error: string } {

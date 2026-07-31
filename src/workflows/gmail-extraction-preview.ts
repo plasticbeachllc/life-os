@@ -4,6 +4,7 @@ import type { OperationalStore } from "../db/store";
 import { normalizeGmailMessage } from "../gmail/normalizer";
 import { GmailStore } from "../gmail/store";
 import { gmailThreadStateHash } from "../gmail/store";
+import { gmailDisplayLabel, gmailParticipantLabels } from "../gmail/identity";
 import { FindingStore } from "../findings/store";
 import { redactSensitiveTexts } from "../privacy/presidio";
 import { gmailPromptSpec } from "../orchestration/prompt-contracts";
@@ -71,6 +72,7 @@ export async function previewGmailExtractionContext(input: {
       internal_date: turn.internalDate,
       message_type: gmailMessageType(turn),
       from: turn.fromAddress,
+      sender_label: gmailDisplayLabel(turn.fromAddress) ?? null,
       authored_excerpt: boundedText(redacted.text, 1200),
       sensitive_entities_redacted: redacted.findings.map((finding) => finding.entityType),
       source_hash: turn.contentHash,
@@ -105,6 +107,9 @@ export async function previewGmailExtractionContext(input: {
         message_type: gmailMessageType(normalized),
         from: normalized.fromAddress, to: normalized.toAddresses,
         cc: normalized.ccAddresses, subject: boundedText(redactedSubject.text, 1200),
+        participant_labels: gmailParticipantLabels([
+          normalized.fromAddress, ...normalized.toAddresses, ...normalized.ccAddresses,
+        ]),
         subject_sensitive_entities_redacted: redactedSubject.findings.map((finding) => finding.entityType),
         prompt_injection_indicators: promptInjectionIndicators,
         selected_message_prompt_injection_indicators: selectedMessagePromptInjectionIndicators,

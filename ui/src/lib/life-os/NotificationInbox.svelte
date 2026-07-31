@@ -2,7 +2,7 @@
 	import { Badge } from "$lib/components/ui/badge";
 	import { Button } from "$lib/components/ui/button";
 	import { ScrollArea } from "$lib/components/ui/scroll-area";
-	import { CalendarDays, Check, ListTodo, Mail, Send, ShieldCheck } from "@lucide/svelte";
+	import { CalendarDays, Check, ExternalLink, ListTodo, Mail, Send, ShieldCheck } from "@lucide/svelte";
 	import type { AttentionFeedbackOutcome, InboxNotification, NotificationCategory, NotificationKind, NotificationTone } from "./types";
 
 	type Filter = "all" | NotificationCategory;
@@ -144,6 +144,12 @@
 								{/if}
 							</div>
 							<div class="flex items-center gap-2">
+							{#if notification.sourceAction}
+								<Button variant="ghost" size="sm" href={notification.sourceAction.href} target="_blank">
+									<ExternalLink data-icon="inline-start" aria-hidden="true" />
+									{notification.sourceAction.label}
+								</Button>
+							{/if}
 							{#if notification.feedbackSubjectKind === "attention"}
 								<Button variant="ghost" size="sm" disabled={handledStates[notification.id] === "saving"}
 									onclick={() => onHandled(notification)}>{handledStates[notification.id] === "saving" ? "Saving…" : "Handled"}</Button>

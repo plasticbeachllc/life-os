@@ -14,6 +14,7 @@ import { modelCacheKey } from "../orchestration/cache";
 import { routeModel } from "../orchestration/model-router";
 import { sha256Text, sha256Value } from "../util/hashing";
 import { actionUiId } from "./browser-actions";
+import { attentionSourceContext } from "./attention-source";
 
 export const UI_NOTIFICATION_SUMMARY_MODEL = "gpt-5.6-luna";
 export const UI_NOTIFICATION_SUMMARY_PROMPT_VERSION = "ui-notification-opening-v6-nonredundant";
@@ -38,6 +39,7 @@ export interface UiNotification {
   secondaryAction?: { kind: "dismiss"; label: string };
   feedbackSubjectKind?: "attention";
   actionSubjectKind?: "attention" | "proposal" | "action";
+  sourceAction?: { kind: "open_email"; label: "Open email"; href: string };
 }
 
 export interface UiNotificationSnapshot {
@@ -107,6 +109,7 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           });
         const taskReady = item.interventions.some((intervention) =>
           intervention.kind === "create_task" && intervention.readiness === "ready");
+        const sourceContext = attentionSourceContext(store, item);
         notifications.push({
           id: notificationId,
           kind: attentionKind(item.type),
@@ -121,6 +124,13 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
             : { kind: "discuss", label: attentionActionLabel(item.interventions) },
           feedbackSubjectKind: "attention",
           actionSubjectKind: "attention",
+          ...(sourceContext.canOpenEmail ? {
+            sourceAction: {
+              kind: "open_email" as const,
+              label: "Open email" as const,
+              href: `/api/attention/open-email/${notificationId}`,
+            },
+          } : {}),
         });
         discussionGrounding.set(notificationId, {
           attention: {
@@ -134,6 +144,12 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
               readiness: intervention.readiness, permissionClass: intervention.permissionClass,
               reversible: intervention.reversible,
             })),
+          },
+          source: {
+            kind: sourceContext.sourceKind,
+            participant_labels: sourceContext.participantLabels,
+            finding_statements: sourceContext.findingStatements,
+            follow_up_available: sourceContext.canOpenEmail ? "Open the source email in Gmail" : null,
           },
         });
         includedAttention += 1;
