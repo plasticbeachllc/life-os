@@ -114,9 +114,11 @@ untracked signal disappears on rebuild without rewriting the immutable finding.
 
 Signals are ranked deterministically by urgency, impact, type, and stable attention ID. They flow into
 chief-of-staff state and a distinct morning-briefing Attention section. Suggested interventions are
-inert structured options; only the already-supported finding task proposal is marked ready. Draft
-follow-up and task-date update interventions are explicitly `unsupported` until narrow workflows and
-effect plans exist.
+inert structured options; only the already-supported finding task proposal is marked ready in the
+provider-neutral projection. Task-date updates remain explicitly `unsupported`. The browser can
+promote an eligible Gmail-backed `draft_reply` or `draft_follow_up` to a source-specific prepare action
+only after resolving one current thread through its opaque attention identity. The resulting draft is
+ephemeral, stale-safe, and never sends email.
 
 The pure resolver also supports compatibility inputs for the next architecture revision:
 

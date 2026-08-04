@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AttentionReviewItem } from "../src/attention/review";
 import { OperationalStore } from "../src/db/store";
 import { attentionSourceContext, gmailThreadUrlForAttention } from "../src/ui/attention-source";
+import { attentionPrimaryAction } from "../src/ui/notifications";
 
 let directory: string | undefined;
 
@@ -82,9 +83,14 @@ describe("attention source context", () => {
       participantLabels: ["Thompson Tee Support", "Taylor"],
       sourceKind: "gmail",
       canOpenEmail: true,
+      emailDraftKind: "reply",
     });
     expect(gmailThreadUrlForAttention(store, item))
       .toBe("https://mail.google.com/mail/#all/thread_ABC-123");
+    expect(attentionPrimaryAction(item, { emailDraftKind: "reply" }, false))
+      .toEqual({ kind: "draft_email", label: "Draft reply" });
+    expect(attentionPrimaryAction(item, { emailDraftKind: "follow_up" }, false))
+      .toEqual({ kind: "draft_email", label: "Draft follow-up" });
   });
 
   test("rejects unsafe provider thread identifiers", () => {

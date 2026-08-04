@@ -161,6 +161,13 @@ the action does not grant Gmail mutation permissions. Display names from transie
 canonical person matches may ground extraction and discussion, while addresses and raw headers remain
 excluded from findings, summaries, and normal browser projections.
 
+The browser may prepare a reply or follow-up for an eligible Gmail-backed attention item. Preparation
+refetches at most the eight most recent authored turns, applies the stock privacy harness, uses the
+shared context builder and a persisted text-free audit manifest, and binds the result to the exact
+current thread and policy hashes. Submission refetches the thread again and rejects a stale result.
+The generated body is returned with `Cache-Control: no-store` and is not persisted; copying, editing,
+opening Gmail, and sending remain explicit user actions. Gmail permissions remain `gmail.readonly`.
+
 Vault writes are always proposal-based. Review the proposal, obtain exact authorization, apply it, and
 use the action ID for undo if the target has not changed:
 

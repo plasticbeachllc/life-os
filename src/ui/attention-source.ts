@@ -8,6 +8,7 @@ export interface AttentionSourceContext {
   participantLabels: string[];
   sourceKind: "gmail" | "messages" | "mixed" | "unknown";
   canOpenEmail: boolean;
+  emailDraftKind?: "reply" | "follow_up";
 }
 
 export function attentionSourceContext(
@@ -31,7 +32,53 @@ export function attentionSourceContext(
       : sourceTypes.has("gmail_extraction") ? "gmail"
         : sourceTypes.has("imessage_extraction") ? "messages" : "unknown",
     canOpenEmail: gmailFindingIds.length > 0,
+    ...(gmailFindingIds.length > 0 && ["response_needed", "response_overdue"].includes(item.type)
+      ? { emailDraftKind: "reply" as const }
+      : gmailFindingIds.length > 0 && item.type === "waiting_on_other"
+        ? { emailDraftKind: "follow_up" as const } : {}),
   };
+}
+
+export function gmailDraftSourceForAttention(
+  store: OperationalStore, item: AttentionReviewItem,
+): {
+  accountId: string; threadId: string; threadStateHash: string;
+  findingStatements: string[]; participantLabels: string[];
+} | undefined {
+  const db = store.open();
+  try {
+    const rows: Array<{ account_id: string; thread_id: string; thread_state_hash: string; statement: string }> = [];
+    for (const findingId of item.findingIds) {
+      const row = db.query<{
+        account_id: string; thread_id: string; thread_state_hash: string; statement: string;
+      }, [string]>(`
+        SELECT extraction.account_id, message.thread_id, thread.thread_state_hash, finding.statement
+        FROM findings finding
+        JOIN gmail_extractions extraction
+          ON finding.source_type = 'gmail_extraction'
+         AND extraction.extraction_id = finding.source_extraction_id
+        JOIN gmail_messages message
+          ON message.account_id = extraction.account_id
+         AND message.message_id = extraction.message_id
+        JOIN gmail_threads thread
+          ON thread.account_id = message.account_id AND thread.thread_id = message.thread_id
+        WHERE finding.finding_id = ?
+      `).get(findingId);
+      if (row) rows.push(row);
+    }
+    if (rows.length === 0) return undefined;
+    const sourceKeys = new Set(rows.map((row) => `${row.account_id}:${row.thread_id}:${row.thread_state_hash}`));
+    if (sourceKeys.size !== 1) return undefined;
+    const first = rows[0]!;
+    return {
+      accountId: first.account_id, threadId: first.thread_id,
+      threadStateHash: first.thread_state_hash,
+      findingStatements: [...new Set(rows.map((row) => row.statement))].slice(0, 10),
+      participantLabels: gmailLabelsForFindings(store, item.findingIds),
+    };
+  } finally {
+    db.close();
+  }
 }
 
 export function gmailThreadUrlForAttention(

@@ -1,7 +1,7 @@
 import type { LoadedPolicy, PolicyDocName } from "../policy/loader";
 import { sha256Value } from "../util/hashing";
 
-export type PromptWorkflow = "gmail_extraction" | "imessage_extraction" | "morning_reasoning";
+export type PromptWorkflow = "gmail_extraction" | "imessage_extraction" | "gmail_reply_draft" | "morning_reasoning";
 
 export interface CompiledPolicyPrompt {
   version: string;
@@ -26,6 +26,7 @@ export interface PromptSpec {
 const workflowTerms: Record<PromptWorkflow, RegExp> = {
   gmail_extraction: /email|gmail|message|extract|source|evidence|privacy|untrusted/i,
   imessage_extraction: /message|conversation|extract|source|evidence|privacy|untrusted/i,
+  gmail_reply_draft: /email|gmail|message|reply|draft|source|evidence|privacy|untrusted/i,
   morning_reasoning: /agent|brief|reason|priorit|decision|evidence|context|untrusted/i,
 };
 

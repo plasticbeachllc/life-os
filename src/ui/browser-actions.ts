@@ -1,5 +1,6 @@
 import type { ObsidianVault } from "../adapters/obsidian";
 import { compileAttentionReview } from "../attention/review";
+import type { AttentionReviewItem } from "../attention/review";
 import type { OperationalStore, ProposalRecord } from "../db/store";
 import { browserProposalReview, browserTaskProposalCanApply } from "../effects/review-projection";
 import { FindingStore } from "../findings/store";
@@ -9,21 +10,35 @@ import { sha256Text } from "../util/hashing";
 
 const uiIdPattern = /^ui_[a-f0-9]{20}$/;
 
-export async function proposeAttentionTaskFromUi(input: {
-  attentionUiId: string;
-  vault: ObsidianVault;
-  store: OperationalStore;
-}): Promise<ReturnType<typeof browserProposalReview>> {
+export function attentionFromUi(input: {
+  attentionUiId: string; store: OperationalStore;
+}): AttentionReviewItem | undefined {
   if (!uiIdPattern.test(input.attentionUiId)) throw new Error("invalid attention review identity");
   const state = input.store.getCurrentDerivedState("finding_attention_state");
   if (!state) throw new Error("current attention state is unavailable");
-  const item = compileAttentionReview(state).items.find((candidate) =>
+  return compileAttentionReview(state).items.find((candidate) =>
     attentionSubjectUiId({
       attentionId: candidate.attentionId,
       presentationChannel: candidate.presentation.channel,
       presentationReason: candidate.presentation.reason,
       policyVersion: candidate.presentation.policyVersion,
     }) === input.attentionUiId);
+}
+
+export function requireAttentionFromUi(input: {
+  attentionUiId: string; store: OperationalStore;
+}): AttentionReviewItem {
+  const item = attentionFromUi(input);
+  if (!item) throw new Error("attention item is not currently reviewable");
+  return item;
+}
+
+export async function proposeAttentionTaskFromUi(input: {
+  attentionUiId: string;
+  vault: ObsidianVault;
+  store: OperationalStore;
+}): Promise<ReturnType<typeof browserProposalReview>> {
+  const item = attentionFromUi({ attentionUiId: input.attentionUiId, store: input.store });
   if (!item || !item.interventions.some((intervention) =>
     intervention.kind === "create_task" && intervention.readiness === "ready")) {
     throw new Error("attention item does not have a ready task intervention");

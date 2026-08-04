@@ -17,6 +17,11 @@ an opaque **Open email** link. The Gmail destination is resolved only after an e
 normal browser projection contains no address, Gmail message/thread ID, raw header, or source text.
 Opening Gmail is navigation only—LifeOS cannot send, archive, label, or delete mail.
 
+Eligible Gmail reply and waiting-on-other items also offer **Draft reply** or **Draft follow-up**. The
+server refetches the current thread, prepares a bounded subscription-agent call, and rechecks the live
+thread hash before returning an editable draft. Drafts are browser-session output: they are not stored
+in SQLite or the vault. The user must copy the reviewed text into Gmail and send it manually.
+
 ```bash
 bun install --frozen-lockfile
 bun run dev -- --host 127.0.0.1

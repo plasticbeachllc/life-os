@@ -6,6 +6,7 @@ export type NotificationActionKind =
 	| "resolve"
 	| "review"
 	| "discuss"
+	| "draft_email"
 	| "dismiss"
 	| "propose_task"
 	| "approve";

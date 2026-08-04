@@ -26,6 +26,7 @@ Implemented and automated:
 - handled state and structured quality feedback;
 - typed, stale-safe, approval-gated vault effects with backup and undo;
 - sanitized browser projections and a read-only chat tool boundary;
+- transient, hash-bound Gmail reply and follow-up drafting with manual copy/send;
 - full TypeScript tests, UI checks, production build, and Presidio smoke verification.
 
 The core daily loop now runs end to end in the product. Setup, runtime hardening, clean-machine

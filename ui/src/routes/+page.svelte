@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { Button } from "$lib/components/ui/button";
+	import { Textarea } from "$lib/components/ui/textarea";
 	import ChatPanel from "$lib/life-os/ChatPanel.svelte";
 	import { initialMessages } from "$lib/life-os/initial-messages";
 	import NotificationInbox from "$lib/life-os/NotificationInbox.svelte";
 	import type { AttentionFeedbackOutcome, InboxNotification } from "$lib/life-os/types";
-	import { Inbox, MessageCircle, RefreshCw, Sparkles } from "@lucide/svelte";
+	import { Copy, ExternalLink, Inbox, MessageCircle, RefreshCw, Sparkles } from "@lucide/svelte";
 	import { onMount, untrack } from "svelte";
 	import type { PageData } from "./$types";
 
@@ -25,6 +26,15 @@
 		confirmLabel: string;
 		state: "ready" | "saving" | "failed";
 	};
+	type EmailDraftDialog = {
+		subjectUiId: string;
+		status: "ready" | "needs_clarification";
+		body: string;
+		clarification: string | null;
+		assumptions: string[];
+		openEmailHref?: string;
+		copyState: "idle" | "copied" | "failed";
+	};
 
 	let { data }: { data: PageData } = $props();
 
@@ -41,6 +51,7 @@
 	let handledStates = $state<Record<string, "saving" | "failed">>({});
 	let actionStates = $state<Record<string, "saving" | "failed">>({});
 	let actionDialog = $state<ActionDialog | null>(null);
+	let emailDraftDialog = $state<EmailDraftDialog | null>(null);
 
 	onMount(() => {
 		void pollProcessingStatus();
@@ -101,6 +112,10 @@
 			await createTaskProposal(notification);
 			return;
 		}
+		if (action.kind === "draft_email") {
+			await prepareEmailDraft(notification);
+			return;
+		}
 		if (action.kind === "approve") {
 			await prepareTaskAction(notification, "apply");
 			return;
@@ -121,6 +136,44 @@
 			return { ...item, status: "resolved" };
 		});
 		if (selectedNotification?.id === notification.id) selectedNotification = null;
+	}
+
+	async function prepareEmailDraft(notification: InboxNotification) {
+		actionStates = { ...actionStates, [notification.id]: "saving" };
+		try {
+			const response = await fetch("/api/attention/draft-email", {
+				method: "POST", headers: { "content-type": "application/json" },
+				body: JSON.stringify({ attentionUiId: notification.id, csrfToken: data.feedbackToken }),
+			});
+			if (!response.ok) throw new Error("draft failed");
+			const draft = await response.json() as {
+				status: "ready" | "needs_clarification"; body: string | null;
+				clarification: string | null; assumptions: string[];
+			};
+			emailDraftDialog = {
+				subjectUiId: notification.id, status: draft.status, body: draft.body ?? "",
+				clarification: draft.clarification, assumptions: draft.assumptions,
+				...(notification.sourceAction ? { openEmailHref: notification.sourceAction.href } : {}),
+				copyState: "idle",
+			};
+			const next = { ...actionStates }; delete next[notification.id]; actionStates = next;
+		} catch {
+			actionStates = { ...actionStates, [notification.id]: "failed" };
+		}
+	}
+
+	function closeEmailDraft() {
+		emailDraftDialog = null;
+	}
+
+	async function copyEmailDraft() {
+		if (!emailDraftDialog?.body) return;
+		try {
+			await navigator.clipboard.writeText(emailDraftDialog.body);
+			emailDraftDialog = { ...emailDraftDialog, copyState: "copied" };
+		} catch {
+			emailDraftDialog = { ...emailDraftDialog, copyState: "failed" };
+		}
 	}
 
 	async function createTaskProposal(notification: InboxNotification) {
@@ -356,6 +409,48 @@
 					<Button disabled={actionDialog.state !== "ready"} onclick={confirmTaskAction}>
 						{actionDialog.state === "saving" ? "Working…" : actionDialog.confirmLabel}
 					</Button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	{#if emailDraftDialog}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="presentation" onclick={closeEmailDraft}>
+			<div class="w-full max-w-xl rounded-xl border bg-background p-5 shadow-xl" role="dialog"
+				tabindex="-1" aria-modal="true" aria-labelledby="email-draft-title"
+				onclick={(event) => event.stopPropagation()}
+				onkeydown={(event) => { event.stopPropagation(); if (event.key === "Escape") closeEmailDraft(); }}>
+				<h2 id="email-draft-title" class="text-lg font-semibold">
+					{emailDraftDialog.status === "ready" ? "Draft response" : "One detail is needed"}
+				</h2>
+				{#if emailDraftDialog.status === "ready"}
+					<p class="mt-2 text-sm text-muted-foreground">Review and edit this draft before sending it yourself. LifeOS cannot send email.</p>
+					<Textarea bind:value={emailDraftDialog.body} class="mt-4 min-h-52 resize-y text-sm leading-6" aria-label="Email draft" />
+					{#if emailDraftDialog.assumptions.length > 0}
+						<div class="mt-3 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+							<p class="font-medium text-foreground">Check before sending</p>
+							<ul class="mt-1 list-disc space-y-1 pl-4">
+								{#each emailDraftDialog.assumptions as assumption}<li>{assumption}</li>{/each}
+							</ul>
+						</div>
+					{/if}
+				{:else}
+					<p class="mt-3 rounded-lg bg-muted/50 p-3 text-sm">{emailDraftDialog.clarification}</p>
+					<p class="mt-2 text-xs text-muted-foreground">Discuss the item to supply the missing detail, then prepare the draft again.</p>
+				{/if}
+				<div class="mt-5 flex flex-wrap justify-end gap-2">
+					<Button variant="ghost" onclick={closeEmailDraft}>Close</Button>
+					{#if emailDraftDialog.status === "ready"}
+						<Button variant="outline" onclick={copyEmailDraft}>
+							<Copy data-icon="inline-start" aria-hidden="true" />
+							{emailDraftDialog.copyState === "copied" ? "Copied" : emailDraftDialog.copyState === "failed" ? "Copy failed" : "Copy draft"}
+						</Button>
+						{#if emailDraftDialog.openEmailHref}
+							<Button href={emailDraftDialog.openEmailHref} target="_blank">
+								<ExternalLink data-icon="inline-start" aria-hidden="true" />Open Gmail
+							</Button>
+						{/if}
+					{/if}
 				</div>
 			</div>
 		</div>

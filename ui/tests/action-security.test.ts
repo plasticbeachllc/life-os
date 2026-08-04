@@ -22,6 +22,14 @@ test("browser action requests require exact same-origin JSON shapes", async () =
 		proposalUiId: "ui_0123456789abcdefabcd",
 		csrfToken: "a".repeat(64),
 	});
+	await expect(parseBrowserActionRequest({
+		request: request({ attentionUiId: "ui_0123456789abcdefabcd", csrfToken: "b".repeat(64) }),
+		url,
+		keys: ["attentionUiId", "csrfToken"],
+	})).resolves.toEqual({
+		attentionUiId: "ui_0123456789abcdefabcd",
+		csrfToken: "b".repeat(64),
+	});
 	for (const rejected of [
 		request({ proposalUiId: "ui_0123456789abcdefabcd", csrfToken: "a".repeat(64), actionId: "act_private" }),
 		request({ proposalUiId: "ui_0123456789abcdefabcd" }),

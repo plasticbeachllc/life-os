@@ -15,6 +15,8 @@ import { routeModel } from "../orchestration/model-router";
 import { sha256Text, sha256Value } from "../util/hashing";
 import { actionUiId } from "./browser-actions";
 import { attentionSourceContext } from "./attention-source";
+import type { AttentionSourceContext } from "./attention-source";
+import type { AttentionReviewItem } from "../attention/review";
 
 export const UI_NOTIFICATION_SUMMARY_MODEL = "gpt-5.6-luna";
 export const UI_NOTIFICATION_SUMMARY_PROMPT_VERSION = "ui-notification-opening-v6-nonredundant";
@@ -35,7 +37,7 @@ export interface UiNotification {
   detail?: string;
   agentSummary?: { sentences: string[]; actionRequired: boolean };
   relativeTime: string;
-  primaryAction?: { kind: "resolve" | "review" | "discuss" | "propose_task" | "approve" | "undo"; label: string };
+  primaryAction?: { kind: "resolve" | "review" | "discuss" | "draft_email" | "propose_task" | "approve" | "undo"; label: string };
   secondaryAction?: { kind: "dismiss"; label: string };
   feedbackSubjectKind?: "attention";
   actionSubjectKind?: "attention" | "proposal" | "action";
@@ -119,9 +121,7 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
           title: compactText(item.title, 120),
           summary: compactText(item.summary, 180),
           relativeTime: relativeTime(attentionReview.asOf, now),
-          primaryAction: taskReady
-            ? { kind: "propose_task", label: "Create task" }
-            : { kind: "discuss", label: attentionActionLabel(item.interventions) },
+          primaryAction: attentionPrimaryAction(item, sourceContext, taskReady),
           feedbackSubjectKind: "attention",
           actionSubjectKind: "attention",
           ...(sourceContext.canOpenEmail ? {
@@ -329,6 +329,19 @@ export function compileUiNotificationBundle(now = new Date()): UiNotificationBun
       summaryCandidates: [],
     };
   }
+}
+
+export function attentionPrimaryAction(
+  item: Pick<AttentionReviewItem, "interventions">,
+  sourceContext: Pick<AttentionSourceContext, "emailDraftKind">,
+  taskReady: boolean,
+): NonNullable<UiNotification["primaryAction"]> {
+  if (sourceContext.emailDraftKind) return {
+    kind: "draft_email",
+    label: sourceContext.emailDraftKind === "reply" ? "Draft reply" : "Draft follow-up",
+  };
+  return taskReady ? { kind: "propose_task", label: "Create task" }
+    : { kind: "discuss", label: attentionActionLabel(item.interventions) };
 }
 
 function proposalNotificationTitle(effectType: string): string {
