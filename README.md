@@ -30,6 +30,8 @@ subscription-authenticated host agent through MCP; Life OS does not use an OpenA
   and order-pickup alerts.
 - Primary Google Calendar read-only ingestion and deterministic compact calendar state.
 - User-selected active findings can become fixed-inbox, approval-gated task proposals.
+- Isolated live chief-of-staff evaluations that fresh-pull bounded read-only sources, exercise
+  extraction and Inbox discussion context, and emit privacy-safe utility scores for prompt iteration.
 
 No version 1 workflow can send or delete email, mutate Gmail labels, merge entities autonomously,
 rewrite journal prose, expose arbitrary shell access, or give a model unrestricted filesystem writes.
@@ -163,6 +165,19 @@ bun run src/cli.ts findings supersede <finding-id> --replacement <finding-id> \
   --reason 'replaced by newer evidence' --vault ~/worktable/vault
 bun run src/cli.ts metrics efficiency --vault ~/worktable/vault
 ```
+
+Run a fresh, isolated end-to-end utility evaluation through the subscription host:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run eval:live --gmail 5 --imessage 5 --cases 8
+```
+
+The harness creates a new disposable operational database for every run under
+`~/.local/share/life-os/evaluations`. It reads but never mutates the configured vault or providers.
+Its JSON report contains aggregate ingestion/extraction receipts, rubric scores, issue codes, and
+generic improvement recommendations; it does not contain email or message text. Pass a prior private
+report with `--baseline /path/to/report.json` to get score and dimension deltas.
 
 `state rebuild` idempotently backfills common findings from existing validated Gmail and Messages
 model extractions without invoking a model. New validated extractions project immediately. Findings

@@ -20,6 +20,46 @@ bun run typecheck
 bun test
 ```
 
+## Continuous-improvement harness
+
+Use the live evaluation harness when changing extraction schemas, context selection, Inbox
+presentation, or discussion prompts:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run eval:live --gmail 5 --imessage 5 --cases 8
+```
+
+Each invocation creates a private directory under `~/.local/share/life-os/evaluations` containing a
+new disposable SQLite database and `report.json`. The run performs this bounded sequence:
+
+1. Pull currently configured providers through their existing read-only adapters.
+2. Extract up to the requested Gmail and Messages items through the normal prepare/submit workflows.
+3. Rebuild findings, attention state, and chief-of-staff state.
+4. Compile the actual Inbox cards and their recorded context manifests.
+5. Generate the same focused discussion opening used by the UI.
+6. Judge relevance, specificity, actionability, grounding, prioritization, and concision on a fixed
+   five-point rubric.
+
+The report deliberately retains no card text, model prose, email/message text, provider record IDs,
+or source hashes. It stores opaque case references, scores, issue codes, aggregate receipts, and
+generic recommendations. The isolated database retains the same allowed operational metadata and
+validated structured state as a normal run; Gmail bodies and transient prompt context are still not
+retained. The vault is read-only and provider permissions remain read-only.
+
+Compare a changed implementation with a previous run:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run eval:live --gmail 5 --imessage 5 --cases 8 \
+  --baseline ~/.local/share/life-os/evaluations/evaluation_previous/report.json
+```
+
+Use comparable source counts and case counts. Fresh provider state can legitimately change between
+runs, so treat score deltas as evidence alongside issue-code changes, not as a benchmark guarantee.
+Delete old run directories manually when they are no longer useful; the harness never deletes an
+existing operational database or resets the configured application database.
+
 ## First local run
 
 No provider needs to be enabled for these commands. Replace `/path/to/vault` with an existing vault.

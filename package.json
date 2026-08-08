@@ -19,6 +19,7 @@
     "ui:test": "bun run --cwd \"$PWD/ui\" test",
     "ui:build": "bun run --cwd \"$PWD/ui\" build",
     "privacy:smoke": "bun run scripts/privacy-smoke.ts",
+    "eval:live": "bun run scripts/evaluate-chief-of-staff.ts",
     "release:check": "bun run typecheck && bun test && bun run ui:check && bun run ui:test && bun run ui:build && bun run privacy:smoke"
   },
   "packageManager": "bun@1.3.14",
