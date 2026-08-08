@@ -178,6 +178,8 @@ The harness creates a new disposable operational database for every run under
 Its JSON report contains aggregate ingestion/extraction receipts, rubric scores, issue codes, and
 generic improvement recommendations; it does not contain email or message text. Pass a prior private
 report with `--baseline /path/to/report.json` to get score and dimension deltas.
+Use `--replay /path/to/operational.db` with a prior run to test prompt and presentation changes
+against the same captured operational state; the source database is copied, never modified.
 
 `state rebuild` idempotently backfills common findings from existing validated Gmail and Messages
 model extractions without invoking a model. New validated extractions project immediately. Findings

@@ -55,6 +55,18 @@ op run --env-file ~/.config/life-os/.env -- \
   --baseline ~/.local/share/life-os/evaluations/evaluation_previous/report.json
 ```
 
+For controlled prompt and presentation iteration, replay the prior run's private database into a new
+isolated run instead of pulling changed provider data:
+
+```bash
+op run --env-file ~/.config/life-os/.env -- \
+  bun run eval:live --cases 8 \
+  --replay ~/.local/share/life-os/evaluations/evaluation_previous/operational.db \
+  --baseline ~/.local/share/life-os/evaluations/evaluation_previous/report.json
+```
+
+Replay always copies the source database; it never modifies or resets the previous run.
+
 Use comparable source counts and case counts. Fresh provider state can legitimately change between
 runs, so treat score deltas as evidence alongside issue-code changes, not as a benchmark guarantee.
 Delete old run directories manually when they are no longer useful; the harness never deletes an

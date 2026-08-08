@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -25,21 +25,23 @@ export interface LiveEvaluationOptions {
   outputRoot?: string;
   cwd?: string;
   baselinePath?: string;
+  replayDatabasePath?: string;
 }
 
 export interface LiveEvaluationReport {
   formatVersion: "life-os-live-evaluation-v1";
+  mode: "fresh" | "replay";
   runId: string;
   startedAt: string;
   completedAt: string;
   isolation: { database: "new_disposable"; vault: "read_only"; providerPermissions: "read_only" };
-  ingestion: {
+  ingestion?: {
     refreshedAt: string;
     providers: Array<{ provider: string; status: string; changed: number; unchanged: number }>;
     state: { projected: number; retired: number; issueCount: number };
     modelCalls: 0;
   };
-  extraction: Awaited<ReturnType<typeof runExtractionPilot>>;
+  extraction?: Awaited<ReturnType<typeof runExtractionPilot>>;
   projection: ReturnType<typeof refreshAfterExtraction>;
   inbox: { mode: string; notifications: number; needsYou: number; evaluable: number };
   utility: InboxUtilityEvaluation;
@@ -62,23 +64,28 @@ export async function runLiveEvaluation(options: LiveEvaluationOptions): Promise
   const databasePath = join(runDirectory, "operational.db");
   const previousDatabasePath = Bun.env.LIFE_OS_DATABASE_PATH;
   Bun.env.LIFE_OS_DATABASE_PATH = databasePath;
-
-  const config = loadConfig();
-  const store = new OperationalStore(databasePath);
-  store.migrate();
-  chmodSync(databasePath, 0o600);
-  const vault = new ObsidianVault(config.vaultPath);
-  const registry = boundedRegistry({ gmail: Math.max(options.gmail, 20), imessage: Math.max(options.imessage * 20, 100) });
-  store.recordRun({ runId, workflow: "chief-of-staff-live-evaluation", mode: "isolated_live",
-    startedAt, status: "running", modelVersion: options.model });
-
+  let store: OperationalStore | undefined;
   try {
-    const ingestion = await refreshToday({ vault, store, vaultPath: config.vaultPath, registry });
-    const extraction = await runExtractionPilot({
-      gmail: config.gmailEnabled ? options.gmail : 0,
-      imessage: config.imessageEnabled ? options.imessage : 0,
-      model: options.model,
-    });
+    const config = loadConfig();
+    if (options.replayDatabasePath) copyReplayDatabase(options.replayDatabasePath, databasePath);
+    store = new OperationalStore(databasePath);
+    store.migrate();
+    chmodSync(databasePath, 0o600);
+    store.recordRun({ runId, workflow: "chief-of-staff-live-evaluation",
+      mode: options.replayDatabasePath ? "isolated_replay" : "isolated_live",
+      startedAt, status: "running", modelVersion: options.model });
+    let ingestion: Awaited<ReturnType<typeof refreshToday>> | undefined;
+    let extraction: Awaited<ReturnType<typeof runExtractionPilot>> | undefined;
+    if (!options.replayDatabasePath) {
+      const vault = new ObsidianVault(config.vaultPath);
+      const registry = boundedRegistry({ gmail: Math.max(options.gmail, 20), imessage: Math.max(options.imessage * 20, 100) });
+      ingestion = await refreshToday({ vault, store, vaultPath: config.vaultPath, registry });
+      extraction = await runExtractionPilot({
+        gmail: config.gmailEnabled ? options.gmail : 0,
+        imessage: config.imessageEnabled ? options.imessage : 0,
+        model: options.model,
+      });
+    }
     const projection = refreshAfterExtraction({ store });
     const bundle = compileUiNotificationBundle();
     const utility = await evaluateInboxUtility({
@@ -92,18 +99,19 @@ export async function runLiveEvaluation(options: LiveEvaluationOptions): Promise
     });
     const report: LiveEvaluationReport = {
       formatVersion: "life-os-live-evaluation-v1",
+      mode: options.replayDatabasePath ? "replay" : "fresh",
       runId,
       startedAt,
       completedAt: new Date().toISOString(),
       isolation: { database: "new_disposable", vault: "read_only", providerPermissions: "read_only" },
-      ingestion: {
+      ...(ingestion ? { ingestion: {
         refreshedAt: ingestion.refreshedAt,
         providers: ingestion.providers,
         state: { projected: ingestion.state.projected, retired: ingestion.state.retired,
           issueCount: ingestion.state.issues.length },
         modelCalls: ingestion.modelCalls,
-      },
-      extraction,
+      } } : {}),
+      ...(extraction ? { extraction } : {}),
       projection,
       inbox: {
         mode: bundle.snapshot.mode,
@@ -116,17 +124,31 @@ export async function runLiveEvaluation(options: LiveEvaluationOptions): Promise
     };
     const reportPath = join(runDirectory, "report.json");
     writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    store.recordRun({ runId, workflow: "chief-of-staff-live-evaluation", mode: "isolated_live",
+    store.recordRun({ runId, workflow: "chief-of-staff-live-evaluation",
+      mode: options.replayDatabasePath ? "isolated_replay" : "isolated_live",
       startedAt, completedAt: report.completedAt, status: utility.failed > 0 ? "partial" : "completed", modelVersion: options.model });
     return { report, runDirectory, reportPath, databasePath };
   } catch (error) {
-    store.recordRun({ runId, workflow: "chief-of-staff-live-evaluation", mode: "isolated_live",
+    store?.recordRun({ runId, workflow: "chief-of-staff-live-evaluation",
+      mode: options.replayDatabasePath ? "isolated_replay" : "isolated_live",
       startedAt, completedAt: new Date().toISOString(), status: "failed", modelVersion: options.model });
     throw error;
   } finally {
     if (previousDatabasePath === undefined) delete Bun.env.LIFE_OS_DATABASE_PATH;
     else Bun.env.LIFE_OS_DATABASE_PATH = previousDatabasePath;
   }
+}
+
+function copyReplayDatabase(source: string, target: string): void {
+  const path = resolve(source);
+  const stats = lstatSync(path);
+  const uid = process.getuid?.();
+  if (!stats.isFile() || stats.isSymbolicLink() || (stats.mode & 0o077) !== 0
+    || uid !== undefined && stats.uid !== uid) {
+    throw new Error("replay database must be a private, owned, non-symlink file");
+  }
+  copyFileSync(path, target);
+  chmodSync(target, 0o600);
 }
 
 function boundedRegistry(limits: Record<string, number>): IntegrationRegistry {
@@ -184,4 +206,8 @@ function validateOptions(options: LiveEvaluationOptions): void {
     }
   }
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(options.model)) throw new Error("model name is invalid");
+  if (options.replayDatabasePath && options.baselinePath
+    && resolve(options.replayDatabasePath) === resolve(options.baselinePath)) {
+    throw new Error("replay database and baseline report must be different files");
+  }
 }

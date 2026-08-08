@@ -4,6 +4,7 @@ const options = parseArgs(process.argv.slice(2));
 const result = await runLiveEvaluation(options);
 console.log(JSON.stringify({
   runId: result.report.runId,
+  mode: result.report.mode,
   status: result.report.utility.failed > 0 ? "partial" : "completed",
   score: result.report.utility.score,
   cases: result.report.utility.cases.length,
@@ -26,7 +27,7 @@ function parseArgs(args: string[]) {
     values.set(flag, value);
     index += 1;
   }
-  const allowed = new Set(["--gmail", "--imessage", "--cases", "--model", "--output", "--baseline"]);
+  const allowed = new Set(["--gmail", "--imessage", "--cases", "--model", "--output", "--baseline", "--replay"]);
   for (const flag of values.keys()) if (!allowed.has(flag)) throw new Error(`unknown option: ${flag}`);
   return {
     gmail: integer(values.get("--gmail") ?? "5"),
@@ -35,6 +36,7 @@ function parseArgs(args: string[]) {
     model: values.get("--model") ?? "gpt-5.6-sol",
     ...(values.get("--output") ? { outputRoot: values.get("--output")! } : {}),
     ...(values.get("--baseline") ? { baselinePath: values.get("--baseline")! } : {}),
+    ...(values.get("--replay") ? { replayDatabasePath: values.get("--replay")! } : {}),
   };
 }
 
